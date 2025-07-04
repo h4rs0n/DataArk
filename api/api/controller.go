@@ -12,6 +12,76 @@ import (
 	"strconv"
 )
 
+// AuthController 认证控制器
+type AuthController struct{}
+
+// Register 用户注册
+func (ac *AuthController) Register(c *gin.Context) {
+	var req struct {
+		Username string `json:"username" binding:"required,min=3,max=20"`
+		Password string `json:"password" binding:"required,min=6"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"Code":    "0",
+			"Message": "Invalid request data",
+			"Error":   err.Error(),
+		})
+		return
+	}
+
+	// 注册用户并生成Token
+	tokenResponse, err := common.RegisterWithToken(req.Username, req.Password)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"Code":    "0",
+			"Error":   "Registration failed",
+			"Message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"Code":    "1",
+		"Message": "User registered successfully",
+		"Data":    tokenResponse,
+	})
+}
+
+// Login 用户登录
+func (ac *AuthController) Login(c *gin.Context) {
+	var req struct {
+		Username string `json:"username" binding:"required"`
+		Password string `json:"password" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"Code":    "0",
+			"Message": "Invalid request data",
+			"Error":   err.Error(),
+		})
+		return
+	}
+
+	// 登录并生成Token
+	tokenResponse, err := common.LoginWithToken(req.Username, req.Password)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"Code":    "0",
+			"Error":   "Login failed",
+			"Message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"Code":    "1",
+		"Message": "Login successful",
+		"Data":    tokenResponse,
+	})
+}
 func SearchByKeyword(c *gin.Context) {
 	queryString := c.Query("q")
 	queryPage := c.Query("p")
@@ -170,18 +240,29 @@ func WebStarter(debugMode bool) {
 	if !debugMode {
 		gin.SetMode(gin.ReleaseMode)
 	}
-
+	common.InitDB()
 	router := gin.Default()
 	if debugMode {
 		router.Use(CORSMiddleware())
 	}
-	router.Static("/static", "./static/web/")
-	router.Static("/archive", common.ARCHIVEFILELOACTION)
-	router.StaticFS("/assets", http.FS(assets.LoadFile()))
+	authController := &AuthController{}
+	public := router.Group("/api")
+	{
+		public.POST("/login", authController.Login)
+		public.POST("/register", authController.Register)
+	}
+	protected := router.Group("/api")
+	protected.Use(AuthMiddleware())
+	{
+		protected.GET("/search", SearchByKeyword)
+		protected.POST("/uploadHtmlFile", AddHTMLFile)
+		protected.POST("/upload", AddDocByHTMLFile)
+	}
 
-	router.GET("/api/search", SearchByKeyword)
-	router.POST("/api/uploadHtmlFile", AddHTMLFile)
-	router.POST("/api/upload", AddDocByHTMLFile)
+	staticProtected := router.Use(AuthMiddleware())
+	staticProtected.Static("/archive", common.ARCHIVEFILELOACTION)
+	router.Static("/static", "./static/web/")
+	router.StaticFS("/assets", http.FS(assets.LoadFile()))
 
 	tmpl := template.Must(template.New("").ParseFS(assets.WebFiles, "web/*.html"))
 	router.SetHTMLTemplate(tmpl)
