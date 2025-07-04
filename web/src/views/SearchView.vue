@@ -10,7 +10,7 @@
         <div class="item-card" v-for="item in pageData.jsonResult.result">
             <a-card :style="{ width: '600px' }" v-if="item.content != '' && errorStatus == false">
                 <template #title>
-                    <a-link :href=" fileLink+item.filename" target="_blank">{{ item.title }}</a-link>
+                    <a-link :href=" fileLink+item.domain+'/'+item.filename" target="_blank">{{ item.title }}</a-link>
                 </template>
                 <template #extra>
                     <a-link :href="item.link" target="_blank">原文链接</a-link>
@@ -34,6 +34,7 @@ interface ResultItem {
     filename: string
     link: string
     content: string
+    domain: string
 }
 
 let erroMessage = "搜索请求出现错误"
