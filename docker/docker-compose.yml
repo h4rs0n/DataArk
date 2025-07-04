@@ -1,0 +1,26 @@
+name: echoArk
+
+services:
+  echoarkapi:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "7845:7845"
+    volumes:
+      - ./archive:/archive
+    depends_on:
+      - meili
+    command: [
+      "-debug",
+      "-loc", "/archive/",
+      "-mhost", "http://meili:7700",
+      "-mkey", "masterkey"
+    ]
+
+  meili:
+    image: getmeili/meilisearch:v1.15
+    environment:
+      MEILI_MASTER_KEY: "masterkey"
+    volumes:
+      - ./meili_data:/meili_data
