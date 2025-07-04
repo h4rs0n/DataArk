@@ -267,9 +267,11 @@ func WebStarter(debugMode bool) {
 		protected.POST("/upload", AddDocByHTMLFile)
 		protected.GET("/authChecker", authController.AuthChecker)
 	}
-
-	staticProtected := router.Use(AuthMiddleware())
-	staticProtected.Static("/archive", common.ARCHIVEFILELOACTION)
+	archiveGroup := router.Group("/")
+	archiveGroup.Use(AuthMiddleware())
+	{
+		archiveGroup.Static("/archive", common.ARCHIVEFILELOACTION)
+	}
 	router.Static("/static", "./static/web/")
 	router.StaticFS("/assets", http.FS(assets.LoadFile()))
 
