@@ -82,6 +82,14 @@ func (ac *AuthController) Login(c *gin.Context) {
 		"Data":    tokenResponse,
 	})
 }
+
+func (ac *AuthController) AuthChecker(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"Code":    "1",
+		"Message": "Already login",
+	})
+}
+
 func SearchByKeyword(c *gin.Context) {
 	queryString := c.Query("q")
 	queryPage := c.Query("p")
@@ -257,6 +265,7 @@ func WebStarter(debugMode bool) {
 		protected.GET("/search", SearchByKeyword)
 		protected.POST("/uploadHtmlFile", AddHTMLFile)
 		protected.POST("/upload", AddDocByHTMLFile)
+		protected.GET("/authChecker", authController.AuthChecker)
 	}
 
 	staticProtected := router.Use(AuthMiddleware())
