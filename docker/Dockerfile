@@ -7,6 +7,9 @@ RUN make build
 
 FROM alpine:3
 
+RUN apk add --no-cache tzdata
+ENV TZ=Asia/Shanghai
+
 COPY --from=building /building/bin/EchoArkServer /usr/bin/EchoArkServer
 
 EXPOSE 7845
