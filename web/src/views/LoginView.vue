@@ -3,6 +3,8 @@ import { ref } from 'vue';
 import { Message } from '@arco-design/web-vue';
 // 如果你的项目未全局注册组件/图标，请手动引入
 import { IconUser, IconLock } from '@arco-design/web-vue/es/icon';
+import axios from 'axios';
+import { useRouter } from 'vue-router';
 
 const formRef = ref();
 const form = ref({
@@ -16,12 +18,35 @@ const rules = {
   password: [{ required: true, message: '请输入密码' }],
 };
 
+const router = useRouter();
+
 function handleSubmit() {
-  // 调用 arco-design 表单校验
-  formRef.value.validate((errors: any) => {
+  formRef.value.validate(async (errors: any) => {
     if (!errors) {
-      Message.success('登录成功');
-      // TODO: 在此处调用实际登录接口
+      try {
+        const response = await fetch('/api/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            username: form.value.username,
+            password: form.value.password,
+          }),
+        });
+
+        const res = await response.json();
+
+        if (res.Code === '1') {
+          Message.success('登录成功');
+          localStorage.setItem('token', res.Data.token);
+          router.push('/');
+        } else {
+          Message.error(res.Message || '登录失败');
+        }
+      } catch (e) {
+        Message.error('网络错误或服务器异常');
+      }
     }
   });
 }
@@ -37,7 +62,7 @@ function handleSubmit() {
           :model="form"
           :rules="rules"
           layout="vertical"
-          @submit.prevent="handleSubmit"
+          @submit="handleSubmit"
       >
         <!-- 用户名 -->
         <a-form-item field="username" label="用户名">
@@ -66,7 +91,7 @@ function handleSubmit() {
         </div>
 
         <!-- 登录按钮 -->
-        <a-button type="primary" html-type="submit" long class="login-btn">
+        <a-button type="primary" long class="login-btn" @click="handleSubmit">
           登录
         </a-button>
       </a-form>

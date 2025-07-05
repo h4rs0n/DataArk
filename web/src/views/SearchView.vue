@@ -61,8 +61,12 @@ const changePage = (currentPage: number) => {
 function queryData(keyword: string, pages : string = "1") {
     // let queryURL = `http://127.0.0.1:7845/api/search?q=${encodeURIComponent(keyword)}&p=${pages}`
     let queryURL = `/api/search?q=${encodeURIComponent(keyword)}&p=${pages}`
+    const token = localStorage.getItem('token');
 
-    fetch(queryURL)
+    fetch(queryURL, {
+      method: 'GET',
+      headers: (token ? { Authorization: `Bearer ${token}` } : {})
+    })
         .then((response) => {
             if (!response.ok) {
                 throw new Error('Network response was not ok');
@@ -70,11 +74,11 @@ function queryData(keyword: string, pages : string = "1") {
             return response.json();
         })
         .then((data) => {
-            console.log(data);
-            console.log(JSON.parse(data.Result))
+            // console.log(data);
+            // console.log(JSON.parse(data.Result))
             TotalHits = data.TotalHits
             
-            console.log(data)
+            // console.log(data)
             if (data.Status == "0") {
                 errorStatus = true
                 erroMessage = data.Message
