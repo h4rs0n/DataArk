@@ -23,6 +23,11 @@ const router = createRouter({
       name: 'upload',
       component: () => import('@/views/UploadView.vue')
     },
+    {
+      path: '/htmlviewer',
+      name: 'HtmlViewer',
+      component: () => import('@/views/HtmlView.vue')
+    }
   ]
 })
 

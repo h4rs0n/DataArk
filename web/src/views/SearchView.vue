@@ -10,7 +10,7 @@
         <div class="item-card" v-for="item in pageData.jsonResult.result">
             <a-card :style="{ width: '600px' }" v-if="item.content != '' && errorStatus == false">
                 <template #title>
-                    <a-link :href=" fileLink+item.domain+'/'+item.filename" target="_blank">{{ item.title }}</a-link>
+                    <a-link @click="htmlViewer(fileLink+item.domain+'/'+item.filename)" target="_blank">{{ item.title }}</a-link>
                 </template>
                 <template #extra>
                     <a-link :href="item.link" target="_blank">原文链接</a-link>
@@ -93,6 +93,10 @@ function queryData(keyword: string, pages : string = "1") {
             errorStatus = true
             console.error('There was an error:', error);
         });
+}
+
+function htmlViewer(htmlLoc : string) {
+  router.push({ path: '/htmlviewer', query: { loc: htmlLoc } })
 }
 
 onMounted(() => {
