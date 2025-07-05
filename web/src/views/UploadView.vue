@@ -17,6 +17,7 @@
               @success="handleSuccess"
               @error="handleError"
               accept=".html"
+              :headers="authHeader"
               v-model:file-list="formData.fileList"
           >
             <template #upload-button>
@@ -53,6 +54,8 @@ interface FormData {
 const uploadFileUrl = '/api/uploadHtmlFile';
 const uploadUrl = '/api/upload';
 const submitting = ref(false);
+const token = localStorage.getItem('token');
+const authHeader = { Authorization: `Bearer ${token}` }
 
 const formData = reactive<FormData>({
   domain: '',
@@ -85,6 +88,7 @@ const handleSubmit = async () => {
     return;
   }
 
+
   try {
     submitting.value = true;
     const submitData = {
@@ -94,6 +98,7 @@ const handleSubmit = async () => {
 
     await fetch(uploadUrl, {
       method: 'POST',
+      headers: (token ? { Authorization: `Bearer ${token}` } : {}),
       body: JSON.stringify(submitData)
     });
 
