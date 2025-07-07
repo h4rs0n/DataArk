@@ -1,6 +1,8 @@
 package common
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
@@ -35,6 +37,31 @@ func InitDB() {
 	if err != nil {
 		log.Fatal("failed to migrate database", err)
 	}
+	createDefaultAdmin()
+}
+
+func createDefaultAdmin() {
+	bytes := make([]byte, 6)
+	if _, err := rand.Read(bytes); err != nil {
+		log.Fatal("failed to generate random password", err)
+	}
+	randomPassword := hex.EncodeToString(bytes)
+	user, err := CreateUser("admin", randomPassword)
+	// admin user exists
+	if user == nil && err == nil {
+		return
+	}
+
+	if err != nil {
+		log.Fatal("failed to create default admin", err)
+	}
+
+	fmt.Printf("=== Default administrator account information ===\n")
+	fmt.Printf("Username: admin\n")
+	fmt.Printf("Password: %s\n", randomPassword)
+	fmt.Printf("========================\n")
+
+	log.Println("Default admin user created successfully")
 }
 
 // HashPassword 加密密码
@@ -54,6 +81,9 @@ func CreateUser(username, password string) (*User, error) {
 	// 检查用户名是否已存在
 	var existingUser User
 	if err := db.Where("username = ?", username).First(&existingUser).Error; err == nil {
+		if username == "admin" {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("username already exists")
 	}
 

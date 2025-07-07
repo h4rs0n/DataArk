@@ -257,7 +257,6 @@ func WebStarter(debugMode bool) {
 	public := router.Group("/api")
 	{
 		public.POST("/login", authController.Login)
-		public.POST("/register", authController.Register)
 	}
 	protected := router.Group("/api")
 	protected.Use(AuthMiddleware())
@@ -266,6 +265,7 @@ func WebStarter(debugMode bool) {
 		protected.POST("/uploadHtmlFile", AddHTMLFile)
 		protected.POST("/upload", AddDocByHTMLFile)
 		protected.GET("/authChecker", authController.AuthChecker)
+		protected.POST("/register", authController.Register)
 	}
 	archiveGroup := router.Group("/")
 	archiveGroup.Use(AuthMiddleware())
