@@ -13,7 +13,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"Code":    "0",
+				"Status":  "0",
 				"Message": "Please provide a valid token",
 			})
 			c.Abort()
@@ -24,7 +24,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		tokenString, err := common.ExtractTokenFromHeader(authHeader)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"Code":    "0",
+				"Status":  "0",
 				"Message": "Please provide a valid token",
 				"Error":   err.Error(),
 			})
@@ -36,7 +36,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		claims, err := common.ValidateToken(tokenString)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"Code":    "0",
+				"Status":  "0",
 				"Message": "Please provide a valid token",
 				"Error":   err.Error(),
 			})
@@ -48,7 +48,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		user, err := common.GetUserByID(claims.UserID)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"Code":    "0",
+				"Status":  "0",
 				"Message": "The user associated with this token does not exist",
 			})
 			c.Abort()

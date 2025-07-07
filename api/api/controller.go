@@ -58,7 +58,7 @@ func (ac *AuthController) Login(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"Code":    "0",
+			"Status":  "1",
 			"Message": "Invalid request data",
 			"Error":   err.Error(),
 		})
@@ -69,7 +69,7 @@ func (ac *AuthController) Login(c *gin.Context) {
 	tokenResponse, err := common.LoginWithToken(req.Username, req.Password)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"Code":    "0",
+			"Status":  "1",
 			"Error":   "Login failed",
 			"Message": err.Error(),
 		})
@@ -77,7 +77,7 @@ func (ac *AuthController) Login(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"Code":    "1",
+		"Status":  "1",
 		"Message": "Login successful",
 		"Data":    tokenResponse,
 	})
@@ -85,7 +85,7 @@ func (ac *AuthController) Login(c *gin.Context) {
 
 func (ac *AuthController) AuthChecker(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"Code":    "1",
+		"Status":  "1",
 		"Message": "Already login",
 	})
 }

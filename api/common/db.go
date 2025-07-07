@@ -113,14 +113,14 @@ func LoginUser(username, password string) (*User, error) {
 	// 查找用户
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("user not found")
+			return nil, fmt.Errorf("invalid user or password")
 		}
 		return nil, fmt.Errorf("database error: %v", err)
 	}
 
 	// 验证密码
 	if !checkPassword(password, user.Password) {
-		return nil, fmt.Errorf("invalid password")
+		return nil, fmt.Errorf("invalid user or password")
 	}
 
 	return &user, nil

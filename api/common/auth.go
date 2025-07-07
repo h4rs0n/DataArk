@@ -53,7 +53,7 @@ func GenerateToken(user *User) (*TokenResponse, error) {
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer:    "your-app-name",
+			Issuer:    "echoark",
 			Subject:   strconv.Itoa(int(user.ID)),
 		},
 	}
