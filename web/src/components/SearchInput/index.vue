@@ -35,7 +35,7 @@ onMounted(() => {
 })
 </script>
 
-<style scoped>
+<style lang="less" scoped>
 /* 容器居中 */
 .search-box {
   display: flex;
@@ -46,7 +46,6 @@ onMounted(() => {
 /* 默认：移动端 & 小屏 */
 .search-input {
   width: 90vw;          /* 占 90% 视口宽 */
-  max-width: 720px;     /* 防止过宽 */
 }
 
 /* ≥768 px：Pad / 普通 PC */
