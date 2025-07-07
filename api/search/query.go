@@ -1,7 +1,7 @@
 package search
 
 import (
-	"EchoArk/common"
+	"DataArk/common"
 	"encoding/json"
 	"github.com/meilisearch/meilisearch-go"
 	"log"

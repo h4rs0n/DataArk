@@ -1,9 +1,9 @@
 package api
 
 import (
-	"EchoArk/assets"
-	"EchoArk/common"
-	"EchoArk/search"
+	"DataArk/assets"
+	"DataArk/common"
+	"DataArk/search"
 	"embed"
 	"fmt"
 	"github.com/gin-gonic/gin"

@@ -1,4 +1,4 @@
-module EchoArk
+module DataArk
 
 go 1.23.0
 

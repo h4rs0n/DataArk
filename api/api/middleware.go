@@ -1,7 +1,7 @@
 package api
 
 import (
-	"EchoArk/common"
+	"DataArk/common"
 	"github.com/gin-gonic/gin"
 	"net/http"
 )

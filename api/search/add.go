@@ -1,7 +1,7 @@
 package search
 
 import (
-	"EchoArk/common"
+	"DataArk/common"
 	"github.com/google/uuid"
 	"github.com/meilisearch/meilisearch-go"
 	"os"
