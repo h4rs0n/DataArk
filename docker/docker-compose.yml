@@ -1,7 +1,7 @@
-name: echoArk
+name: dataArk
 
 services:
-  echoarkapi:
+  dataarkapi:
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -11,10 +11,11 @@ services:
       - ./archive:/archive
     depends_on:
       - meili
+      - database
     command: [
       "-loc", "/archive/",
       "-mhost", "http://meili:7700",
-      "-mkey", "masterkey"
+      "-mkey", "masterkey",
       "-dbhost", "database",
     ]
 
