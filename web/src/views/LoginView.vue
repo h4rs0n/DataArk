@@ -37,7 +37,7 @@ function handleSubmit() {
 
         const res = await response.json();
 
-        if (res.Code === '1') {
+        if (res.Status === '1') {
           Message.success('登录成功');
           localStorage.setItem('token', res.Data.token);
           router.push('/');

@@ -24,7 +24,7 @@ func (ac *AuthController) Register(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"Code":    "0",
+			"Status":  "0",
 			"Message": "Invalid request data",
 			"Error":   err.Error(),
 		})
@@ -35,7 +35,7 @@ func (ac *AuthController) Register(c *gin.Context) {
 	tokenResponse, err := common.RegisterWithToken(req.Username, req.Password)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"Code":    "0",
+			"Status":  "0",
 			"Error":   "Registration failed",
 			"Message": err.Error(),
 		})
@@ -43,7 +43,7 @@ func (ac *AuthController) Register(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"Code":    "1",
+		"Status":  "1",
 		"Message": "User registered successfully",
 		"Data":    tokenResponse,
 	})

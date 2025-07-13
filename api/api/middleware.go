@@ -149,8 +149,7 @@ func RequireAuth(c *gin.Context) (*common.User, bool) {
 	user, exists := GetCurrentUser(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":   "Authentication required",
-			"code":    "AUTH_REQUIRED",
+			"Status":  "0",
 			"message": "This endpoint requires authentication",
 		})
 		return nil, false
