@@ -1,0 +1,54 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+        
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+        
+    - name: Build Vue frontend
+      run: |
+        cd web
+        npm ci
+        npm run build
+        
+    - name: Move frontend assets to Go embed directory
+      run: |
+        rm -rf api/assets/web/*
+        mv web/dist/* api/assets/web/
+        
+    - name: Build Go backend
+      run: |
+        cd api
+        go mod tidy
+        env CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o ../bin/DataArkServer main.go
+        
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          bin/DataArkServer
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
