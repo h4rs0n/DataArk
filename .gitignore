@@ -1,5 +1,10 @@
+# Docker container data
+docker/meili_data
+docker/database
+
 # static files
 api/static/archive
+api/assets/web/assets
 
 # Logs
 logs
