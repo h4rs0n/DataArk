@@ -21,7 +21,7 @@
 
       <!-- 错误提示 -->
       <div class="error-area" v-if="errorStatus">
-        <a-alert type="error" :message="erroMessage" show-icon>
+        <a-alert type="error" :message="errorMessage" show-icon>
           <template #icon>
             <icon-exclamation-circle />
           </template>
@@ -77,7 +77,7 @@
         </transition-group>
 
         <!-- 空状态 -->
-        <div class="empty-state" v-if="pageData.jsonResult.result.length === 0">
+        <div class="empty-state" v-if="pageData.jsonResult.totalHits === 0">
           <div class="empty-icon">
             <icon-search />
           </div>
@@ -122,8 +122,8 @@ interface ResultItem {
   domain: string
 }
 
-let erroMessage = "搜索请求出现错误"
-let errorStatus = ref(true)
+let errorMessage = "搜索请求出现错误"
+let errorStatus = ref(false)
 let TotalHits = ref("0")
 let pageNum = "1"
 let fileLink = "/archive/"
@@ -135,7 +135,8 @@ const isMobile = ref(false)
 let pageData = reactive({
   searchKey: "",
   jsonResult: {
-    result: [] as ResultItem[]
+    result: [] as ResultItem[],
+    totalHits: 0
   },
 });
 
@@ -166,11 +167,11 @@ function queryData(keyword: string, pages : string = "1") {
 
         if (data.Status == "0") {
           errorStatus.value = true
-          erroMessage = data.Message
+          errorMessage = data.Message
         }
         else {
           errorStatus.value = false
-          pageData.jsonResult = { result: JSON.parse(data.Result) }
+          pageData.jsonResult = { result: JSON.parse(data.Result), totalHits: JSON.parse(data.TotalHits) }
         }
 
       })
@@ -213,7 +214,7 @@ watch(() => route.query.q, (newData) => {
     queryData(pageData.searchKey)
   }
   else{
-    erroMessage = "请输入关键字"
+    errorMessage = "请输入关键字"
   }
 }, { immediate: true });
 
