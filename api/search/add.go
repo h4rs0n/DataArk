@@ -56,3 +56,17 @@ func AddDocFile(fileName string, originDomain string) (err error) {
 	}
 	return nil
 }
+
+func CreateDefaultIndex() (err error) {
+	client := meilisearch.New(common.MEILIHOST, meilisearch.WithAPIKey(common.MEILIAPIKey))
+	_, err = client.GetIndex(common.MEILIBlogsIndex)
+	if err == nil {
+		return nil
+	} else {
+		client.CreateIndex(&meilisearch.IndexConfig{
+			Uid:        common.MEILIBlogsIndex,
+			PrimaryKey: "id",
+		})
+	}
+	return nil
+}

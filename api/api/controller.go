@@ -249,6 +249,7 @@ func WebStarter(debugMode bool) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	common.InitDB()
+	search.CreateDefaultIndex()
 	router := gin.Default()
 	if debugMode {
 		router.Use(CORSMiddleware())
