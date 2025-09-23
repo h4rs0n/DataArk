@@ -10,8 +10,8 @@ services:
     volumes:
       - ./archive:/archive
     depends_on:
-      - meili
-      - database
+      database:
+          condition: service_healthy
     command: [
       "-loc", "/archive/",
       "-mhost", "http://meili:7700",
@@ -33,3 +33,9 @@ services:
     environment:
       POSTGRES_PASSWORD: "postgres"
       POSTGRES_DB: "echoark"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d echoark"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
