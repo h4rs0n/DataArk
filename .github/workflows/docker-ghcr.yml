@@ -2,9 +2,6 @@ name: Build and Push dataarkapi
 
 on:
   push:
-    branches:
-      - "master"
-      - "main"
     tags:
       - "v*"
   workflow_dispatch:
