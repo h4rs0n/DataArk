@@ -107,8 +107,19 @@ const uploadFileUrl = '/api/uploadHtmlFile';
 const uploadUrl = '/api/upload';
 const submitting = ref(false);
 const uploading = ref(false);
-const token = localStorage.getItem('token');
-const authHeader = { Authorization: `Bearer ${token}` }
+
+const getAuthToken = () => {
+  return localStorage.getItem('token') || sessionStorage.getItem('token')
+}
+
+const authHeader = computed<Record<string, string>>(() => {
+  const headers: Record<string, string> = {}
+  const token = getAuthToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+  return headers
+})
 
 const formData = reactive<FormData>({
   domain: '',
@@ -117,7 +128,7 @@ const formData = reactive<FormData>({
 
 // 检查是否有文件正在上传
 const hasUploadingFile = computed(() => {
-  return formData.fileList.some(file => file.status === 'uploading');
+  return formData.fileList.some((file: any) => file.status === 'uploading');
 });
 
 const goBack = () => {
@@ -134,8 +145,38 @@ const handleSuccess = (file: any) => {
   });
 };
 
+const redirectToLogin = () => {
+  localStorage.removeItem('token')
+  sessionStorage.removeItem('token')
+  Notification.warning({
+    title: '登录状态已过期',
+    content: '请重新登录后再上传文件',
+    position: 'topRight',
+    duration: 4000,
+  })
+  router.push('/login')
+}
+
+const isUnauthorizedUploadError = (file: any) => {
+  const statusCode = Number(
+    file?.statusCode ?? file?.response?.statusCode ?? file?.response?.status ?? file?.xhr?.status ?? 0
+  )
+  if (statusCode === 401) {
+    return true
+  }
+
+  const message = String(file?.response?.Message ?? file?.response?.message ?? '')
+  return /valid token|unauthorized|authentication/i.test(message)
+}
+
 const handleError = (file: any) => {
   uploading.value = false;
+
+  if (isUnauthorizedUploadError(file)) {
+    redirectToLogin()
+    return
+  }
+
   Notification.error({
     title: '文件上传失败',
     content: '文件上传失败，请检查网络连接后重试',
@@ -172,7 +213,7 @@ const handleSubmit = async () => {
   }
 
   // 检查文件是否上传成功
-  const hasFailedFile = formData.fileList.some(file => file.status === 'error');
+  const hasFailedFile = formData.fileList.some((file: any) => file.status === 'error');
   if (hasFailedFile) {
     Notification.error({
       title: '文件上传失败',
@@ -189,6 +230,7 @@ const handleSubmit = async () => {
       domain: formData.domain,
       files: formData.fileList
     };
+    const token = getAuthToken()
 
     const response = await fetch(uploadUrl, {
       method: 'POST',

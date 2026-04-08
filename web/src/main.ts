@@ -10,6 +10,31 @@ import searchInput from '@/components/SearchInput/index.vue'
 
 import '@arco-design/web-vue/dist/arco.css';
 
+const rawFetch = window.fetch.bind(window)
+
+const isProtectedRequest = (input: RequestInfo | URL): boolean => {
+	const requestUrl =
+		typeof input === 'string'
+			? input
+			: input instanceof URL
+				? input.pathname
+				: input.url
+
+	return requestUrl.includes('/api/') || requestUrl.includes('/archive')
+}
+
+window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+	const response = await rawFetch(input, init)
+
+	if (response.status === 401 && isProtectedRequest(input) && router.currentRoute.value.path !== '/login') {
+		localStorage.removeItem('token')
+		sessionStorage.removeItem('token')
+		void router.push('/login')
+	}
+
+	return response
+}
+
 const app = createApp(App)
 
 app.use(createPinia())

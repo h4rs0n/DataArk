@@ -1,4 +1,4 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
+import { createRouter, createWebHashHistory, type RouteLocationNormalized } from 'vue-router'
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
@@ -31,13 +31,34 @@ const router = createRouter({
   ]
 })
 
-router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('token');
-  if (to.path !== '/login' && !token) {
-    next('/login');
-  } else {
-    next();
+router.beforeEach(async (to: RouteLocationNormalized) => {
+  if (to.path === '/login') {
+    return true
   }
-});
+
+  const token = localStorage.getItem('token')
+  if (!token) {
+    return '/login'
+  }
+
+  try {
+    const response = await fetch('/api/authChecker', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+
+    if (response.status === 401) {
+      localStorage.removeItem('token')
+      sessionStorage.removeItem('token')
+      return '/login'
+    }
+  } catch {
+    // Keep current route behavior on transient network errors.
+  }
+
+  return true
+})
 
 export default router
