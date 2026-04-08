@@ -41,12 +41,58 @@ jobs:
         cd api
         go mod tidy
         env CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o ../bin/DataArkServer main.go
+
+    - name: Generate docker-compose.yml for GHCR image
+      run: |
+        mkdir -p release
+        cat > release/docker-compose.yml << 'EOF'
+        name: dataArk
+
+        services:
+          dataarkapi:
+            image: ghcr.io/h4rs0n/dataarkapi:latest
+            ports:
+              - "7845:7845"
+            volumes:
+              - ./archive:/archive
+            depends_on:
+              database:
+                condition: service_healthy
+            command: [
+              "-loc", "/archive/",
+              "-mhost", "http://meili:7700",
+              "-mkey", "masterkey",
+              "-dbhost", "database",
+            ]
+
+          meili:
+            image: getmeili/meilisearch:v1.15
+            environment:
+              MEILI_MASTER_KEY: "masterkey"
+            volumes:
+              - ./meili_data:/meili_data
+
+          database:
+            image: postgres:17-alpine3.21
+            volumes:
+              - ./database:/var/lib/postgresql/data
+            environment:
+              POSTGRES_PASSWORD: "postgres"
+              POSTGRES_DB: "echoark"
+            healthcheck:
+              test: ["CMD-SHELL", "pg_isready -U postgres -d echoark"]
+              interval: 10s
+              timeout: 5s
+              retries: 5
+              start_period: 30s
+        EOF
         
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
         files: |
           bin/DataArkServer
+          release/docker-compose.yml
         generate_release_notes: true
         draft: false
         prerelease: false
