@@ -1,6 +1,7 @@
 # Docker container data
 docker/meili_data
 docker/database
+docker/archive
 
 # static files
 api/static/archive
