@@ -1,12 +1,16 @@
 package common
 
-import "flag"
+import (
+	"flag"
+	"strings"
+)
 
 func ParseFlag() {
 	debugFlag := flag.Bool("debug", false, "Enable debug mode")
 	ArchiveFileLocationFlag := flag.String("loc", "./api/static/archive/", "Assign HTML file path")
 	MEILIHostFlag := flag.String("mhost", "http://127.0.0.1:7700", "Assign MeiliSearch host")
 	MEILIKeyFlag := flag.String("mkey", "", "Assign MeiliSearch API key")
+	SingleFileWebServiceURLFlag := flag.String("sfhost", "http://singlefile-webservice:8080", "Assign SingleFile WEBService host")
 	DBHostFlag := flag.String("dbhost", "localhost", "Assign DB host")
 	DBPortFlag := flag.String("dbport", "5432", "Assign DB port")
 	DBNameFlag := flag.String("dbname", "echoark", "Assign DB name")
@@ -17,6 +21,7 @@ func ParseFlag() {
 	ARCHIVEFILELOACTION = *ArchiveFileLocationFlag
 	MEILIHOST = *MEILIHostFlag
 	MEILIAPIKey = *MEILIKeyFlag
+	SINGLEFILEWEBSERVICEURL = strings.TrimRight(*SingleFileWebServiceURLFlag, "/")
 	DBHost = *DBHostFlag
 	DBPort = *DBPortFlag
 	DBName = *DBNameFlag

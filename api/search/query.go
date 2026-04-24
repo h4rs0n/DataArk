@@ -3,9 +3,10 @@ package search
 import (
 	"DataArk/common"
 	"encoding/json"
-	"github.com/meilisearch/meilisearch-go"
 	"log"
 	"strings"
+
+	"github.com/meilisearch/meilisearch-go"
 )
 
 type Result struct {

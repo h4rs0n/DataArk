@@ -39,3 +39,16 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  singlefile-webservice:
+    image: ghcr.io/h4rs0n/singlefile-webservice:latest
+    container_name: singlefile-webservice
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./archive:/usr/src/app/output
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+      - TIMEOUT=60
+      - OUTPUT_DIR=/usr/src/app/output

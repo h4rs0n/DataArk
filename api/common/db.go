@@ -22,6 +22,23 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ArchiveTask HTML 离线归档任务。
+// 这里把任务状态持久化到数据库，而不是只放在内存里，
+// 是因为链接离线本身是异步过程，服务重启后仍然需要恢复未完成任务。
+type ArchiveTask struct {
+	ID             string     `json:"id" gorm:"primaryKey;size:36"`
+	URL            string     `json:"url" gorm:"index;not null"`
+	Domain         string     `json:"domain" gorm:"not null"`
+	Status         string     `json:"status" gorm:"index;not null"`
+	FileName       string     `json:"fileName"`
+	Error          string     `json:"error" gorm:"type:text"`
+	ExternalTaskID string     `json:"externalTaskId"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+	StartedAt      *time.Time `json:"startedAt"`
+	FinishedAt     *time.Time `json:"finishedAt"`
+}
+
 func InitDB() {
 	var err error
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Asia/Shanghai",
@@ -33,7 +50,7 @@ func InitDB() {
 	// fmt.Println("Database connected successfully!")
 
 	// 自动迁移用户表
-	err = db.AutoMigrate(&User{})
+	err = db.AutoMigrate(&User{}, &ArchiveTask{})
 	if err != nil {
 		log.Fatal("failed to migrate database", err)
 	}
@@ -201,4 +218,46 @@ func GetAllUsers(page, pageSize int) ([]User, int64, error) {
 	}
 
 	return users, total, nil
+}
+
+func CreateArchiveTask(task *ArchiveTask) error {
+	return db.Create(task).Error
+}
+
+func SaveArchiveTask(task *ArchiveTask) error {
+	return db.Save(task).Error
+}
+
+func GetArchiveTaskByID(id string) (*ArchiveTask, error) {
+	var task ArchiveTask
+	if err := db.First(&task, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func GetLatestArchiveTaskByURL(rawURL string) (*ArchiveTask, error) {
+	var task ArchiveTask
+	if err := db.Where("url = ?", rawURL).Order("created_at desc").First(&task).Error; err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func FindActiveArchiveTaskByURL(rawURL string) (*ArchiveTask, error) {
+	var task ArchiveTask
+	if err := db.Where("url = ? AND status IN ?", rawURL, []string{"pending", "running"}).
+		Order("created_at desc").
+		First(&task).Error; err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func ListArchiveTasksByStatuses(statuses []string) ([]ArchiveTask, error) {
+	var tasks []ArchiveTask
+	if err := db.Where("status IN ?", statuses).Order("created_at asc").Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+	return tasks, nil
 }

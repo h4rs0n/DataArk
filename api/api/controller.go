@@ -5,11 +5,17 @@ import (
 	"DataArk/common"
 	"DataArk/search"
 	"embed"
+	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"html/template"
 	"net/http"
+	neturl "net/url"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // AuthController 认证控制器
@@ -134,13 +140,103 @@ func SearchByKeyword(c *gin.Context) {
 }
 
 func AddDocByURL(c *gin.Context) {
-	// todo
+	var req struct {
+		URL string `json:"url"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(403, gin.H{
+			"Status":  "0",
+			"Message": "请求参数错误",
+		})
+		return
+	}
+
+	archiveURL := strings.TrimSpace(req.URL)
+	parsedURL, err := neturl.Parse(archiveURL)
+	if archiveURL == "" || err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Hostname() == "" {
+		c.JSON(403, gin.H{
+			"Status":  "0",
+			"Message": "链接格式错误",
+		})
+		return
+	}
+
+	task, created, err := search.AddDocURLTask(archiveURL)
+	if err != nil {
+		c.JSON(500, gin.H{
+			"Status":  "0",
+			"Message": "创建离线任务失败",
+			"Error":   err.Error(),
+		})
+		return
+	}
+
+	statusCode, message := buildArchiveTaskResponse(task, created)
+	c.JSON(statusCode, gin.H{
+		"Status":  "1",
+		"Message": message,
+		"Data":    task,
+	})
+}
+
+func GetArchiveTaskStatus(c *gin.Context) {
+	taskID := c.Param("taskId")
+	if strings.TrimSpace(taskID) == "" {
+		c.JSON(403, gin.H{
+			"Status":  "0",
+			"Message": "缺少任务编号",
+		})
+		return
+	}
+
+	task, err := search.GetArchiveTask(taskID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{
+				"Status":  "0",
+				"Message": "任务不存在",
+			})
+			return
+		}
+
+		c.JSON(500, gin.H{
+			"Status":  "0",
+			"Message": "查询离线任务失败",
+			"Error":   err.Error(),
+		})
+		return
+	}
+
+	statusCode, message := buildArchiveTaskResponse(task, false)
+	c.JSON(statusCode, gin.H{
+		"Status":  "1",
+		"Message": message,
+		"Data":    task,
+	})
+}
+
+func buildArchiveTaskResponse(task *common.ArchiveTask, created bool) (int, string) {
+	if created {
+		return http.StatusAccepted, "链接离线任务已加入队列"
+	}
+
+	// pending/running 都返回 202，是为了明确告诉前端这不是同步完成型接口，
+	// 调用方应该继续轮询任务状态，而不是把这次响应误判成最终结果。
+	switch task.Status {
+	case search.ArchiveTaskStatusPending, search.ArchiveTaskStatusRunning:
+		return http.StatusAccepted, "链接离线任务正在处理中"
+	case search.ArchiveTaskStatusSuccess:
+		return http.StatusOK, "链接离线任务已完成"
+	case search.ArchiveTaskStatusFailed:
+		return http.StatusOK, "链接离线任务执行失败"
+	default:
+		return http.StatusOK, "链接离线任务状态已返回"
+	}
 }
 
 func AddHTMLFile(c *gin.Context) {
 	htmlFile, err := c.FormFile("file")
-	// 上传到临时目录
-	filePath := common.ARCHIVEFILELOACTION + "/Temporary/" + htmlFile.Filename
 	if err != nil {
 		c.JSON(500, gin.H{
 			"Status":  "0",
@@ -148,6 +244,17 @@ func AddHTMLFile(c *gin.Context) {
 		})
 		return
 	}
+
+	tempDir := filepath.Join(common.ARCHIVEFILELOACTION, "Temporary")
+	if err := os.MkdirAll(tempDir, os.ModePerm); err != nil {
+		c.JSON(500, gin.H{
+			"Status":  "0",
+			"Message": "初始化临时目录失败",
+		})
+		return
+	}
+	// 上传到临时目录
+	filePath := filepath.Join(tempDir, htmlFile.Filename)
 
 	if err := c.SaveUploadedFile(htmlFile, filePath); err != nil {
 		c.JSON(500, gin.H{
@@ -250,6 +357,10 @@ func WebStarter(debugMode bool) {
 	}
 	common.InitDB()
 	search.CreateDefaultIndex()
+	if err := search.InitArchiveTaskQueue(); err != nil {
+		fmt.Printf("failed to initialize archive task queue: %v\n", err)
+		return
+	}
 	router := gin.Default()
 	if debugMode {
 		router.Use(CORSMiddleware())
@@ -265,6 +376,8 @@ func WebStarter(debugMode bool) {
 		protected.GET("/search", SearchByKeyword)
 		protected.POST("/uploadHtmlFile", AddHTMLFile)
 		protected.POST("/upload", AddDocByHTMLFile)
+		protected.POST("/archiveByURL", AddDocByURL)
+		protected.GET("/archiveTask/:taskId", GetArchiveTaskStatus)
 		protected.GET("/authChecker", authController.AuthChecker)
 		protected.POST("/register", authController.Register)
 	}
