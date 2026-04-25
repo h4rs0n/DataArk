@@ -2,6 +2,12 @@
   <div class="index-view">
     <!-- 右上角按钮容器 -->
     <div class="top-right-buttons">
+      <a-button type="primary" @click="goToArchiveUrl" class="action-button">
+        <template #icon>
+          <icon-link />
+        </template>
+        URL保存
+      </a-button>
       <a-button type="primary" @click="goToUpload" class="action-button">
         <template #icon>
           <icon-upload />
@@ -21,9 +27,13 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router';
 // 引入 Arco Design 图标
-import { IconUpload, IconExport } from '@arco-design/web-vue/es/icon';
+import { IconUpload, IconLink } from '@arco-design/web-vue/es/icon';
 
 const router = useRouter();
+
+const goToArchiveUrl = () => {
+  router.push('/archive-url');
+};
 
 // 上传文件功能
 const goToUpload = () => {

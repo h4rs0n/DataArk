@@ -24,6 +24,11 @@ const router = createRouter({
       component: () => import('@/views/UploadView.vue')
     },
     {
+      path: '/archive-url',
+      name: 'archive-url',
+      component: () => import('@/views/ArchiveUrlView.vue')
+    },
+    {
       path: '/htmlviewer',
       name: 'HtmlViewer',
       component: () => import('@/views/HtmlView.vue')
