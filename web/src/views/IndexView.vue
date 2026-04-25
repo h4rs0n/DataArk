@@ -8,12 +8,6 @@
         </template>
         上传文件
       </a-button>
-      <a-button status="danger" @click="logout" class="action-button">
-        <template #icon>
-          <icon-export />
-        </template>
-        退出登录
-      </a-button>
     </div>
     <!--
     <div class="index-image-container">
@@ -36,12 +30,6 @@ const goToUpload = () => {
   router.push('/upload'); // 跳转到上传页面
 };
 
-// 退出登录功能
-const logout = () => {
-  // 实际项目中这里会有退出逻辑（清除token等）
-  // 然后跳转到登录页
-  router.push('/login');
-};
 
 // 保留原有的搜索功能
 const search = () => {
