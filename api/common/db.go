@@ -7,7 +7,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -39,6 +41,27 @@ type ArchiveTask struct {
 	FinishedAt     *time.Time `json:"finishedAt"`
 }
 
+// ArchiveStat HTML 归档统计。
+// source 当前对应归档目录下的域名目录，file_count 存储该来源下的 HTML 文件数量。
+type ArchiveStat struct {
+	Source    string    `json:"source" gorm:"primaryKey;size:255"`
+	FileCount int       `json:"fileCount" gorm:"not null;default:0"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// ArchiveStatsSnapshot 是接口返回的统计快照，总数由各来源数量求和得到。
+type ArchiveStatsSnapshot struct {
+	TotalFiles int               `json:"totalFiles"`
+	Sources    []ArchiveStatItem `json:"sources"`
+}
+
+// ArchiveStatItem 表示单个 URL 来源的 HTML 文件数量。
+type ArchiveStatItem struct {
+	Source    string `json:"source"`
+	FileCount int    `json:"fileCount"`
+}
+
 func InitDB() {
 	var err error
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Asia/Shanghai",
@@ -49,8 +72,8 @@ func InitDB() {
 	}
 	// fmt.Println("Database connected successfully!")
 
-	// 自动迁移用户表
-	err = db.AutoMigrate(&User{}, &ArchiveTask{})
+	// 自动迁移数据库表
+	err = db.AutoMigrate(&User{}, &ArchiveTask{}, &ArchiveStat{})
 	if err != nil {
 		log.Fatal("failed to migrate database", err)
 	}
@@ -260,4 +283,76 @@ func ListArchiveTasksByStatuses(statuses []string) ([]ArchiveTask, error) {
 		return nil, err
 	}
 	return tasks, nil
+}
+
+// GetArchiveStats 读取当前统计快照，并在内存中汇总 HTML 文件总数。
+func GetArchiveStats() (*ArchiveStatsSnapshot, error) {
+	var stats []ArchiveStat
+	if err := db.Order("source asc").Find(&stats).Error; err != nil {
+		return nil, err
+	}
+	return buildArchiveStatsSnapshot(stats), nil
+}
+
+// ReplaceArchiveStats 用一份完整快照替换数据库里的归档统计。
+func ReplaceArchiveStats(stats []ArchiveStat) (*ArchiveStatsSnapshot, error) {
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		// 刷新统计以磁盘扫描结果为准，先清空旧快照再写入新快照，避免已删除文件残留在统计中。
+		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&ArchiveStat{}).Error; err != nil {
+			return err
+		}
+
+		if len(stats) == 0 {
+			return nil
+		}
+
+		return tx.Create(&stats).Error
+	}); err != nil {
+		return nil, err
+	}
+
+	return buildArchiveStatsSnapshot(stats), nil
+}
+
+// IncrementArchiveStat 在新增归档文件后增量更新对应来源的统计数量。
+func IncrementArchiveStat(source string, delta int) error {
+	source = strings.TrimSpace(source)
+	if source == "" || delta == 0 {
+		return nil
+	}
+
+	stat := ArchiveStat{
+		Source:    source,
+		FileCount: delta,
+	}
+
+	return db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "source"}},
+		// 新来源直接插入，已有来源原子累加，避免并发新增文件时丢失计数。
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"file_count": gorm.Expr("archive_stats.file_count + ?", delta),
+			"updated_at": time.Now(),
+		}),
+	}).Create(&stat).Error
+}
+
+func buildArchiveStatsSnapshot(stats []ArchiveStat) *ArchiveStatsSnapshot {
+	items := make([]ArchiveStatItem, 0, len(stats))
+	totalFiles := 0
+
+	for _, stat := range stats {
+		if stat.FileCount < 0 {
+			continue
+		}
+		totalFiles += stat.FileCount
+		items = append(items, ArchiveStatItem{
+			Source:    stat.Source,
+			FileCount: stat.FileCount,
+		})
+	}
+
+	return &ArchiveStatsSnapshot{
+		TotalFiles: totalFiles,
+		Sources:    items,
+	}
 }

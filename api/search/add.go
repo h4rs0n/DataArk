@@ -404,9 +404,22 @@ func addDocFileByPath(htmlFilePath string, fileName string, originDomain string)
 	if err := os.MkdirAll(targetDir, os.ModePerm); err != nil {
 		return err
 	}
-	err = os.Rename(htmlFilePath, filepath.Join(targetDir, fileName))
+	targetPath := filepath.Join(targetDir, fileName)
+	_, statErr := os.Stat(targetPath)
+	targetExists := statErr == nil
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return statErr
+	}
+
+	err = os.Rename(htmlFilePath, targetPath)
 	if err != nil {
 		return err
+	}
+	// 统计只在新增归档文件时递增；同名覆盖不改变磁盘上的 HTML 文件总量。
+	if !targetExists {
+		if err := common.IncrementArchiveStat(originDomain, 1); err != nil {
+			return err
+		}
 	}
 	return nil
 }

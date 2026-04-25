@@ -29,6 +29,11 @@ const router = createRouter({
       component: () => import('@/views/ArchiveUrlView.vue')
     },
     {
+      path: '/stats',
+      name: 'stats',
+      component: () => import('@/views/StatsView.vue')
+    },
+    {
       path: '/htmlviewer',
       name: 'HtmlViewer',
       component: () => import('@/views/HtmlView.vue')

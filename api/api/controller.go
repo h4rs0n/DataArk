@@ -216,6 +216,44 @@ func GetArchiveTaskStatus(c *gin.Context) {
 	})
 }
 
+// GetArchiveStats 返回已入库的归档统计快照，不触发磁盘扫描。
+func GetArchiveStats(c *gin.Context) {
+	stats, err := common.GetArchiveStats()
+	if err != nil {
+		c.JSON(500, gin.H{
+			"Status":  "0",
+			"Message": "查询统计信息失败",
+			"Error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"Status":  "1",
+		"Message": "查询统计信息成功",
+		"Data":    stats,
+	})
+}
+
+// RefreshArchiveStats 扫描归档目录并用扫描结果重建统计表。
+func RefreshArchiveStats(c *gin.Context) {
+	stats, err := common.RefreshArchiveStatsFromDisk()
+	if err != nil {
+		c.JSON(500, gin.H{
+			"Status":  "0",
+			"Message": "刷新统计信息失败",
+			"Error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"Status":  "1",
+		"Message": "刷新统计信息成功",
+		"Data":    stats,
+	})
+}
+
 func buildArchiveTaskResponse(task *common.ArchiveTask, created bool) (int, string) {
 	if created {
 		return http.StatusAccepted, "链接离线任务已加入队列"
@@ -378,6 +416,8 @@ func WebStarter(debugMode bool) {
 		protected.POST("/upload", AddDocByHTMLFile)
 		protected.POST("/archiveByURL", AddDocByURL)
 		protected.GET("/archiveTask/:taskId", GetArchiveTaskStatus)
+		protected.GET("/archiveStats", GetArchiveStats)
+		protected.POST("/archiveStats/refresh", RefreshArchiveStats)
 		protected.GET("/authChecker", authController.AuthChecker)
 		protected.POST("/register", authController.Register)
 	}

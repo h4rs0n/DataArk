@@ -2,6 +2,12 @@
   <div class="index-view">
     <!-- 右上角按钮容器 -->
     <div class="top-right-buttons">
+      <a-button type="primary" @click="goToStats" class="action-button">
+        <template #icon>
+          <icon-dashboard />
+        </template>
+        项目统计
+      </a-button>
       <a-button type="primary" @click="goToArchiveUrl" class="action-button">
         <template #icon>
           <icon-link />
@@ -27,9 +33,13 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router';
 // 引入 Arco Design 图标
-import { IconUpload, IconLink } from '@arco-design/web-vue/es/icon';
+import { IconUpload, IconLink, IconDashboard } from '@arco-design/web-vue/es/icon';
 
 const router = useRouter();
+
+const goToStats = () => {
+  router.push('/stats');
+};
 
 const goToArchiveUrl = () => {
   router.push('/archive-url');
