@@ -3,6 +3,7 @@ package common
 var DEBUG = false
 var MEILIHOST = ""
 var MEILIAPIKey = ""
+var MEILIDumpDir = "./dumps"
 var MEILIBlogsIndex = "blogs"
 var HTMLPath = ""
 var ARCHIVEFILELOACTION = ""

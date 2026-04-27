@@ -13,7 +13,7 @@
     <div class="upload-container">
       <div class="header-section">
         <div class="icon-wrapper">
-          <a-icon-cloud-upload class="header-icon" />
+          <a-icon-upload class="header-icon" />
         </div>
         <h1 class="page-title">上传 SingleFile 保存的HTML文件</h1>
         <p class="page-subtitle">将您保存的网页文件上传到系统进行索引和管理</p>
@@ -61,7 +61,7 @@
               <template #upload-button>
                 <div class="upload-demo">
                   <div class="upload-demo-icon">
-                    <a-icon-upload />
+                    <a-icon-upload class="upload-icon" />
                   </div>
                   <div class="upload-demo-text">
                     <p class="upload-main-text">点击或拖拽文件到此处上传</p>
@@ -273,6 +273,9 @@ const handleSubmit = async () => {
 .index-view {
   min-height: 100vh;
   padding: 20px;
+  background:
+    linear-gradient(180deg, rgba(242, 247, 255, 0.9) 0%, rgba(248, 250, 252, 1) 42%),
+    #f8fafc;
   position: relative;
 }
 
@@ -284,18 +287,15 @@ const handleSubmit = async () => {
 }
 
 .back-button {
-  background: #e9f2ff;
-  border: none;
+  color: #4b5563;
+  background: rgba(255, 255, 255, 0.88);
   border-radius: 8px;
-  padding: 8px 16px;
-  font-weight: 500;
-  color: #1890ff;
-  transition: all 0.3s ease;
+  padding: 8px 14px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
 
   &:hover {
-    background: rgba(255, 255, 255, 1);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    color: #1d4ed8;
+    background: #ffffff;
   }
 }
 
@@ -305,35 +305,41 @@ const handleSubmit = async () => {
   align-items: center;
   max-width: 800px;
   margin: 0 auto;
-  padding-top: 60px;
+  padding: 72px 0 40px;
 }
 
 .header-section {
   text-align: center;
-  margin-bottom: 40px;
-  color: #1890ff;
+  margin-bottom: 32px;
 }
 
 .icon-wrapper {
-  margin-bottom: 20px;
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #2563eb, #059669);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  box-shadow: 0 16px 34px rgba(37, 99, 235, 0.22);
 }
 
 .header-icon {
-  font-size: 64px;
-  color: rgba(255, 255, 255, 0.9);
-  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2));
+  font-size: 36px;
+  color: #ffffff;
 }
 
 .page-title {
   font-size: 32px;
   font-weight: 700;
-  margin: 0 0 12px 0;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  color: #111827;
+  margin: 0 0 8px;
 }
 
 .page-subtitle {
   font-size: 16px;
-  color: rgba(255, 255, 255, 0.8);
+  color: #64748b;
   margin: 0;
   line-height: 1.6;
 }
@@ -341,11 +347,15 @@ const handleSubmit = async () => {
 .upload-card {
   width: 100%;
   max-width: 600px;
-  border-radius: 16px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
-  padding: 40px;
+  border: 1px solid rgba(203, 213, 225, 0.72);
+  border-radius: 8px;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.94);
+  padding: 24px;
+
+  :deep(.arco-card-body) {
+    padding: 0;
+  }
 }
 
 .form-item-enhanced {
@@ -353,24 +363,24 @@ const handleSubmit = async () => {
 
   :deep(.arco-form-item-label) {
     font-weight: 600;
-    color: #2c3e50;
+    color: #0f172a;
     font-size: 16px;
     margin-bottom: 8px;
   }
 }
 
 .input-enhanced {
-  border-radius: 12px;
-  border: 2px solid #e1e8ed;
-  transition: all 0.3s ease;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 
   &:hover {
-    border-color: #1890ff;
+    border-color: #2563eb;
   }
 
   &:focus-within {
-    border-color: #1890ff;
-    box-shadow: 0 0 0 3px rgba(24, 144, 255, 0.1);
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
   }
 
   :deep(.arco-input) {
@@ -379,49 +389,56 @@ const handleSubmit = async () => {
   }
 
   :deep(.arco-input-prefix) {
-    color: #8c9eff;
+    color: #2563eb;
   }
 }
 
 .upload-enhanced {
   :deep(.arco-upload-draggable) {
-    border: 2px dashed #d1d9ff;
-    border-radius: 12px;
-    background: #f8f9ff;
-    transition: all 0.3s ease;
+    border: 1px dashed #94a3b8;
+    border-radius: 8px;
+    background: #f8fafc;
+    transition: border-color 0.2s ease, background 0.2s ease;
 
     &:hover {
-      border-color: #1890ff;
-      background: #f0f7ff;
+      border-color: #2563eb;
+      background: #eff6ff;
     }
   }
 }
 
 .upload-demo {
-  padding: 40px 20px;
+  min-height: 176px;
+  padding: 24px 20px;
+  color: #334155;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   text-align: center;
 }
 
 .upload-demo-icon {
-  margin-bottom: 20px;
+  line-height: 1;
+}
 
-  .icon-upload {
-    font-size: 48px;
-    color: #1890ff;
-  }
+.upload-icon {
+  font-size: 34px;
+  color: #2563eb;
 }
 
 .upload-demo-text {
   .upload-main-text {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 600;
-    color: #2c3e50;
-    margin: 0 0 8px 0;
+    color: #0f172a;
+    margin: 0 0 8px;
   }
 
   .upload-sub-text {
     font-size: 14px;
-    color: #8c9eff;
+    color: #64748b;
     margin: 0;
   }
 }
@@ -436,54 +453,37 @@ const handleSubmit = async () => {
   height: auto;
   font-size: 16px;
   font-weight: 600;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
-  transition: all 0.3s ease;
-
-  &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(24, 144, 255, 0.4);
-  }
+  border-radius: 8px;
 }
 
 // 响应式设计
-@media (max-width: 768px) {
+@media (max-width: 720px) {
   .index-view {
-    padding: 10px;
+    padding: 16px;
   }
 
   .back-button-container {
-    top: 10px;
-    right: 10px;
+    position: static;
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
   }
 
   .upload-container {
-    padding-top: 50px;
-  }
-
-  .header-icon {
-    font-size: 48px;
+    padding-top: 24px;
   }
 
   .page-title {
-    font-size: 24px;
-  }
-
-  .page-subtitle {
-    font-size: 14px;
+    font-size: 28px;
   }
 
   .upload-card {
-    padding: 24px;
-    margin: 0 4px;
+    padding: 18px;
   }
 
   .upload-demo {
-    padding: 24px 16px;
-  }
-
-  .upload-demo-icon .icon-upload {
-    font-size: 36px;
+    min-height: 156px;
+    padding: 20px 16px;
   }
 
   .upload-main-text {
@@ -497,12 +497,8 @@ const handleSubmit = async () => {
 }
 
 @media (max-width: 480px) {
-  .page-title {
-    font-size: 20px;
-  }
-
   .upload-card {
-    padding: 20px;
+    padding: 18px;
   }
 
   .form-item-enhanced {

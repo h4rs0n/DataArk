@@ -20,6 +20,12 @@
         </template>
         上传文件
       </a-button>
+      <a-button type="primary" @click="goToBackup" class="action-button">
+        <template #icon>
+          <icon-storage />
+        </template>
+        备份
+      </a-button>
     </div>
     <!--
     <div class="index-image-container">
@@ -33,7 +39,7 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router';
 // 引入 Arco Design 图标
-import { IconUpload, IconLink, IconDashboard } from '@arco-design/web-vue/es/icon';
+import { IconUpload, IconLink, IconDashboard, IconStorage } from '@arco-design/web-vue/es/icon';
 
 const router = useRouter();
 
@@ -48,6 +54,10 @@ const goToArchiveUrl = () => {
 // 上传文件功能
 const goToUpload = () => {
   router.push('/upload'); // 跳转到上传页面
+};
+
+const goToBackup = () => {
+  router.push('/backup');
 };
 
 
@@ -71,6 +81,8 @@ const search = () => {
   top: 20px;
   right: 20px;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 12px;
   z-index: 10; /* 确保按钮在顶层 */
 }
