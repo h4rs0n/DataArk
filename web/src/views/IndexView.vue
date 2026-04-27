@@ -8,17 +8,17 @@
         </template>
         项目统计
       </a-button>
-      <a-button type="primary" @click="goToArchiveUrl" class="action-button">
+      <a-button type="primary" @click="goToArchive" class="action-button">
         <template #icon>
           <icon-link />
         </template>
-        URL保存
+        存档
       </a-button>
-      <a-button type="primary" @click="goToUpload" class="action-button">
+      <a-button type="primary" @click="goToBackup" class="action-button">
         <template #icon>
-          <icon-upload />
+          <icon-storage />
         </template>
-        上传文件
+        备份
       </a-button>
     </div>
     <!--
@@ -33,7 +33,7 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router';
 // 引入 Arco Design 图标
-import { IconUpload, IconLink, IconDashboard } from '@arco-design/web-vue/es/icon';
+import { IconLink, IconDashboard, IconStorage } from '@arco-design/web-vue/es/icon';
 
 const router = useRouter();
 
@@ -41,13 +41,12 @@ const goToStats = () => {
   router.push('/stats');
 };
 
-const goToArchiveUrl = () => {
-  router.push('/archive-url');
+const goToArchive = () => {
+  router.push('/archive');
 };
 
-// 上传文件功能
-const goToUpload = () => {
-  router.push('/upload'); // 跳转到上传页面
+const goToBackup = () => {
+  router.push('/backup');
 };
 
 
@@ -71,6 +70,8 @@ const search = () => {
   top: 20px;
   right: 20px;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 12px;
   z-index: 10; /* 确保按钮在顶层 */
 }

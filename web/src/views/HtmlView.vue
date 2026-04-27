@@ -30,7 +30,7 @@
     <!-- HTML内容展示 -->
     <div v-else class="html-content-container">
       <div class="content-header">
-        <a-space>
+        <a-space wrap>
           <a-button
               type="primary"
               size="small"
@@ -49,6 +49,17 @@
               <IconArrowLeft />
             </template>
             返回
+          </a-button>
+          <a-button
+              status="danger"
+              size="small"
+              :loading="deleting"
+              @click="confirmDelete"
+          >
+            <template #icon>
+              <IconDelete />
+            </template>
+            删除
           </a-button>
           <a-tag color="blue">{{ currentPath }}</a-tag>
         </a-space>
@@ -71,12 +82,13 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import {useRoute, useRouter} from 'vue-router'
-import { Message } from '@arco-design/web-vue'
-import {IconArrowLeft, IconRefresh} from '@arco-design/web-vue/es/icon'
+import { Message, Modal } from '@arco-design/web-vue'
+import {IconArrowLeft, IconDelete, IconRefresh} from '@arco-design/web-vue/es/icon'
 
 const router = useRouter();
 // 响应式数据
 const loading = ref(false)
+const deleting = ref(false)
 const htmlContent = ref('')
 const error = ref(null)
 const route = useRoute()
@@ -165,6 +177,58 @@ const loadHtmlResource = async (path) => {
 // 重新加载
 const retryLoad = () => {
   loadHtmlResource(currentPath.value)
+}
+
+const deleteHtmlResource = async () => {
+  if (!currentPath.value) {
+    Message.error('缺少待删除的 HTML 路径')
+    return
+  }
+
+  const token = getAuthToken()
+  if (!token) {
+    Message.error('未找到有效的认证token，请先登录')
+    router.push('/login')
+    return
+  }
+
+  deleting.value = true
+  try {
+    const response = await fetch(`/api/archive?path=${encodeURIComponent(currentPath.value)}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json'
+      },
+      credentials: 'include'
+    })
+
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || data.Status !== '1') {
+      throw new Error(data.Message || `HTTP ${response.status}: ${response.statusText}`)
+    }
+
+    Message.success(data.Message || '文档删除成功')
+    goBack()
+  } catch (err) {
+    console.error('删除HTML资源失败:', err)
+    Message.error(`删除失败: ${err.message}`)
+  } finally {
+    deleting.value = false
+  }
+}
+
+const confirmDelete = () => {
+  Modal.confirm({
+    title: '确认删除文档',
+    content: `确定删除 ${currentPath.value}？删除后将同时移除搜索记录和 HTML 文件。`,
+    okText: '删除',
+    cancelText: '取消',
+    okButtonProps: {
+      status: 'danger'
+    },
+    onOk: deleteHtmlResource
+  })
 }
 
 // 组件挂载时加载资源

@@ -15,7 +15,7 @@ RUN make api
 
 FROM alpine:3
 
-RUN apk add --no-cache tzdata
+RUN apk add --no-cache tzdata postgresql-client
 ENV TZ=Asia/Shanghai
 
 COPY --from=backend-builder /DataArk/bin/EchoArkServer /usr/bin/EchoArkServer

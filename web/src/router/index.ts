@@ -19,19 +19,27 @@ const router = createRouter({
       component: () => import('@/views/LoginView.vue')
     },
     {
-      path: '/upload',
-      name: 'upload',
-      component: () => import('@/views/UploadView.vue')
+      path: '/archive',
+      name: 'archive',
+      component: () => import('@/views/ArchiveUrlView.vue')
     },
     {
       path: '/archive-url',
-      name: 'archive-url',
-      component: () => import('@/views/ArchiveUrlView.vue')
+      redirect: '/archive'
+    },
+    {
+      path: '/upload',
+      redirect: '/archive'
     },
     {
       path: '/stats',
       name: 'stats',
       component: () => import('@/views/StatsView.vue')
+    },
+    {
+      path: '/backup',
+      name: 'backup',
+      component: () => import('@/views/BackupView.vue')
     },
     {
       path: '/htmlviewer',

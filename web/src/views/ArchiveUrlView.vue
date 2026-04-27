@@ -12,104 +12,178 @@
     <div class="archive-container">
       <div class="header-section">
         <div class="icon-wrapper">
-          <a-icon-link class="header-icon" />
+          <a-icon-storage class="header-icon" />
         </div>
-        <h1 class="page-title">使用 URL 保存 HTML</h1>
-        <p class="page-subtitle">提交网页链接后，系统会生成可搜索的离线归档</p>
+        <h1 class="page-title">网页存档</h1>
+        <p class="page-subtitle">通过 URL 或本地 HTML 文件创建可搜索归档</p>
       </div>
 
       <a-card class="archive-card" :bordered="false">
-        <a-form :model="formData" @submit="handleSubmit" layout="vertical">
-          <a-form-item
-            field="url"
-            label="网页 URL"
-            validate-trigger="blur"
-            :rules="[{ required: true, message: '请输入网页 URL' }]"
-            class="form-item-enhanced"
-          >
-            <a-input
-              v-model="formData.url"
-              placeholder="https://example.com/article"
-              size="large"
-              class="input-enhanced"
-            >
-              <template #prefix>
-                <a-icon-link />
-              </template>
-            </a-input>
-          </a-form-item>
+        <a-tabs v-model:active-key="activeArchiveMode" type="rounded" class="archive-tabs">
+          <a-tab-pane key="url" title="URL 存档">
+            <a-form :model="urlForm" @submit="handleUrlSubmit" layout="vertical" class="archive-form">
+              <a-form-item
+                field="url"
+                label="网页 URL"
+                validate-trigger="blur"
+                :rules="[{ required: true, message: '请输入网页 URL' }]"
+                class="form-item-enhanced"
+              >
+                <a-input
+                  v-model="urlForm.url"
+                  placeholder="https://example.com/article"
+                  size="large"
+                  class="input-enhanced"
+                >
+                  <template #prefix>
+                    <a-icon-link />
+                  </template>
+                </a-input>
+              </a-form-item>
 
-          <div class="form-actions">
-            <a-button
-              type="primary"
-              html-type="submit"
-              :loading="submitting || polling"
-              size="large"
-              class="submit-button"
-            >
-              <template #icon>
-                <a-icon-check />
-              </template>
-              {{ submitting || polling ? '处理中...' : '开始保存' }}
-            </a-button>
-          </div>
-        </a-form>
-
-        <div v-if="currentTask" class="task-panel">
-          <a-alert :type="statusMeta.alertType" :message="statusMeta.title" show-icon>
-            <template #icon>
-              <a-icon-check v-if="currentTask.status === 'success'" />
-              <a-icon-exclamation-circle v-else-if="currentTask.status === 'failed'" />
-              <a-icon-clock-circle v-else />
-            </template>
-            <template #description>
-              <div class="task-description">
-                <div>{{ statusMeta.description }}</div>
-                <div v-if="currentTask.error" class="task-error">{{ currentTask.error }}</div>
+              <div class="form-actions">
+                <a-button
+                  type="primary"
+                  html-type="submit"
+                  :loading="urlSubmitting || polling"
+                  size="large"
+                  class="submit-button"
+                >
+                  <template #icon>
+                    <a-icon-check />
+                  </template>
+                  {{ urlSubmitting || polling ? '处理中...' : '开始存档' }}
+                </a-button>
               </div>
-            </template>
-          </a-alert>
+            </a-form>
 
-          <div class="task-meta">
-            <div class="task-meta-item">
-              <span class="task-meta-label">任务编号</span>
-              <span class="task-meta-value">{{ currentTask.id }}</span>
-            </div>
-            <div class="task-meta-item">
-              <span class="task-meta-label">域名</span>
-              <span class="task-meta-value">{{ currentTask.domain || '-' }}</span>
-            </div>
-            <div class="task-meta-item">
-              <span class="task-meta-label">文件</span>
-              <span class="task-meta-value">{{ currentTask.fileName || '-' }}</span>
-            </div>
-          </div>
+            <div v-if="currentTask" class="task-panel">
+              <a-alert :type="statusMeta.alertType" :title="statusMeta.title" show-icon>
+                <template #icon>
+                  <a-icon-check v-if="currentTask.status === 'success'" />
+                  <a-icon-exclamation-circle v-else-if="currentTask.status === 'failed'" />
+                  <a-icon-clock-circle v-else />
+                </template>
+                <template #description>
+                  <div class="task-description">
+                    <div>{{ statusMeta.description }}</div>
+                    <div v-if="currentTask.error" class="task-error">{{ currentTask.error }}</div>
+                  </div>
+                </template>
+              </a-alert>
 
-          <div class="task-actions">
-            <a-button
-              type="primary"
-              :disabled="!archiveFilePath"
-              @click="viewArchive"
-              class="task-button"
-            >
-              <template #icon>
-                <a-icon-eye />
-              </template>
-              查看归档
-            </a-button>
-            <a-button
-              :loading="polling"
-              :disabled="!currentTask.id || currentTask.status === 'success'"
-              @click="refreshTaskStatus"
-              class="task-button"
-            >
-              <template #icon>
-                <a-icon-refresh />
-              </template>
-              刷新状态
-            </a-button>
-          </div>
-        </div>
+              <div class="task-meta">
+                <div class="task-meta-item">
+                  <span class="task-meta-label">任务编号</span>
+                  <span class="task-meta-value">{{ currentTask.id }}</span>
+                </div>
+                <div class="task-meta-item">
+                  <span class="task-meta-label">域名</span>
+                  <span class="task-meta-value">{{ currentTask.domain || '-' }}</span>
+                </div>
+                <div class="task-meta-item">
+                  <span class="task-meta-label">文件</span>
+                  <span class="task-meta-value">{{ currentTask.fileName || '-' }}</span>
+                </div>
+              </div>
+
+              <div class="task-actions">
+                <a-button
+                  type="primary"
+                  :disabled="!archiveFilePath"
+                  @click="viewArchive"
+                  class="task-button"
+                >
+                  <template #icon>
+                    <a-icon-eye />
+                  </template>
+                  查看归档
+                </a-button>
+                <a-button
+                  :loading="polling"
+                  :disabled="!currentTask.id || currentTask.status === 'success'"
+                  @click="refreshTaskStatus"
+                  class="task-button"
+                >
+                  <template #icon>
+                    <a-icon-refresh />
+                  </template>
+                  刷新状态
+                </a-button>
+              </div>
+            </div>
+          </a-tab-pane>
+
+          <a-tab-pane key="file" title="文件上传">
+            <a-form :model="uploadForm" @submit="handleUploadSubmit" layout="vertical" class="archive-form">
+              <a-form-item
+                field="domain"
+                label="文件来源域名"
+                validate-trigger="blur"
+                :rules="[{ required: true, message: '请输入文件来源域名' }]"
+                class="form-item-enhanced"
+              >
+                <a-input
+                  v-model="uploadForm.domain"
+                  placeholder="请输入来源文件来源域名，例如: example.com"
+                  size="large"
+                  class="input-enhanced"
+                >
+                  <template #prefix>
+                    <a-icon-link />
+                  </template>
+                </a-input>
+              </a-form-item>
+
+              <a-form-item
+                field="fileList"
+                label="上传文件"
+                :rules="[{ required: true, message: '请上传文件' }]"
+                class="form-item-enhanced"
+              >
+                <a-upload
+                  draggable
+                  :action="uploadFileEndpoint"
+                  :limit="1"
+                  @success="handleUploadSuccess"
+                  @error="handleUploadError"
+                  @progress="handleUploadProgress"
+                  accept=".html"
+                  :headers="uploadHeaders"
+                  v-model:file-list="uploadForm.fileList"
+                  class="upload-enhanced"
+                >
+                  <template #upload-button>
+                    <div class="upload-demo">
+                      <div class="upload-demo-icon">
+                        <a-icon-upload class="upload-icon" />
+                      </div>
+                      <div class="upload-demo-text">
+                        <p class="upload-main-text">点击或拖拽文件到此处上传</p>
+                        <p class="upload-sub-text">仅支持 HTML 格式，单个文件最大 50MB</p>
+                      </div>
+                    </div>
+                  </template>
+                </a-upload>
+              </a-form-item>
+
+              <div class="form-actions">
+                <a-button
+                  type="primary"
+                  html-type="submit"
+                  :loading="uploadSubmitting"
+                  size="large"
+                  class="submit-button"
+                >
+                  <template #icon>
+                    <a-icon-check />
+                  </template>
+                  {{ uploadSubmitting ? '提交中...' : '提交存档' }}
+                </a-button>
+              </div>
+            </a-form>
+          </a-tab-pane>
+        </a-tabs>
       </a-card>
     </div>
   </div>
@@ -143,6 +217,11 @@ interface ArchiveTaskResponse {
   Error?: string
 }
 
+interface UploadArchiveForm {
+  domain: string
+  fileList: any[]
+}
+
 class ApiResponseError extends Error {
   constructor(
     message: string,
@@ -155,14 +234,23 @@ class ApiResponseError extends Error {
 const router = useRouter()
 const archiveByUrlEndpoint = '/api/archiveByURL'
 const archiveTaskEndpoint = '/api/archiveTask'
+const uploadFileEndpoint = '/api/uploadHtmlFile'
+const uploadArchiveEndpoint = '/api/upload'
 const pollInterval = 2000
 
-const formData = reactive({
+const activeArchiveMode = ref<'url' | 'file'>('url')
+const urlForm = reactive({
   url: '',
+})
+const uploadForm = reactive<UploadArchiveForm>({
+  domain: '',
+  fileList: [],
 })
 
 const currentTask = ref<ArchiveTask | null>(null)
-const submitting = ref(false)
+const urlSubmitting = ref(false)
+const uploadSubmitting = ref(false)
+const uploading = ref(false)
 const polling = ref(false)
 let pollingTimer: ReturnType<typeof window.setTimeout> | null = null
 
@@ -174,6 +262,12 @@ const authHeaders = (): Record<string, string> => {
   const token = getAuthToken()
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
+
+const uploadHeaders = computed<Record<string, string>>(() => authHeaders())
+
+const hasUploadingFile = computed(() => {
+  return uploadForm.fileList.some((file: any) => file.status === 'uploading')
+})
 
 const isFinalStatus = (status: ArchiveTaskStatus) => {
   return status === 'success' || status === 'failed'
@@ -328,7 +422,7 @@ const redirectToLogin = () => {
   sessionStorage.removeItem('token')
   Notification.warning({
     title: '登录状态已过期',
-    content: '请重新登录后再保存网页',
+    content: '请重新登录后再存档网页',
     position: 'topRight',
     duration: 4000,
   })
@@ -358,8 +452,8 @@ const isValidArchiveURL = (value: string) => {
   }
 }
 
-const handleSubmit = async () => {
-  const archiveURL = formData.url.trim()
+const handleUrlSubmit = async () => {
+  const archiveURL = urlForm.url.trim()
 
   if (!isValidArchiveURL(archiveURL)) {
     Notification.error({
@@ -373,7 +467,7 @@ const handleSubmit = async () => {
 
   try {
     clearPollingTimer()
-    submitting.value = true
+    urlSubmitting.value = true
     polling.value = false
     currentTask.value = null
 
@@ -390,7 +484,125 @@ const handleSubmit = async () => {
   } catch (error) {
     handleRequestError(error)
   } finally {
-    submitting.value = false
+    urlSubmitting.value = false
+  }
+}
+
+const handleUploadSuccess = () => {
+  uploading.value = false
+  Notification.success({
+    title: '文件上传成功',
+    content: '文件已成功上传，可以进行提交',
+    position: 'topRight',
+    duration: 3000,
+  })
+}
+
+const isUnauthorizedUploadError = (file: any) => {
+  const statusCode = Number(
+    file?.statusCode ?? file?.response?.statusCode ?? file?.response?.status ?? file?.xhr?.status ?? 0
+  )
+  if (statusCode === 401) {
+    return true
+  }
+
+  const message = String(file?.response?.Message ?? file?.response?.message ?? '')
+  return /valid token|unauthorized|authentication/i.test(message)
+}
+
+const handleUploadError = (file: any) => {
+  uploading.value = false
+
+  if (isUnauthorizedUploadError(file)) {
+    redirectToLogin()
+    return
+  }
+
+  Notification.error({
+    title: '文件上传失败',
+    content: '文件上传失败，请检查网络连接后重试',
+    position: 'topRight',
+    duration: 5000,
+  })
+}
+
+const handleUploadProgress = () => {
+  uploading.value = true
+}
+
+const handleUploadSubmit = async () => {
+  if (uploadForm.fileList.length === 0 || uploadForm.domain.trim() === '') {
+    Notification.error({
+      title: '表单不完整',
+      content: '请完成所有必填项后再提交',
+      position: 'topRight',
+      duration: 3000,
+    })
+    return
+  }
+
+  if (hasUploadingFile.value || uploading.value) {
+    Notification.warning({
+      title: '请等待上传完成',
+      content: '文件正在上传中，请等待上传完成后再提交',
+      position: 'topRight',
+      duration: 4000,
+    })
+    return
+  }
+
+  const hasFailedFile = uploadForm.fileList.some((file: any) => file.status === 'error')
+  if (hasFailedFile) {
+    Notification.error({
+      title: '文件上传失败',
+      content: '存在上传失败的文件，请重新上传后再提交',
+      position: 'topRight',
+      duration: 4000,
+    })
+    return
+  }
+
+  try {
+    uploadSubmitting.value = true
+    const response = await fetch(uploadArchiveEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        domain: uploadForm.domain.trim(),
+        files: uploadForm.fileList,
+      }),
+    })
+
+    if (response.status === 401) {
+      redirectToLogin()
+      return
+    }
+
+    if (!response.ok) {
+      throw new Error('Upload failed')
+    }
+
+    Notification.success({
+      title: '提交成功',
+      content: '文件已成功索引，您可以在系统中查看和管理',
+      position: 'topRight',
+      duration: 4000,
+    })
+
+    uploadForm.domain = ''
+    uploadForm.fileList = []
+  } catch {
+    Notification.error({
+      title: '提交失败',
+      content: '提交过程中发生错误，请检查网络连接后重试',
+      position: 'topRight',
+      duration: 5000,
+    })
+  } finally {
+    uploadSubmitting.value = false
   }
 }
 
@@ -427,6 +639,9 @@ onBeforeUnmount(() => {
 .index-view {
   min-height: 100vh;
   padding: 20px;
+  background:
+    linear-gradient(180deg, rgba(242, 247, 255, 0.9) 0%, rgba(248, 250, 252, 1) 42%),
+    #f8fafc;
   position: relative;
 }
 
@@ -438,18 +653,15 @@ onBeforeUnmount(() => {
 }
 
 .back-button {
-  background: #e9f2ff;
-  border: none;
+  color: #4b5563;
+  background: rgba(255, 255, 255, 0.88);
   border-radius: 8px;
-  padding: 8px 16px;
-  font-weight: 500;
-  color: #1890ff;
-  transition: all 0.3s ease;
+  padding: 8px 14px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
 
   &:hover {
-    background: rgba(255, 255, 255, 1);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    color: #1d4ed8;
+    background: #ffffff;
   }
 }
 
@@ -459,47 +671,71 @@ onBeforeUnmount(() => {
   align-items: center;
   max-width: 800px;
   margin: 0 auto;
-  padding-top: 60px;
+  padding: 72px 0 40px;
 }
 
 .header-section {
   text-align: center;
-  margin-bottom: 40px;
-  color: #1890ff;
+  margin-bottom: 32px;
 }
 
 .icon-wrapper {
-  margin-bottom: 20px;
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #2563eb, #059669);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  box-shadow: 0 16px 34px rgba(37, 99, 235, 0.22);
 }
 
 .header-icon {
-  font-size: 64px;
-  color: rgba(255, 255, 255, 0.9);
-  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2));
+  font-size: 36px;
+  color: #ffffff;
 }
 
 .page-title {
   font-size: 32px;
   font-weight: 700;
-  margin: 0 0 12px 0;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  color: #111827;
+  margin: 0 0 8px;
 }
 
 .page-subtitle {
   font-size: 16px;
-  color: rgba(255, 255, 255, 0.8);
+  color: #64748b;
   margin: 0;
   line-height: 1.6;
 }
 
 .archive-card {
   width: 100%;
-  max-width: 600px;
-  border-radius: 16px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
-  padding: 40px;
+  max-width: 640px;
+  border: 1px solid rgba(203, 213, 225, 0.72);
+  border-radius: 8px;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.94);
+  padding: 24px;
+
+  :deep(.arco-card-body) {
+    padding: 0;
+  }
+}
+
+.archive-tabs {
+  :deep(.arco-tabs-nav) {
+    margin-bottom: 24px;
+  }
+
+  :deep(.arco-tabs-nav-tab) {
+    justify-content: center;
+  }
+}
+
+.archive-form {
+  margin-top: 4px;
 }
 
 .form-item-enhanced {
@@ -507,24 +743,24 @@ onBeforeUnmount(() => {
 
   :deep(.arco-form-item-label) {
     font-weight: 600;
-    color: #2c3e50;
+    color: #0f172a;
     font-size: 16px;
     margin-bottom: 8px;
   }
 }
 
 .input-enhanced {
-  border-radius: 12px;
-  border: 2px solid #e1e8ed;
-  transition: all 0.3s ease;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 
   &:hover {
-    border-color: #1890ff;
+    border-color: #2563eb;
   }
 
   &:focus-within {
-    border-color: #1890ff;
-    box-shadow: 0 0 0 3px rgba(24, 144, 255, 0.1);
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
   }
 
   :deep(.arco-input) {
@@ -533,7 +769,57 @@ onBeforeUnmount(() => {
   }
 
   :deep(.arco-input-prefix) {
-    color: #8c9eff;
+    color: #2563eb;
+  }
+}
+
+.upload-enhanced {
+  :deep(.arco-upload-draggable) {
+    border: 1px dashed #94a3b8;
+    border-radius: 8px;
+    background: #f8fafc;
+    transition: border-color 0.2s ease, background 0.2s ease;
+
+    &:hover {
+      border-color: #2563eb;
+      background: #eff6ff;
+    }
+  }
+}
+
+.upload-demo {
+  min-height: 176px;
+  padding: 24px 20px;
+  color: #334155;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.upload-demo-icon {
+  line-height: 1;
+}
+
+.upload-icon {
+  font-size: 34px;
+  color: #2563eb;
+}
+
+.upload-demo-text {
+  .upload-main-text {
+    font-size: 16px;
+    font-weight: 600;
+    color: #0f172a;
+    margin: 0 0 8px;
+  }
+
+  .upload-sub-text {
+    font-size: 14px;
+    color: #64748b;
+    margin: 0;
   }
 }
 
@@ -547,20 +833,13 @@ onBeforeUnmount(() => {
   height: auto;
   font-size: 16px;
   font-weight: 600;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
-  transition: all 0.3s ease;
-
-  &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(24, 144, 255, 0.4);
-  }
+  border-radius: 8px;
 }
 
 .task-panel {
   margin-top: 32px;
   padding-top: 28px;
-  border-top: 1px solid #edf1f7;
+  border-top: 1px solid #e2e8f0;
 }
 
 .task-description {
@@ -585,17 +864,18 @@ onBeforeUnmount(() => {
   align-items: start;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: 10px;
-  background: #f8f9ff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
 }
 
 .task-meta-label {
-  color: #607089;
+  color: #64748b;
   font-weight: 600;
 }
 
 .task-meta-value {
-  color: #2c3e50;
+  color: #334155;
   word-break: break-all;
 }
 
@@ -609,39 +889,37 @@ onBeforeUnmount(() => {
 
 .task-button {
   min-width: 120px;
-  border-radius: 10px;
+  border-radius: 8px;
   font-weight: 600;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 720px) {
   .index-view {
-    padding: 10px;
+    padding: 16px;
   }
 
   .back-button-container {
-    top: 10px;
-    right: 10px;
+    position: static;
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
   }
 
   .archive-container {
-    padding-top: 50px;
-  }
-
-  .header-icon {
-    font-size: 48px;
+    padding-top: 24px;
   }
 
   .page-title {
-    font-size: 24px;
-  }
-
-  .page-subtitle {
-    font-size: 14px;
+    font-size: 28px;
   }
 
   .archive-card {
-    padding: 24px;
-    margin: 0 4px;
+    padding: 18px;
+  }
+
+  .upload-demo {
+    min-height: 156px;
+    padding: 20px 16px;
   }
 
   .submit-button {
@@ -651,16 +929,16 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 480px) {
-  .page-title {
-    font-size: 20px;
-  }
-
   .archive-card {
-    padding: 20px;
+    padding: 18px;
   }
 
   .form-item-enhanced {
     margin-bottom: 24px;
+  }
+
+  .upload-demo {
+    padding: 20px 12px;
   }
 
   .task-meta-item {
