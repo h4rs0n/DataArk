@@ -8,17 +8,11 @@
         </template>
         项目统计
       </a-button>
-      <a-button type="primary" @click="goToArchiveUrl" class="action-button">
+      <a-button type="primary" @click="goToArchive" class="action-button">
         <template #icon>
           <icon-link />
         </template>
-        URL保存
-      </a-button>
-      <a-button type="primary" @click="goToUpload" class="action-button">
-        <template #icon>
-          <icon-upload />
-        </template>
-        上传文件
+        存档
       </a-button>
       <a-button type="primary" @click="goToBackup" class="action-button">
         <template #icon>
@@ -39,7 +33,7 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router';
 // 引入 Arco Design 图标
-import { IconUpload, IconLink, IconDashboard, IconStorage } from '@arco-design/web-vue/es/icon';
+import { IconLink, IconDashboard, IconStorage } from '@arco-design/web-vue/es/icon';
 
 const router = useRouter();
 
@@ -47,13 +41,8 @@ const goToStats = () => {
   router.push('/stats');
 };
 
-const goToArchiveUrl = () => {
-  router.push('/archive-url');
-};
-
-// 上传文件功能
-const goToUpload = () => {
-  router.push('/upload'); // 跳转到上传页面
+const goToArchive = () => {
+  router.push('/archive');
 };
 
 const goToBackup = () => {
