@@ -3,6 +3,7 @@ package common
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
@@ -334,6 +335,35 @@ func IncrementArchiveStat(source string, delta int) error {
 			"updated_at": time.Now(),
 		}),
 	}).Create(&stat).Error
+}
+
+// DecrementArchiveStat 在删除归档文件后更新缓存统计。
+// 统计行不存在时直接忽略，因为用户可能还没有手动刷新过统计快照。
+func DecrementArchiveStat(source string, delta int) error {
+	source = strings.TrimSpace(source)
+	if source == "" || delta <= 0 {
+		return nil
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		var stat ArchiveStat
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&stat, "source = ?", source).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+
+		stat.FileCount -= delta
+		if stat.FileCount <= 0 {
+			return tx.Delete(&ArchiveStat{Source: source}).Error
+		}
+
+		return tx.Model(&stat).Updates(map[string]interface{}{
+			"file_count": stat.FileCount,
+			"updated_at": time.Now(),
+		}).Error
+	})
 }
 
 func buildArchiveStatsSnapshot(stats []ArchiveStat) *ArchiveStatsSnapshot {

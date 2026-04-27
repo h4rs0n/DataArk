@@ -371,6 +371,57 @@ func AddDocByHTMLFile(c *gin.Context) {
 	return
 }
 
+func DeleteArchiveDocument(c *gin.Context) {
+	htmlPath := strings.TrimSpace(c.Query("path"))
+	if htmlPath == "" {
+		var req struct {
+			Path string `json:"path"`
+		}
+		if err := c.ShouldBindJSON(&req); err == nil {
+			htmlPath = strings.TrimSpace(req.Path)
+		}
+	}
+
+	if htmlPath == "" {
+		c.JSON(403, gin.H{
+			"Status":  "0",
+			"Message": "缺少关键参数 path",
+		})
+		return
+	}
+
+	result, err := search.DeleteDocByHTMLPath(c.Request.Context(), htmlPath)
+	if err != nil {
+		switch {
+		case errors.Is(err, search.ErrInvalidArchivePath):
+			c.JSON(403, gin.H{
+				"Status":  "0",
+				"Message": "HTML 路径参数错误",
+				"Error":   err.Error(),
+			})
+		case errors.Is(err, search.ErrArchiveDocumentNotFound), errors.Is(err, search.ErrArchiveFileNotFound):
+			c.JSON(404, gin.H{
+				"Status":  "0",
+				"Message": "文档不存在",
+				"Error":   err.Error(),
+			})
+		default:
+			c.JSON(500, gin.H{
+				"Status":  "0",
+				"Message": "删除文档失败",
+				"Error":   err.Error(),
+			})
+		}
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"Status":  "1",
+		"Message": "文档删除成功",
+		"Data":    result,
+	})
+}
+
 var Templates embed.FS
 
 func CORSMiddleware() gin.HandlerFunc {
@@ -418,6 +469,7 @@ func WebStarter(debugMode bool) {
 		protected.GET("/archiveTask/:taskId", GetArchiveTaskStatus)
 		protected.GET("/archiveStats", GetArchiveStats)
 		protected.POST("/archiveStats/refresh", RefreshArchiveStats)
+		protected.DELETE("/archive", DeleteArchiveDocument)
 		protected.GET("/authChecker", authController.AuthChecker)
 		protected.POST("/register", authController.Register)
 	}
