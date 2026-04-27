@@ -55,6 +55,7 @@ jobs:
               - "7845:7845"
             volumes:
               - ./archive:/archive
+              - ./meili_dumps:/meili_dumps
             depends_on:
               database:
                 condition: service_healthy
@@ -62,6 +63,7 @@ jobs:
               "-loc", "/archive/",
               "-mhost", "http://meili:7700",
               "-mkey", "masterkey",
+              "-mdump", "/meili_dumps",
               "-dbhost", "database",
             ]
 
@@ -69,8 +71,10 @@ jobs:
             image: getmeili/meilisearch:v1.15
             environment:
               MEILI_MASTER_KEY: "masterkey"
+              MEILI_DUMP_DIR: "/meili_dumps"
             volumes:
               - ./meili_data:/meili_data
+              - ./meili_dumps:/meili_dumps
 
           database:
             image: postgres:17-alpine3.21

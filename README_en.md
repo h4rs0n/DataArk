@@ -28,12 +28,14 @@ An executable file will be generated in the `api/bin` directory. After deploying
 ./api/bin/DataArk.exe -loc ./docker/archive \
                       -mhost "http://meili:7700" \
                       -mkey "RandomKey" \
+                      -mdump "./docker/meili_dumps" \
                       -dbhost "127.0.0.1" \
                       -dbport "5432" \
                       -dbname "postgres" \
                       -dbuser "postgres" \
                       -dbpasswd "postgres" \
 ```
+The backup feature depends on the `pg_dump` and `psql` commands. For manual deployments, install PostgreSQL client tools and point `-mdump` to the shared Meilisearch dump directory configured by `MEILI_DUMP_DIR` or `--dump-dir`.
 
 
 
