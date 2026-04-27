@@ -33,12 +33,14 @@ make build
 ./api/bin/DataArk.exe -loc ./docker/archive \
                       -mhost "http://meili:7700" \
                       -mkey "RandomKey" \
+                      -mdump "./docker/meili_dumps" \
                       -dbhost "127.0.0.1" \
                       -dbport "5432" \
                       -dbname "postgres" \
                       -dbuser "postgres" \
                       -dbpasswd "postgres" \
 ```
+备份功能依赖 `pg_dump` 与 `psql` 命令；手动部署时请安装 PostgreSQL client，并确保 `-mdump` 指向 Meilisearch 的共享 dump 目录（对应 Meilisearch 的 `MEILI_DUMP_DIR` 或 `--dump-dir`）。
 
 
 
