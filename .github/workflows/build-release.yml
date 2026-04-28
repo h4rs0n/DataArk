@@ -71,7 +71,7 @@ jobs:
             ]
 
           meili:
-            image: getmeili/meilisearch:v1.15
+            image: getmeili/meilisearch:v1.42
             environment:
               MEILI_MASTER_KEY: "masterkey"
               MEILI_DUMP_DIR: "/meili_dumps"
