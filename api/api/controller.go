@@ -20,6 +20,28 @@ import (
 	"strings"
 )
 
+var (
+	checkArchiveConsistency  = search.CheckArchiveConsistency
+	repairArchiveConsistency = search.RepairArchiveConsistency
+	registerWithToken        = common.RegisterWithToken
+	loginWithToken           = common.LoginWithToken
+	queryByKeyword           = search.QueryByKeyword
+	addDocURLTask            = search.AddDocURLTask
+	getArchiveTask           = search.GetArchiveTask
+	getArchiveStatsSnapshot  = common.GetArchiveStats
+	refreshStatsFromDisk     = common.RefreshArchiveStatsFromDisk
+	addDocFileToIndex        = search.AddDocFile
+	deleteDocByHTMLPath      = search.DeleteDocByHTMLPath
+	createBackupArchive      = backup.CreateBackup
+	restoreBackupArchive     = backup.RestoreBackup
+	initDatabase             = common.InitDB
+	createSearchIndex        = search.CreateDefaultIndex
+	initArchiveQueue         = search.InitArchiveTaskQueue
+	runGinRouter             = func(router *gin.Engine, addr string) error {
+		return router.Run(addr)
+	}
+)
+
 // AuthController 认证控制器
 type AuthController struct{}
 
@@ -40,7 +62,7 @@ func (ac *AuthController) Register(c *gin.Context) {
 	}
 
 	// 注册用户并生成Token
-	tokenResponse, err := common.RegisterWithToken(req.Username, req.Password)
+	tokenResponse, err := registerWithToken(req.Username, req.Password)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"Status":  "0",
@@ -74,7 +96,7 @@ func (ac *AuthController) Login(c *gin.Context) {
 	}
 
 	// 登录并生成Token
-	tokenResponse, err := common.LoginWithToken(req.Username, req.Password)
+	tokenResponse, err := loginWithToken(req.Username, req.Password)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"Status":  "0",
@@ -122,7 +144,7 @@ func SearchByKeyword(c *gin.Context) {
 		})
 		return
 	}
-	queryResult, pageAndHits := search.QueryByKeyword(queryString, pageNum)
+	queryResult, pageAndHits := queryByKeyword(queryString, pageNum)
 
 	if queryResult == "Error" {
 		c.JSON(500, gin.H{
@@ -164,7 +186,7 @@ func AddDocByURL(c *gin.Context) {
 		return
 	}
 
-	task, created, err := search.AddDocURLTask(archiveURL)
+	task, created, err := addDocURLTask(archiveURL)
 	if err != nil {
 		c.JSON(500, gin.H{
 			"Status":  "0",
@@ -192,7 +214,7 @@ func GetArchiveTaskStatus(c *gin.Context) {
 		return
 	}
 
-	task, err := search.GetArchiveTask(taskID)
+	task, err := getArchiveTask(taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(404, gin.H{
@@ -220,7 +242,7 @@ func GetArchiveTaskStatus(c *gin.Context) {
 
 // GetArchiveStats 返回已入库的归档统计快照，不触发磁盘扫描。
 func GetArchiveStats(c *gin.Context) {
-	stats, err := common.GetArchiveStats()
+	stats, err := getArchiveStatsSnapshot()
 	if err != nil {
 		c.JSON(500, gin.H{
 			"Status":  "0",
@@ -239,7 +261,7 @@ func GetArchiveStats(c *gin.Context) {
 
 // RefreshArchiveStats 扫描归档目录并用扫描结果重建统计表。
 func RefreshArchiveStats(c *gin.Context) {
-	stats, err := common.RefreshArchiveStatsFromDisk()
+	stats, err := refreshStatsFromDisk()
 	if err != nil {
 		c.JSON(500, gin.H{
 			"Status":  "0",
@@ -253,6 +275,42 @@ func RefreshArchiveStats(c *gin.Context) {
 		"Status":  "1",
 		"Message": "刷新统计信息成功",
 		"Data":    stats,
+	})
+}
+
+func GetArchiveConsistency(c *gin.Context) {
+	report, err := checkArchiveConsistency(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{
+			"Status":  "0",
+			"Message": "检查归档一致性失败",
+			"Error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"Status":  "1",
+		"Message": "检查归档一致性成功",
+		"Data":    report,
+	})
+}
+
+func RepairArchiveConsistency(c *gin.Context) {
+	report, err := repairArchiveConsistency(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{
+			"Status":  "0",
+			"Message": "修复归档一致性失败",
+			"Error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"Status":  "1",
+		"Message": "修复归档一致性完成",
+		"Data":    report,
 	})
 }
 
@@ -358,7 +416,7 @@ func AddDocByHTMLFile(c *gin.Context) {
 		return
 	}
 
-	if err := search.AddDocFile(req.Files[0].Name, req.Domain); err != nil {
+	if err := addDocFileToIndex(req.Files[0].Name, req.Domain); err != nil {
 		c.JSON(500, gin.H{
 			"Status":  "0",
 			"Message": "上传文件失败",
@@ -392,7 +450,7 @@ func DeleteArchiveDocument(c *gin.Context) {
 		return
 	}
 
-	result, err := search.DeleteDocByHTMLPath(c.Request.Context(), htmlPath)
+	result, err := deleteDocByHTMLPath(c.Request.Context(), htmlPath)
 	if err != nil {
 		switch {
 		case errors.Is(err, search.ErrInvalidArchivePath):
@@ -425,7 +483,7 @@ func DeleteArchiveDocument(c *gin.Context) {
 }
 
 func CreateBackup(c *gin.Context) {
-	preparedBackup, err := backup.CreateBackup(c.Request.Context())
+	preparedBackup, err := createBackupArchive(c.Request.Context())
 	if err != nil {
 		c.JSON(500, gin.H{
 			"Status":  "0",
@@ -486,7 +544,7 @@ func RestoreBackup(c *gin.Context) {
 		return
 	}
 
-	result, err := backup.RestoreBackup(c.Request.Context(), zipPath)
+	result, err := restoreBackupArchive(c.Request.Context(), zipPath)
 	if err != nil {
 		c.JSON(500, gin.H{
 			"Status":  "0",
@@ -525,9 +583,9 @@ func WebStarter(debugMode bool) {
 	if !debugMode {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	common.InitDB()
-	search.CreateDefaultIndex()
-	if err := search.InitArchiveTaskQueue(); err != nil {
+	initDatabase()
+	createSearchIndex()
+	if err := initArchiveQueue(); err != nil {
 		fmt.Printf("failed to initialize archive task queue: %v\n", err)
 		return
 	}
@@ -550,6 +608,8 @@ func WebStarter(debugMode bool) {
 		protected.GET("/archiveTask/:taskId", GetArchiveTaskStatus)
 		protected.GET("/archiveStats", GetArchiveStats)
 		protected.POST("/archiveStats/refresh", RefreshArchiveStats)
+		protected.GET("/archiveConsistency", GetArchiveConsistency)
+		protected.POST("/archiveConsistency/repair", RepairArchiveConsistency)
 		protected.DELETE("/archive", DeleteArchiveDocument)
 		protected.POST("/backup", CreateBackup)
 		protected.POST("/backup/restore", RestoreBackup)
@@ -571,7 +631,7 @@ func WebStarter(debugMode bool) {
 		c.HTML(http.StatusOK, "index.html", nil)
 	})
 
-	err := router.Run("0.0.0.0:7845")
+	err := runGinRouter(router, "0.0.0.0:7845")
 	if err != nil {
 		fmt.Print("Maybe the port is already in use. Please check it.")
 		return

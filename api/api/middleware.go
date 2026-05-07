@@ -6,6 +6,12 @@ import (
 	"net/http"
 )
 
+var (
+	extractTokenFromHeader = common.ExtractTokenFromHeader
+	validateToken          = common.ValidateToken
+	getUserByID            = common.GetUserByID
+)
+
 // AuthMiddleware JWT认证中间件
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -21,7 +27,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		}
 
 		// 提取Token
-		tokenString, err := common.ExtractTokenFromHeader(authHeader)
+		tokenString, err := extractTokenFromHeader(authHeader)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"Status":  "0",
@@ -33,7 +39,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		}
 
 		// 验证Token
-		claims, err := common.ValidateToken(tokenString)
+		claims, err := validateToken(tokenString)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"Status":  "0",
@@ -45,7 +51,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		}
 
 		// 获取用户信息
-		user, err := common.GetUserByID(claims.UserID)
+		user, err := getUserByID(claims.UserID)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"Status":  "0",
@@ -76,21 +82,21 @@ func OptionalAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		tokenString, err := common.ExtractTokenFromHeader(authHeader)
+		tokenString, err := extractTokenFromHeader(authHeader)
 		if err != nil {
 			// Token格式错误，继续处理但不设置用户信息
 			c.Next()
 			return
 		}
 
-		claims, err := common.ValidateToken(tokenString)
+		claims, err := validateToken(tokenString)
 		if err != nil {
 			// Token无效，继续处理但不设置用户信息
 			c.Next()
 			return
 		}
 
-		user, err := common.GetUserByID(claims.UserID)
+		user, err := getUserByID(claims.UserID)
 		if err != nil {
 			// 用户不存在，继续处理但不设置用户信息
 			c.Next()

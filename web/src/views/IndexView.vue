@@ -20,6 +20,12 @@
         </template>
         备份
       </a-button>
+      <a-button type="primary" @click="goToConsistency" class="action-button">
+        <template #icon>
+          <icon-sync />
+        </template>
+        一致性
+      </a-button>
     </div>
     <!--
     <div class="index-image-container">
@@ -33,7 +39,7 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router';
 // 引入 Arco Design 图标
-import { IconLink, IconDashboard, IconStorage } from '@arco-design/web-vue/es/icon';
+import { IconLink, IconDashboard, IconStorage, IconSync } from '@arco-design/web-vue/es/icon';
 
 const router = useRouter();
 
@@ -47,6 +53,10 @@ const goToArchive = () => {
 
 const goToBackup = () => {
   router.push('/backup');
+};
+
+const goToConsistency = () => {
+  router.push('/consistency');
 };
 
 

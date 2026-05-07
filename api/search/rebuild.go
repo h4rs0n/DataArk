@@ -8,6 +8,7 @@ import (
 	"github.com/meilisearch/meilisearch-go"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,14 +21,24 @@ type RebuildIndexResult struct {
 }
 
 func RebuildIndexFromArchive(ctx context.Context) (*RebuildIndexResult, error) {
+	result, _, err := rebuildIndexFromArchive(ctx, false)
+	return result, err
+}
+
+func RebuildRecoverableIndexFromArchive(ctx context.Context) (*RebuildIndexResult, []ArchiveConsistencyIssue, error) {
+	return rebuildIndexFromArchive(ctx, true)
+}
+
+func rebuildIndexFromArchive(ctx context.Context, skipInvalidFiles bool) (*RebuildIndexResult, []ArchiveConsistencyIssue, error) {
 	client := meilisearch.New(common.MEILIHOST, meilisearch.WithAPIKey(common.MEILIAPIKey))
 	if err := recreateBlogsIndex(ctx, client); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	archiveRoot := filepath.Clean(common.ARCHIVEFILELOACTION)
 	documents := make([]map[string]interface{}, 0, rebuildBatchSize)
 	indexedDocuments := 0
+	unrecoverableIssues := make([]ArchiveConsistencyIssue, 0)
 
 	flush := func() error {
 		if len(documents) == 0 {
@@ -53,9 +64,9 @@ func RebuildIndexFromArchive(ctx context.Context) (*RebuildIndexResult, error) {
 
 	if _, err := os.Stat(archiveRoot); err != nil {
 		if os.IsNotExist(err) {
-			return &RebuildIndexResult{}, nil
+			return &RebuildIndexResult{}, unrecoverableIssues, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 
 	err := filepath.WalkDir(archiveRoot, func(currentPath string, entry fs.DirEntry, walkErr error) error {
@@ -83,9 +94,22 @@ func RebuildIndexFromArchive(ctx context.Context) (*RebuildIndexResult, error) {
 			return nil
 		}
 
-		document, err := buildDocumentFromHTML(currentPath, pathParts[0], entry.Name())
+		fileName := strings.Join(pathParts[1:], "/")
+		document, err := buildDocumentFromHTML(currentPath, pathParts[0], fileName)
 		if err != nil {
-			return err
+			if !skipInvalidFiles {
+				return err
+			}
+			unrecoverableIssues = append(unrecoverableIssues, ArchiveConsistencyIssue{
+				Severity:    ArchiveConsistencySeverityError,
+				Store:       ArchiveConsistencyStoreHTML,
+				Domain:      pathParts[0],
+				Filename:    fileName,
+				Path:        "/" + path.Join("archive", pathParts[0], fileName),
+				Message:     fmt.Sprintf("HTML 文件存在但无法解析为搜索文档: %v", err),
+				Recoverable: false,
+			})
+			return nil
 		}
 		documents = append(documents, document)
 
@@ -95,14 +119,14 @@ func RebuildIndexFromArchive(ctx context.Context) (*RebuildIndexResult, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := flush(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return &RebuildIndexResult{Documents: indexedDocuments}, nil
+	return &RebuildIndexResult{Documents: indexedDocuments}, unrecoverableIssues, nil
 }
 
 func recreateBlogsIndex(ctx context.Context, client meilisearch.ServiceManager) error {

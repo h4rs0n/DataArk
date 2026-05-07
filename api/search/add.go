@@ -36,9 +36,13 @@ const (
 )
 
 var (
-	archiveTaskQueue     chan string
-	archiveTaskQueueOnce sync.Once
-	archiveTaskCreateMu  sync.Mutex
+	archiveTaskQueue       chan string
+	archiveTaskQueueOnce   sync.Once
+	archiveTaskCreateMu    sync.Mutex
+	ensureArchiveTaskQueue = InitArchiveTaskQueue
+	enqueueArchiveTask     = func(taskID string) {
+		archiveTaskQueue <- taskID
+	}
 )
 
 type singleFileTaskResponse struct {
@@ -96,7 +100,7 @@ func AddDocFile(fileName string, originDomain string) (err error) {
 }
 
 func AddDocURLTask(rawURL string) (*common.ArchiveTask, bool, error) {
-	if err := InitArchiveTaskQueue(); err != nil {
+	if err := ensureArchiveTaskQueue(); err != nil {
 		return nil, false, err
 	}
 
@@ -138,12 +142,12 @@ func AddDocURLTask(rawURL string) (*common.ArchiveTask, bool, error) {
 		return nil, false, err
 	}
 
-	archiveTaskQueue <- task.ID
+	enqueueArchiveTask(task.ID)
 	return task, true, nil
 }
 
 func GetArchiveTask(taskID string) (*common.ArchiveTask, error) {
-	if err := InitArchiveTaskQueue(); err != nil {
+	if err := ensureArchiveTaskQueue(); err != nil {
 		return nil, err
 	}
 	return common.GetArchiveTaskByID(taskID)

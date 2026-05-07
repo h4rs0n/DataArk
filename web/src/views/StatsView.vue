@@ -41,7 +41,7 @@
         </div>
 
         <a-spin :loading="loading || refreshing" class="stats-spin">
-          <a-alert v-if="errorMessage" type="error" :message="errorMessage" show-icon class="stats-alert" />
+          <a-alert v-if="errorMessage" type="error" :title="errorMessage" show-icon class="stats-alert" />
 
           <div class="summary-grid">
             <div class="summary-tile">

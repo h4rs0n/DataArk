@@ -42,6 +42,11 @@ const router = createRouter({
       component: () => import('@/views/BackupView.vue')
     },
     {
+      path: '/consistency',
+      name: 'consistency',
+      component: () => import('@/views/ConsistencyView.vue')
+    },
+    {
       path: '/htmlviewer',
       name: 'HtmlViewer',
       component: () => import('@/views/HtmlView.vue')

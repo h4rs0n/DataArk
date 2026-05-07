@@ -21,7 +21,7 @@
 
       <!-- 错误提示 -->
       <div class="error-area" v-if="errorStatus">
-        <a-alert type="error" :message="errorMessage" show-icon>
+        <a-alert type="error" :title="errorMessage" show-icon>
           <template #icon>
             <icon-exclamation-circle />
           </template>

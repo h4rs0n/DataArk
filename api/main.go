@@ -6,10 +6,15 @@ import (
 	"fmt"
 )
 
+var (
+	parseFlags = common.ParseFlag
+	startWeb   = api.WebStarter
+)
+
 func main() {
 	display_banner()
-	common.ParseFlag()
-	api.WebStarter(common.DEBUG)
+	parseFlags()
+	startWeb(common.DEBUG)
 }
 
 func display_banner() {

@@ -23,6 +23,9 @@ func RefreshArchiveStatsFromDisk() (*ArchiveStatsSnapshot, error) {
 func ScanArchiveStats(rootDir string) ([]ArchiveStat, error) {
 	entries, err := os.ReadDir(rootDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []ArchiveStat{}, nil
+		}
 		return nil, err
 	}
 
@@ -69,7 +72,7 @@ func countHTMLFiles(rootDir string) (int, error) {
 		if entry.IsDir() {
 			return nil
 		}
-		if strings.EqualFold(filepath.Ext(path), ".html") {
+		if isHTMLArchiveFile(path) {
 			fileCount++
 		}
 		return nil
@@ -79,4 +82,9 @@ func countHTMLFiles(rootDir string) (int, error) {
 	}
 
 	return fileCount, nil
+}
+
+func isHTMLArchiveFile(path string) bool {
+	extension := strings.ToLower(filepath.Ext(path))
+	return extension == ".html" || extension == ".htm"
 }
