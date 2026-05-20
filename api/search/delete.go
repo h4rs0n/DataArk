@@ -86,6 +86,9 @@ func DeleteDocByHTMLPath(ctx context.Context, rawPath string) (*DeleteDocResult,
 	if err := os.Remove(archivePath.AbsPath); err != nil {
 		return nil, err
 	}
+	if err := common.DeleteArchiveDocumentMetadata(archivePath.Domain, archivePath.Filename); err != nil {
+		return nil, err
+	}
 	if err := common.DecrementArchiveStat(archivePath.Domain, 1); err != nil {
 		return nil, err
 	}

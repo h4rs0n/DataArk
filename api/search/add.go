@@ -90,13 +90,13 @@ func InitArchiveTaskQueue() error {
 	return initErr
 }
 
-func AddDocFile(fileName string, originDomain string) (err error) {
+func AddDocFile(fileName string, originDomain string, sourceURL string) (err error) {
 	htmlFilePath := filepath.Join(common.ARCHIVEFILELOACTION, "Temporary", fileName)
 	_, err = os.Stat(htmlFilePath)
 	if err != nil {
 		return err
 	}
-	return addDocFileByPath(htmlFilePath, fileName, originDomain)
+	return addDocFileByPath(htmlFilePath, fileName, originDomain, sourceURL)
 }
 
 func AddDocURLTask(rawURL string) (*common.ArchiveTask, bool, error) {
@@ -197,7 +197,7 @@ func processArchiveTask(taskID string) {
 		return
 	}
 
-	if err := addDownloadedDocFile(singleFileResp.FileName, task.Domain); err != nil {
+	if err := addDownloadedDocFile(singleFileResp.FileName, task.Domain, task.URL); err != nil {
 		finishArchiveTaskWithError(task, singleFileResp, err)
 		return
 	}
@@ -364,16 +364,16 @@ func normalizeArchiveURL(rawURL string) (string, string, error) {
 	return parsedURL.String(), strings.ToLower(parsedURL.Hostname()), nil
 }
 
-func addDownloadedDocFile(fileName string, originDomain string) error {
+func addDownloadedDocFile(fileName string, originDomain string, sourceURL string) error {
 	htmlFilePath := filepath.Join(common.ARCHIVEFILELOACTION, fileName)
 	_, err := os.Stat(htmlFilePath)
 	if err != nil {
 		return err
 	}
-	return addDocFileByPath(htmlFilePath, fileName, originDomain)
+	return addDocFileByPath(htmlFilePath, fileName, originDomain, sourceURL)
 }
 
-func addDocFileByPath(htmlFilePath string, fileName string, originDomain string) (err error) {
+func addDocFileByPath(htmlFilePath string, fileName string, originDomain string, sourceURL string) (err error) {
 	HTMLContent, err := common.GetHTMLFileContent(htmlFilePath)
 	if err != nil {
 		return err
@@ -393,6 +393,7 @@ func addDocFileByPath(htmlFilePath string, fileName string, originDomain string)
 			"title":    title,
 			"filename": fileName,
 			"domain":   originDomain,
+			"link":     strings.TrimSpace(sourceURL),
 			"content":  HTMLPureText,
 		},
 	}
@@ -417,6 +418,9 @@ func addDocFileByPath(htmlFilePath string, fileName string, originDomain string)
 
 	err = os.Rename(htmlFilePath, targetPath)
 	if err != nil {
+		return err
+	}
+	if err := common.SaveArchiveDocumentMetadata(originDomain, fileName, sourceURL); err != nil {
 		return err
 	}
 	// 统计只在新增归档文件时递增；同名覆盖不改变磁盘上的 HTML 文件总量。

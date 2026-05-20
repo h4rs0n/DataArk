@@ -183,12 +183,17 @@ func buildDocumentFromHTML(htmlPath string, domain string, fileName string) (map
 	if err != nil {
 		return nil, err
 	}
+	sourceURL, err := common.GetArchiveDocumentSourceURL(domain, fileName)
+	if err != nil {
+		return nil, err
+	}
 
 	return map[string]interface{}{
 		"id":       uuid.New().String(),
 		"title":    title,
 		"filename": fileName,
 		"domain":   domain,
+		"link":     sourceURL,
 		"content":  pureText,
 	}, nil
 }

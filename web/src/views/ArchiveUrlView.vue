@@ -136,6 +136,24 @@
               </a-form-item>
 
               <a-form-item
+                field="sourceUrl"
+                label="原文链接"
+                validate-trigger="blur"
+                class="form-item-enhanced"
+              >
+                <a-input
+                  v-model="uploadForm.sourceUrl"
+                  placeholder="可选，https://example.com/article"
+                  size="large"
+                  class="input-enhanced"
+                >
+                  <template #prefix>
+                    <a-icon-link />
+                  </template>
+                </a-input>
+              </a-form-item>
+
+              <a-form-item
                 field="fileList"
                 label="上传文件"
                 :rules="[{ required: true, message: '请上传文件' }]"
@@ -219,6 +237,7 @@ interface ArchiveTaskResponse {
 
 interface UploadArchiveForm {
   domain: string
+  sourceUrl: string
   fileList: any[]
 }
 
@@ -244,6 +263,7 @@ const urlForm = reactive({
 })
 const uploadForm = reactive<UploadArchiveForm>({
   domain: '',
+  sourceUrl: '',
   fileList: [],
 })
 
@@ -452,6 +472,11 @@ const isValidArchiveURL = (value: string) => {
   }
 }
 
+const isBlankOrValidArchiveURL = (value: string) => {
+  const trimmedValue = value.trim()
+  return trimmedValue === '' || isValidArchiveURL(trimmedValue)
+}
+
 const handleUrlSubmit = async () => {
   const archiveURL = urlForm.url.trim()
 
@@ -541,6 +566,16 @@ const handleUploadSubmit = async () => {
     return
   }
 
+  if (!isBlankOrValidArchiveURL(uploadForm.sourceUrl)) {
+    Notification.error({
+      title: '原文链接格式错误',
+      content: '原文链接需要以 http:// 或 https:// 开头',
+      position: 'topRight',
+      duration: 4000,
+    })
+    return
+  }
+
   if (hasUploadingFile.value || uploading.value) {
     Notification.warning({
       title: '请等待上传完成',
@@ -572,6 +607,7 @@ const handleUploadSubmit = async () => {
       },
       body: JSON.stringify({
         domain: uploadForm.domain.trim(),
+        sourceUrl: uploadForm.sourceUrl.trim(),
         files: uploadForm.fileList,
       }),
     })
@@ -593,6 +629,7 @@ const handleUploadSubmit = async () => {
     })
 
     uploadForm.domain = ''
+    uploadForm.sourceUrl = ''
     uploadForm.fileList = []
   } catch {
     Notification.error({

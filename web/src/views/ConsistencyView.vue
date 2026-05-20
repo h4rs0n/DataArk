@@ -155,7 +155,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { Notification } from '@arco-design/web-vue'
 import { useRouter } from 'vue-router'
 
@@ -341,9 +341,6 @@ const issueKey = (issue: ConsistencyIssue) => {
   return [issue.store, issue.domain, issue.filename, issue.path, issue.message].join('|')
 }
 
-onMounted(() => {
-  void loadReport()
-})
 </script>
 
 <style lang="less" scoped>

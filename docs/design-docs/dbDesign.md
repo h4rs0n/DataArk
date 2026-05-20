@@ -1,6 +1,6 @@
 # 数据库设计
 
-本文档根据 `api/common/db.go` 中的 GORM 模型和数据库操作整理，用于后续开发时参考。当前后端使用 PostgreSQL，连接参数来自运行时配置，并在 `InitDB()` 中通过 `AutoMigrate(&User{}, &ArchiveTask{}, &ArchiveStat{})` 自动迁移表结构。
+本文档根据 `api/common/db.go` 中的 GORM 模型和数据库操作整理，用于后续开发时参考。当前后端使用 PostgreSQL，连接参数来自运行时配置，并在 `InitDB()` 中通过 `AutoMigrate(&User{}, &ArchiveTask{}, &ArchiveStat{}, &ArchiveDocument{})` 自动迁移表结构。
 
 ## 总体约定
 
@@ -8,7 +8,7 @@
 - 数据库：PostgreSQL。
 - 表名：使用 GORM 默认命名规则，`User` 对应 `users`，`ArchiveTask` 对应 `archive_tasks`，`ArchiveStat` 对应 `archive_stats`。
 - 时区：连接 DSN 设置为 `TimeZone=Asia/Shanghai`。
-- 当前没有显式外键关系，用户表、归档任务表和统计表彼此独立。
+- 当前没有显式外键关系，用户表、归档任务表、归档文档元数据表和统计表彼此独立。
 
 ## users
 
@@ -105,6 +105,25 @@ HTML 归档统计表，用于保存当前归档目录中各个 URL 来源的 HTM
 - `Temporary` 是上传中转目录，不计入统计。
 - 根目录中未归属到来源目录的文件不计入统计；文件应在完成索引后移动到来源目录。
 
+## archive_documents
+
+归档文档元数据表，用于保存单个 HTML 文件的补充信息。HTML 文件本体仍保存在归档目录；数据库只保存无法从文件路径稳定恢复的元数据，例如搜索结果中的原文链接。
+
+| 字段 | Go 类型 | 约束/索引 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `uint` | 主键 | 元数据记录 ID，由 GORM 管理主键生成 |
+| `domain` | `string` | 与 `file_name` 组成唯一索引，非空，长度 255 | 归档文件所属域名目录 |
+| `file_name` | `string` | 与 `domain` 组成唯一索引，非空，长度 1024 | 归档文件名或域名目录下的相对路径 |
+| `source_url` | `string` | 无显式约束 | 原文链接，可为空；URL 存档默认使用被归档 URL，文件上传由用户可选填写 |
+| `created_at` | `time.Time` | GORM 自动维护 | 创建时间 |
+| `updated_at` | `time.Time` | GORM 自动维护 | 更新时间 |
+
+### 主要操作
+
+- 保存元数据：归档文件成功索引并移动到来源目录后，按 `(domain, file_name)` upsert `source_url`。
+- 查询元数据：重建搜索索引时按 `(domain, file_name)` 查询 `source_url`，写入 Meilisearch 文档的 `link` 字段。
+- 删除元数据：删除归档文件时同步删除对应元数据记录。
+
 ## 结构关系
 
 当前数据库结构可以概括为：
@@ -129,6 +148,14 @@ archive_tasks
   updated_at
   started_at
   finished_at
+
+archive_documents
+  id (PK)
+  domain (unique with file_name)
+  file_name (unique with domain)
+  source_url
+  created_at
+  updated_at
 
 archive_stats
   source (PK)
