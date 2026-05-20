@@ -55,15 +55,19 @@
                 </div>
               </template>
               <template #extra>
-                <a-link
+                <a-button
                     v-if="item.link"
-                    :href="item.link"
-                    target="_blank"
-                    class="original-link"
+                    type="primary"
+                    size="small"
+                    class="original-link-button"
+                    :title="item.link"
+                    @click.stop="openSourceURL(item.link)"
                 >
-                  <icon-link />
+                  <template #icon>
+                    <icon-link />
+                  </template>
                   <span class="link-text">原文链接</span>
-                </a-link>
+                </a-button>
               </template>
               <div class="result-content-wrapper">
                 <div class="result-content" v-html="item.content"></div>
@@ -223,6 +227,18 @@ async function queryData(keyword: string, pages : string = "1") {
 
 function htmlViewer(htmlLoc : string) {
   router.push({ path: '/htmlviewer', query: { loc: htmlLoc } })
+}
+
+function openSourceURL(sourceURL: string) {
+  try {
+    const parsedURL = new URL(sourceURL)
+    if (parsedURL.protocol !== 'http:' && parsedURL.protocol !== 'https:') {
+      return
+    }
+    window.open(parsedURL.href, '_blank', 'noopener,noreferrer')
+  } catch {
+    // 忽略异常链接，避免搜索索引里的脏数据触发前端跳转错误。
+  }
 }
 
 // 检测移动设备
@@ -474,20 +490,17 @@ watch(() => [route.query.q, route.query.p], ([query, page]) => {
       }
     }
 
-    .original-link {
+    .original-link-button {
       display: flex;
       align-items: center;
       gap: 6px;
       font-size: 14px;
-      color: #718096;
-      text-decoration: none;
-      padding: 8px 16px;
-      border-radius: 8px;
+      padding: 0 14px;
+      border-radius: 6px;
       transition: all 0.2s ease;
 
       &:hover {
-        color: #1d39c4;
-        background: #f7fafc;
+        transform: translateY(-1px);
       }
 
       .link-text {
@@ -498,7 +511,7 @@ watch(() => [route.query.q, route.query.p], ([query, page]) => {
 
       @media (max-width: 768px) {
         font-size: 12px;
-        padding: 6px 12px;
+        padding: 0 10px;
       }
     }
 
@@ -789,13 +802,9 @@ watch(() => [route.query.q, route.query.p], ([query, page]) => {
       color: #4a9eff;
     }
 
-    .original-link {
-      color: #94a3b8;
-
-      &:hover {
-        color: #4a9eff;
-        background: #334155;
-      }
+    .original-link-button {
+      background: #2563eb;
+      border-color: #2563eb;
     }
 
     .result-content-wrapper {
