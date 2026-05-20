@@ -51,6 +51,17 @@ type ArchiveStat struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// ArchiveDocument 保存单个归档 HTML 的可搜索元数据。
+// HTML 文件本身仍然以 domain/file_name 的目录结构落盘，这里只保存文件无法表达的外部来源信息。
+type ArchiveDocument struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Domain    string    `json:"domain" gorm:"uniqueIndex:idx_archive_documents_identity;not null;size:255"`
+	FileName  string    `json:"fileName" gorm:"uniqueIndex:idx_archive_documents_identity;not null;size:1024"`
+	SourceURL string    `json:"sourceUrl"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 // ArchiveStatsSnapshot 是接口返回的统计快照，总数由各来源数量求和得到。
 type ArchiveStatsSnapshot struct {
 	TotalFiles int               `json:"totalFiles"`
@@ -74,7 +85,7 @@ func InitDB() {
 	// fmt.Println("Database connected successfully!")
 
 	// 自动迁移数据库表
-	err = db.AutoMigrate(&User{}, &ArchiveTask{}, &ArchiveStat{})
+	err = db.AutoMigrate(&User{}, &ArchiveTask{}, &ArchiveStat{}, &ArchiveDocument{})
 	if err != nil {
 		log.Fatal("failed to migrate database", err)
 	}
@@ -284,6 +295,56 @@ func ListArchiveTasksByStatuses(statuses []string) ([]ArchiveTask, error) {
 		return nil, err
 	}
 	return tasks, nil
+}
+
+func SaveArchiveDocumentMetadata(domain string, fileName string, sourceURL string) error {
+	domain = strings.TrimSpace(domain)
+	fileName = strings.TrimSpace(fileName)
+	sourceURL = strings.TrimSpace(sourceURL)
+	if db == nil || domain == "" || fileName == "" {
+		return nil
+	}
+
+	document := ArchiveDocument{
+		Domain:    domain,
+		FileName:  fileName,
+		SourceURL: sourceURL,
+	}
+
+	return db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "domain"}, {Name: "file_name"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"source_url": sourceURL,
+			"updated_at": time.Now(),
+		}),
+	}).Create(&document).Error
+}
+
+func GetArchiveDocumentSourceURL(domain string, fileName string) (string, error) {
+	domain = strings.TrimSpace(domain)
+	fileName = strings.TrimSpace(fileName)
+	if db == nil || domain == "" || fileName == "" {
+		return "", nil
+	}
+
+	var document ArchiveDocument
+	if err := db.First(&document, "domain = ? AND file_name = ?", domain, fileName).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return document.SourceURL, nil
+}
+
+func DeleteArchiveDocumentMetadata(domain string, fileName string) error {
+	domain = strings.TrimSpace(domain)
+	fileName = strings.TrimSpace(fileName)
+	if db == nil || domain == "" || fileName == "" {
+		return nil
+	}
+
+	return db.Where("domain = ? AND file_name = ?", domain, fileName).Delete(&ArchiveDocument{}).Error
 }
 
 // GetArchiveStats 读取当前统计快照，并在内存中汇总 HTML 文件总数。

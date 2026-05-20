@@ -381,8 +381,9 @@ type File struct {
 }
 
 type AddDocRequest struct {
-	Domain string `json:"domain"`
-	Files  []File `json:"files"`
+	Domain    string `json:"domain"`
+	SourceURL string `json:"sourceUrl"`
+	Files     []File `json:"files"`
 }
 
 func AddDocByHTMLFile(c *gin.Context) {
@@ -416,7 +417,21 @@ func AddDocByHTMLFile(c *gin.Context) {
 		return
 	}
 
-	if err := addDocFileToIndex(req.Files[0].Name, req.Domain); err != nil {
+	sourceURL := strings.TrimSpace(req.SourceURL)
+	if sourceURL != "" {
+		parsedURL, err := neturl.Parse(sourceURL)
+		if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Hostname() == "" {
+			c.JSON(403, gin.H{
+				"Status":  "0",
+				"Message": "原文链接格式错误",
+			})
+			return
+		}
+		parsedURL.Fragment = ""
+		sourceURL = parsedURL.String()
+	}
+
+	if err := addDocFileToIndex(req.Files[0].Name, req.Domain, sourceURL); err != nil {
 		c.JSON(500, gin.H{
 			"Status":  "0",
 			"Message": "上传文件失败",

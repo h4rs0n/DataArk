@@ -13,13 +13,14 @@ type Result struct {
 	Id       string `json:"id"`
 	Title    string `json:"title"`
 	Filename string `json:"filename"`
+	Link     string `json:"link"`
 	Content  string `json:"content"`
 	Domain   string `json:"domain"`
 }
 
 func QueryByKeyword(keyword string, pageNum int64) (string, map[string]int) {
 	pageAndHits := make(map[string]int)
-	QueryResults := make([]Result, 10)
+	QueryResults := make([]Result, 0, 10)
 	preTag := "<span style=\"color: red;\">"
 	postTag := "</span>"
 
@@ -37,6 +38,10 @@ func QueryByKeyword(keyword string, pageNum int64) (string, map[string]int) {
 	}
 
 	meiliResp, err := client.Index("blogs").Search(keyword, meiliReqOpt)
+	if err != nil {
+		log.Println("Error Occur: " + err.Error())
+		return "Error", nil
+	}
 
 	TotalHits := meiliResp.TotalHits
 	TotalPages := meiliResp.TotalPages
@@ -45,7 +50,7 @@ func QueryByKeyword(keyword string, pageNum int64) (string, map[string]int) {
 
 	hits := meiliResp.Hits
 
-	for hitIndex, hit := range hits {
+	for _, hit := range hits {
 		var result Result
 		singleContent, _ := hit.(map[string]interface{})
 
@@ -53,22 +58,21 @@ func QueryByKeyword(keyword string, pageNum int64) (string, map[string]int) {
 		formattedContent, _ := singleContent["_formatted"].(map[string]interface{})
 		formattedContentStr, _ := formattedContent["content"].(string)
 
-		result.Id = formattedContent["id"].(string)
-		result.Filename = singleContent["filename"].(string)
-		result.Domain = singleContent["domain"].(string)
-		result.Title = singleContent["title"].(string)
+		result.Id = documentString(formattedContent, "id")
+		if result.Id == "" {
+			result.Id = documentString(singleContent, "id")
+		}
+		result.Filename = documentString(singleContent, "filename")
+		result.Domain = documentString(singleContent, "domain")
+		result.Title = documentString(singleContent, "title")
+		result.Link = documentString(singleContent, "link")
 		result.Content = formattedContentStr
 
-		QueryResults[hitIndex] = result
+		QueryResults = append(QueryResults, result)
 	}
 	resultJson, _ := json.MarshalIndent(QueryResults, "", "    ")
 	// fmt.Println(string(resultJson))
 	resultJsonString := strings.ReplaceAll(string(resultJson), "\n", "")
 
-	if err == nil {
-		return resultJsonString, pageAndHits
-	} else {
-		log.Println("Error Occur: " + err.Error())
-		return "Error", nil
-	}
+	return resultJsonString, pageAndHits
 }

@@ -340,17 +340,21 @@ func TestAddDocByHTMLFileBranches(t *testing.T) {
 		t.Fatalf("missing file name status = %d, want 403", response.Code)
 	}
 
-	addDocFileToIndex = func(fileName string, originDomain string) error {
-		if fileName != "page.html" || originDomain != "example.com" {
-			t.Fatalf("unexpected add doc input %q %q", fileName, originDomain)
+	addDocFileToIndex = func(fileName string, originDomain string, sourceURL string) error {
+		if fileName != "page.html" || originDomain != "example.com" || sourceURL != "https://example.com/source" {
+			t.Fatalf("unexpected add doc input %q %q %q", fileName, originDomain, sourceURL)
 		}
 		return nil
 	}
-	response = performJSONControllerRequest(http.MethodPost, "/upload", `{"domain":"example.com","files":[{"name":"page.html"}]}`, AddDocByHTMLFile)
+	response = performJSONControllerRequest(http.MethodPost, "/upload", `{"domain":"example.com","sourceUrl":"https://example.com/source#section","files":[{"name":"page.html"}]}`, AddDocByHTMLFile)
 	if response.Code != http.StatusOK {
 		t.Fatalf("success status = %d, want 200", response.Code)
 	}
-	addDocFileToIndex = func(string, string) error { return errors.New("index failed") }
+	response = performJSONControllerRequest(http.MethodPost, "/upload", `{"domain":"example.com","sourceUrl":"ftp://example.com/source","files":[{"name":"page.html"}]}`, AddDocByHTMLFile)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("invalid source url status = %d, want 403", response.Code)
+	}
+	addDocFileToIndex = func(string, string, string) error { return errors.New("index failed") }
 	response = performJSONControllerRequest(http.MethodPost, "/upload", `{"domain":"example.com","files":[{"name":"page.html"}]}`, AddDocByHTMLFile)
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("error status = %d, want 500", response.Code)

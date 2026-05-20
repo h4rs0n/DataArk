@@ -278,7 +278,7 @@ func TestAddDocFileRejectsMissingTemporaryFile(t *testing.T) {
 	})
 	common.ARCHIVEFILELOACTION = t.TempDir()
 
-	err := AddDocFile("missing.html", "example.com")
+	err := AddDocFile("missing.html", "example.com", "")
 	if err == nil || !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("err = %v, want not exist", err)
 	}

@@ -7,11 +7,12 @@
       </div>
 
       <!-- 结果信息 -->
-      <div class="results-info" v-if="!errorStatus">
+      <div class="results-info" v-if="!errorStatus && hasSearched">
         <div class="results-meta">
           <span class="results-count">
             <icon-search class="search-icon" />
-            约为 <strong>{{ TotalHits }}</strong> 条结果
+            <template v-if="isLoading">正在搜索...</template>
+            <template v-else>约为 <strong>{{ TotalHits }}</strong> 条结果</template>
           </span>
           <span class="search-term" v-if="pageData.searchKey">
             搜索："{{ pageData.searchKey }}"
@@ -48,13 +49,14 @@
                     {{ item.title }}
                   </a-link>
                   <div class="domain-badge">
-                    <icon-globe />
+                    <icon-link />
                     {{ item.domain }}
                   </div>
                 </div>
               </template>
               <template #extra>
                 <a-link
+                    v-if="item.link"
                     :href="item.link"
                     target="_blank"
                     class="original-link"
@@ -76,8 +78,14 @@
           </div>
         </transition-group>
 
+        <div class="loading-state" v-if="isLoading">
+          <a-spin :loading="true" dot>
+            <div class="loading-content">搜索结果加载中</div>
+          </a-spin>
+        </div>
+
         <!-- 空状态 -->
-        <div class="empty-state" v-if="pageData.jsonResult.totalHits === 0">
+        <div class="empty-state" v-if="!isLoading && hasSearched && pageData.jsonResult.totalHits === 0">
           <div class="empty-icon">
             <icon-search />
           </div>
@@ -87,7 +95,7 @@
       </div>
 
       <!-- 分页 -->
-      <div class="pagination-container" v-if="!errorStatus && TotalHits != '0'">
+      <div class="pagination-container" v-if="!errorStatus && !isLoading && TotalHits != '0'">
         <a-pagination
             :total="Number(TotalHits)"
             :page-size="10"
@@ -122,11 +130,14 @@ interface ResultItem {
   domain: string
 }
 
-let errorMessage = "搜索请求出现错误"
+let errorMessage = ref("搜索请求出现错误")
 let errorStatus = ref(false)
+const isLoading = ref(false)
+const hasSearched = ref(false)
 let TotalHits = ref("0")
 let pageNum = "1"
 let fileLink = "/archive/"
+let latestRequestId = 0
 
 // 响应式检测
 const isMobile = ref(false)
@@ -147,38 +158,67 @@ const changePage = (currentPage: number) => {
   router.push({ path: '/search', query: { q: pageData.searchKey, p: currentPage } });
 }
 
-function queryData(keyword: string, pages : string = "1") {
+async function queryData(keyword: string, pages : string = "1") {
+  const normalizedKeyword = keyword?.trim() ?? ''
+  if (normalizedKeyword === '') {
+    errorStatus.value = true
+    errorMessage.value = "请输入关键字"
+    isLoading.value = false
+    hasSearched.value = false
+    TotalHits.value = "0"
+    pageData.jsonResult = { result: [], totalHits: 0 }
+    return
+  }
+
+  const requestId = latestRequestId + 1
+  latestRequestId = requestId
+  isLoading.value = true
+  hasSearched.value = true
+  errorStatus.value = false
   // let queryURL = `http://127.0.0.1:7845/api/search?q=${encodeURIComponent(keyword)}&p=${pages}`
-  let queryURL = `/api/search?q=${encodeURIComponent(keyword)}&p=${pages}`
+  let queryURL = `/api/search?q=${encodeURIComponent(normalizedKeyword)}&p=${pages || "1"}`
   const token = localStorage.getItem('token');
 
-  fetch(queryURL, {
-    method: 'GET',
-    headers: (token ? { Authorization: `Bearer ${token}` } : {})
-  })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Network response was not ok');
-        }
-        return response.json();
-      })
-      .then((data) => {
-        TotalHits.value = data.TotalHits
+  try {
+    const response = await fetch(queryURL, {
+      method: 'GET',
+      headers: (token ? { Authorization: `Bearer ${token}` } : {})
+    })
+    if (!response.ok) {
+      throw new Error('Network response was not ok');
+    }
+    const data = await response.json();
+    if (requestId !== latestRequestId) {
+      return
+    }
 
-        if (data.Status == "0") {
-          errorStatus.value = true
-          errorMessage = data.Message
-        }
-        else {
-          errorStatus.value = false
-          pageData.jsonResult = { result: JSON.parse(data.Result), totalHits: JSON.parse(data.TotalHits) }
-        }
+    TotalHits.value = String(data.TotalHits ?? 0)
 
-      })
-      .catch((error) => {
-        errorStatus.value = true
-        console.error('There was an error:', error);
-      });
+    if (data.Status == "0") {
+      errorStatus.value = true
+      errorMessage.value = data.Message || "搜索请求出现错误"
+    }
+    else {
+      errorStatus.value = false
+      pageData.jsonResult = {
+        result: JSON.parse(data.Result || '[]'),
+        totalHits: Number(data.TotalHits ?? 0)
+      }
+    }
+  }
+  catch (error) {
+    if (requestId !== latestRequestId) {
+      return
+    }
+    errorStatus.value = true
+    errorMessage.value = "搜索请求出现错误"
+    console.error('There was an error:', error);
+  }
+  finally {
+    if (requestId === latestRequestId) {
+      isLoading.value = false
+    }
+  }
 }
 
 function htmlViewer(htmlLoc : string) {
@@ -191,9 +231,6 @@ const checkMobile = () => {
 }
 
 onMounted(() => {
-  pageData.searchKey = route.query.q! as string
-  pageNum = route.query.p! as string
-
   checkMobile()
   window.addEventListener('resize', checkMobile)
 });
@@ -206,21 +243,10 @@ const scrollToTop = () => {
   });
 };
 
-// 监听q参数
-watch(() => route.query.q, (newData) => {
-  pageData.searchKey = newData! as string
-
-  if(pageData.searchKey != null && pageData.searchKey != ""){
-    queryData(pageData.searchKey)
-  }
-  else{
-    errorMessage = "请输入关键字"
-  }
-}, { immediate: true });
-
-// 监听p参数
-watch(() => route.query.p, (newData) => {
-  pageNum = newData! as string
+// 监听搜索参数
+watch(() => [route.query.q, route.query.p], ([query, page]) => {
+  pageData.searchKey = (query as string) || ''
+  pageNum = (page as string) || '1'
   queryData(pageData.searchKey, pageNum)
   scrollToTop()
 }, { immediate: true });
@@ -518,6 +544,20 @@ watch(() => route.query.p, (newData) => {
       }
     }
   }
+}
+
+.loading-state {
+  display: flex;
+  justify-content: center;
+  padding: 80px 20px;
+}
+
+.loading-content {
+  min-width: 180px;
+  padding: 16px 20px;
+  color: #4a5568;
+  font-size: 15px;
+  text-align: center;
 }
 
 .empty-state {
