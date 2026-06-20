@@ -157,6 +157,7 @@ const loadHtmlResource = async (path) => {
 
     const html = await response.text()
     htmlContent.value = html
+    await recordArchiveClick(path)
 
     Message.success('HTML资源加载成功')
 
@@ -171,6 +172,29 @@ const loadHtmlResource = async (path) => {
     Message.error(`加载失败: ${err.message}`)
   } finally {
     loading.value = false
+  }
+}
+
+const recordArchiveClick = async (path) => {
+  const token = getAuthToken()
+  if (!token) {
+    return
+  }
+  try {
+    await fetch('/api/archive/clicks', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        path,
+        keyword: route.query.q || ''
+      })
+    })
+  } catch (err) {
+    console.warn('记录归档点击失败:', err)
   }
 }
 

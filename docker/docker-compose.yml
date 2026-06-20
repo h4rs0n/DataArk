@@ -19,6 +19,9 @@ services:
       "-mkey", "masterkey",
       "-mdump", "/meili_dumps",
       "-dbhost", "database",
+      "-discover-interval", "6h",
+      "-discover-timeout", "12s",
+      "-discover-max", "50",
     ]
 
   meili:

@@ -17,6 +17,10 @@ func ParseFlag() {
 	DBNameFlag := flag.String("dbname", "echoark", "Assign DB name")
 	DBUserFlag := flag.String("dbuser", "postgres", "Assign DB user")
 	DBPasswordFlag := flag.String("dbpasswd", "postgres", "Assign DB password")
+	DiscoveryFetchIntervalFlag := flag.String("discover-interval", "6h", "Assign discovery source fetch interval, set 0 to disable")
+	DiscoveryRequestTimeoutFlag := flag.String("discover-timeout", "12s", "Assign discovery HTTP request timeout")
+	DiscoveryMaxCandidatesFlag := flag.Int("discover-max", 50, "Assign max candidates collected per source fetch")
+	DiscoveryUserAgentFlag := flag.String("discover-ua", "DataArkDiscovery/1.0", "Assign discovery HTTP User-Agent")
 	flag.Parse()
 	DEBUG = *debugFlag
 	ARCHIVEFILELOACTION = *ArchiveFileLocationFlag
@@ -29,4 +33,8 @@ func ParseFlag() {
 	DBName = *DBNameFlag
 	DBUser = *DBUserFlag
 	DBPassword = *DBPasswordFlag
+	DISCOVERYFETCHINTERVAL = *DiscoveryFetchIntervalFlag
+	DISCOVERYREQUESTTIMEOUT = *DiscoveryRequestTimeoutFlag
+	DISCOVERYMAXCANDIDATES = *DiscoveryMaxCandidatesFlag
+	DISCOVERYUSERAGENT = strings.TrimSpace(*DiscoveryUserAgentFlag)
 }

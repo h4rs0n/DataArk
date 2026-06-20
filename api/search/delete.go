@@ -6,11 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/meilisearch/meilisearch-go"
-	neturl "net/url"
 	"os"
-	"path"
-	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -33,17 +29,10 @@ type DeleteDocResult struct {
 	TaskUID     int64    `json:"taskUid"`
 }
 
-type archiveDocumentPath struct {
-	RequestPath string
-	Domain      string
-	Filename    string
-	AbsPath     string
-}
-
 func DeleteDocByHTMLPath(ctx context.Context, rawPath string) (*DeleteDocResult, error) {
-	archivePath, err := resolveArchiveDocumentPath(rawPath)
+	archivePath, err := common.ResolveArchiveDocumentPath(rawPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArchivePath, err)
 	}
 
 	fileInfo, err := os.Stat(archivePath.AbsPath)
@@ -102,65 +91,12 @@ func DeleteDocByHTMLPath(ctx context.Context, rawPath string) (*DeleteDocResult,
 	}, nil
 }
 
-func resolveArchiveDocumentPath(rawPath string) (*archiveDocumentPath, error) {
-	requestPath := strings.TrimSpace(rawPath)
-	if requestPath == "" {
-		return nil, fmt.Errorf("%w: empty path", ErrInvalidArchivePath)
-	}
-
-	if parsedURL, err := neturl.Parse(requestPath); err == nil && parsedURL.Path != "" {
-		requestPath = parsedURL.Path
-	}
-
-	requestPath = strings.TrimPrefix(requestPath, "/")
-	const archivePrefix = "archive/"
-	if !strings.HasPrefix(requestPath, archivePrefix) {
-		return nil, fmt.Errorf("%w: path must start with /archive/", ErrInvalidArchivePath)
-	}
-
-	archiveRelPath, err := neturl.PathUnescape(strings.TrimPrefix(requestPath, archivePrefix))
+func resolveArchiveDocumentPath(rawPath string) (*common.ArchiveDocumentPath, error) {
+	archivePath, err := common.ResolveArchiveDocumentPath(rawPath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArchivePath, err)
 	}
-
-	// 浏览器传来的路径不可信，先逐段校验再拼接到归档根目录，
-	// 避免删除请求通过路径穿越越过 /archive 目录边界。
-	segments := strings.Split(archiveRelPath, "/")
-	if len(segments) < 2 {
-		return nil, fmt.Errorf("%w: expected /archive/{domain}/{filename}", ErrInvalidArchivePath)
-	}
-	for _, segment := range segments {
-		if segment == "" || segment == "." || segment == ".." {
-			return nil, fmt.Errorf("%w: unsafe path segment", ErrInvalidArchivePath)
-		}
-	}
-
-	domain := strings.TrimSpace(segments[0])
-	filename := strings.Join(segments[1:], "/")
-	cleanArchiveRelPath := path.Clean(strings.Join(segments, "/"))
-
-	rootAbs, err := filepath.Abs(common.ARCHIVEFILELOACTION)
-	if err != nil {
-		return nil, err
-	}
-	targetAbs, err := filepath.Abs(filepath.Join(rootAbs, filepath.FromSlash(cleanArchiveRelPath)))
-	if err != nil {
-		return nil, err
-	}
-	relToRoot, err := filepath.Rel(rootAbs, targetAbs)
-	if err != nil {
-		return nil, err
-	}
-	if relToRoot == "." || strings.HasPrefix(relToRoot, ".."+string(os.PathSeparator)) || relToRoot == ".." || filepath.IsAbs(relToRoot) {
-		return nil, fmt.Errorf("%w: path escapes archive root", ErrInvalidArchivePath)
-	}
-
-	return &archiveDocumentPath{
-		RequestPath: "/" + path.Join("archive", cleanArchiveRelPath),
-		Domain:      domain,
-		Filename:    filename,
-		AbsPath:     targetAbs,
-	}, nil
+	return archivePath, nil
 }
 
 func findArchiveDocumentIDs(index meilisearch.DocumentManager, domain string, filename string) ([]string, error) {

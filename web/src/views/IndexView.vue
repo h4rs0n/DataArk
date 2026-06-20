@@ -8,6 +8,12 @@
         </template>
         项目统计
       </a-button>
+      <a-button type="primary" @click="goToRecommendations" class="action-button">
+        <template #icon>
+          <icon-fire />
+        </template>
+        推荐
+      </a-button>
       <a-button type="primary" @click="goToArchive" class="action-button">
         <template #icon>
           <icon-link />
@@ -39,12 +45,16 @@
 <script lang="ts" setup>
 import { useRouter } from 'vue-router';
 // 引入 Arco Design 图标
-import { IconLink, IconDashboard, IconStorage, IconSync } from '@arco-design/web-vue/es/icon';
+import { IconLink, IconDashboard, IconStorage, IconSync, IconFire } from '@arco-design/web-vue/es/icon';
 
 const router = useRouter();
 
 const goToStats = () => {
   router.push('/stats');
+};
+
+const goToRecommendations = () => {
+  router.push('/recommendations');
 };
 
 const goToArchive = () => {

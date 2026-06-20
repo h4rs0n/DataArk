@@ -1,6 +1,6 @@
 # 数据库设计
 
-本文档根据 `api/common/db.go` 中的 GORM 模型和数据库操作整理，用于后续开发时参考。当前后端使用 PostgreSQL，连接参数来自运行时配置，并在 `InitDB()` 中通过 `AutoMigrate(&User{}, &ArchiveTask{}, &ArchiveStat{}, &ArchiveDocument{})` 自动迁移表结构。
+本文档根据 `api/common/db.go` 中的 GORM 模型和数据库操作整理，用于后续开发时参考。当前后端使用 PostgreSQL，连接参数来自运行时配置，并在 `InitDB()` 中通过 `AutoMigrate` 自动迁移用户、归档任务、归档统计、归档文档、搜索事件、点击事件和内容发现相关表。
 
 ## 总体约定
 
@@ -115,6 +115,8 @@ HTML 归档统计表，用于保存当前归档目录中各个 URL 来源的 HTM
 | `domain` | `string` | 与 `file_name` 组成唯一索引，非空，长度 255 | 归档文件所属域名目录 |
 | `file_name` | `string` | 与 `domain` 组成唯一索引，非空，长度 1024 | 归档文件名或域名目录下的相对路径 |
 | `source_url` | `string` | 无显式约束 | 原文链接，可为空；URL 存档默认使用被归档 URL，文件上传由用户可选填写 |
+| `title` | `string` | 长度 1024 | HTML 标题，用于推荐和展示 |
+| `summary` | `string` | `text` | 从正文抽取的短摘要，用于推荐和展示 |
 | `created_at` | `time.Time` | GORM 自动维护 | 创建时间 |
 | `updated_at` | `time.Time` | GORM 自动维护 | 更新时间 |
 
@@ -123,6 +125,69 @@ HTML 归档统计表，用于保存当前归档目录中各个 URL 来源的 HTM
 - 保存元数据：归档文件成功索引并移动到来源目录后，按 `(domain, file_name)` upsert `source_url`。
 - 查询元数据：重建搜索索引时按 `(domain, file_name)` 查询 `source_url`，写入 Meilisearch 文档的 `link` 字段。
 - 删除元数据：删除归档文件时同步删除对应元数据记录。
+- 回填元数据：推荐功能可以扫描现有归档 HTML，解析标题和摘要后补齐旧记录。
+
+## search_events
+
+搜索事件表，用于统计热门关键词和搜索框推荐。每次 `/api/search` 成功返回后写入一行。
+
+| 字段 | Go 类型 | 约束/索引 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `uint` | 主键 | 事件 ID |
+| `keyword` | `string` | 普通索引，非空，长度 255 | 规范化后的搜索关键词 |
+| `result_count` | `int` | 非空，默认 0 | 本次搜索命中数量 |
+| `created_at` | `time.Time` | 普通索引 | 搜索时间 |
+
+## archive_click_events
+
+归档点击事件表，用于生成被点击网页文件排行榜和归档推荐信号。HTML 查看页成功加载归档文件后写入一行。
+
+| 字段 | Go 类型 | 约束/索引 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `uint` | 主键 | 事件 ID |
+| `domain` | `string` | 普通索引，非空，长度 255 | 归档文件所属域名目录 |
+| `file_name` | `string` | 普通索引，非空，长度 1024 | 归档文件名或相对路径 |
+| `path` | `string` | 普通索引，非空，长度 1400 | 标准化后的 `/archive/{domain}/{file}` 路径 |
+| `keyword` | `string` | 长度 255 | 可选，进入该文件时关联的搜索关键词 |
+| `created_at` | `time.Time` | 普通索引 | 点击时间 |
+
+## discovery_sources
+
+内容发现源表，用于保存 RSS/Atom 源或同站发现入口。
+
+| 字段 | Go 类型 | 约束/索引 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `uint` | 主键 | 内容源 ID |
+| `name` | `string` | 非空，长度 255 | 展示名称 |
+| `url` | `string` | 唯一索引，非空，长度 2048 | RSS/Atom URL 或站点入口 |
+| `type` | `string` | 非空，长度 32 | `feed` 或 `site` |
+| `enabled` | `bool` | 非空，默认 true | 是否参与后台采集 |
+| `last_fetched_at` | `*time.Time` | 可为空 | 最近抓取时间 |
+| `last_error` | `string` | `text` | 最近抓取错误 |
+| `created_at` / `updated_at` | `time.Time` | GORM 自动维护 | 创建和更新时间 |
+
+## discovery_candidates
+
+候选文章表，用于保存从内容源发现但尚未人工入库的文章。
+
+| 字段 | Go 类型 | 约束/索引 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `uint` | 主键 | 候选文章 ID |
+| `source_id` | `uint` | 普通索引，非空 | 来源 ID |
+| `source_name` | `string` | 长度 255 | 来源名称快照 |
+| `url` | `string` | 唯一索引，非空，长度 2048 | 候选文章 URL |
+| `title` | `string` | 长度 1024 | 候选标题 |
+| `summary` | `string` | `text` | 候选摘要 |
+| `status` | `string` | 普通索引，非空，长度 32 | `new`、`read`、`ignored` 或 `archived` |
+| `score` | `float64` | 非空，默认 0 | 推荐排序分数 |
+| `published_at` | `*time.Time` | 可为空 | 来源发布时间 |
+| `archived_task_id` | `string` | 长度 36 | 加入归档后关联的任务 ID |
+| `last_seen_at` | `time.Time` | 普通索引 | 最近一次从源中发现的时间 |
+| `created_at` / `updated_at` | `time.Time` | GORM 自动维护 | 创建和更新时间 |
+
+## discovery_candidate_feedbacks
+
+候选文章反馈表，用于记录人工阅读、忽略和入库动作，为后续推荐调整保留行为依据。
 
 ## 结构关系
 

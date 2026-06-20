@@ -21,23 +21,39 @@ import (
 )
 
 var (
-	checkArchiveConsistency  = search.CheckArchiveConsistency
-	repairArchiveConsistency = search.RepairArchiveConsistency
-	registerWithToken        = common.RegisterWithToken
-	loginWithToken           = common.LoginWithToken
-	queryByKeyword           = search.QueryByKeyword
-	addDocURLTask            = search.AddDocURLTask
-	getArchiveTask           = search.GetArchiveTask
-	getArchiveStatsSnapshot  = common.GetArchiveStats
-	refreshStatsFromDisk     = common.RefreshArchiveStatsFromDisk
-	addDocFileToIndex        = search.AddDocFile
-	deleteDocByHTMLPath      = search.DeleteDocByHTMLPath
-	createBackupArchive      = backup.CreateBackup
-	restoreBackupArchive     = backup.RestoreBackup
-	initDatabase             = common.InitDB
-	createSearchIndex        = search.CreateDefaultIndex
-	initArchiveQueue         = search.InitArchiveTaskQueue
-	runGinRouter             = func(router *gin.Engine, addr string) error {
+	checkArchiveConsistency   = search.CheckArchiveConsistency
+	repairArchiveConsistency  = search.RepairArchiveConsistency
+	registerWithToken         = common.RegisterWithToken
+	loginWithToken            = common.LoginWithToken
+	queryByKeyword            = search.QueryByKeyword
+	addDocURLTask             = search.AddDocURLTask
+	getArchiveTask            = search.GetArchiveTask
+	getArchiveStatsSnapshot   = common.GetArchiveStats
+	refreshStatsFromDisk      = common.RefreshArchiveStatsFromDisk
+	recordSearchEvent         = common.RecordSearchEvent
+	getKeywordStats           = common.GetKeywordStats
+	recordArchiveClick        = common.RecordArchiveClick
+	getArchiveRankings        = common.GetArchiveRankings
+	getArchiveRecommendations = common.GetArchiveRecommendations
+	listDiscoverySources      = common.ListDiscoverySources
+	createDiscoverySource     = common.CreateDiscoverySource
+	updateDiscoverySource     = common.UpdateDiscoverySource
+	deleteDiscoverySource     = common.DeleteDiscoverySource
+	fetchDiscoverySourceByID  = common.FetchDiscoverySourceByID
+	listDiscoveryCandidates   = common.ListDiscoveryCandidates
+	getDiscoveryCandidate     = common.GetDiscoveryCandidate
+	markCandidateRead         = common.MarkDiscoveryCandidateRead
+	markCandidateIgnored      = common.MarkDiscoveryCandidateIgnored
+	markCandidateArchived     = common.MarkDiscoveryCandidateArchived
+	startDiscoveryScheduler   = common.StartDiscoveryScheduler
+	addDocFileToIndex         = search.AddDocFile
+	deleteDocByHTMLPath       = search.DeleteDocByHTMLPath
+	createBackupArchive       = backup.CreateBackup
+	restoreBackupArchive      = backup.RestoreBackup
+	initDatabase              = common.InitDB
+	createSearchIndex         = search.CreateDefaultIndex
+	initArchiveQueue          = search.InitArchiveTaskQueue
+	runGinRouter              = func(router *gin.Engine, addr string) error {
 		return router.Run(addr)
 	}
 )
@@ -153,6 +169,7 @@ func SearchByKeyword(c *gin.Context) {
 		})
 		return
 	}
+	_ = recordSearchEvent(queryString, pageAndHits["TotalHits"])
 
 	c.JSON(200, gin.H{
 		"Status":     "1",
@@ -276,6 +293,204 @@ func RefreshArchiveStats(c *gin.Context) {
 		"Message": "刷新统计信息成功",
 		"Data":    stats,
 	})
+}
+
+func GetSearchKeywords(c *gin.Context) {
+	limit := queryInt(c, "limit", 10)
+	stats, err := getKeywordStats(c.Query("prefix"), c.DefaultQuery("window", "7d"), limit)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询搜索关键词失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询搜索关键词成功", "Data": stats})
+}
+
+func RecordArchiveClick(c *gin.Context) {
+	var req struct {
+		Path    string `json:"path"`
+		Keyword string `json:"keyword"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Path) == "" {
+		c.JSON(403, gin.H{"Status": "0", "Message": "请求参数错误"})
+		return
+	}
+	event, err := recordArchiveClick(req.Path, req.Keyword)
+	if err != nil {
+		c.JSON(403, gin.H{"Status": "0", "Message": "归档路径参数错误", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "点击记录成功", "Data": event})
+}
+
+func GetArchiveRankings(c *gin.Context) {
+	rankings, err := getArchiveRankings(c.DefaultQuery("window", "7d"), queryInt(c, "limit", 20))
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询点击排行失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询点击排行成功", "Data": rankings})
+}
+
+func GetArchiveRecommendations(c *gin.Context) {
+	recommendations, err := getArchiveRecommendations(c.DefaultQuery("window", "7d"), queryInt(c, "limit", 20))
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询归档推荐失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询归档推荐成功", "Data": recommendations})
+}
+
+func ListDiscoverySources(c *gin.Context) {
+	sources, err := listDiscoverySources()
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询内容源失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询内容源成功", "Data": sources})
+}
+
+func CreateDiscoverySource(c *gin.Context) {
+	var req discoverySourceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(403, gin.H{"Status": "0", "Message": "请求参数错误"})
+		return
+	}
+	source, err := createDiscoverySource(req.Name, req.URL, req.Type, req.Enabled)
+	if err != nil {
+		c.JSON(403, gin.H{"Status": "0", "Message": "创建内容源失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(201, gin.H{"Status": "1", "Message": "创建内容源成功", "Data": source})
+}
+
+func UpdateDiscoverySource(c *gin.Context) {
+	sourceID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	var req discoverySourceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(403, gin.H{"Status": "0", "Message": "请求参数错误"})
+		return
+	}
+	source, err := updateDiscoverySource(sourceID, req.Name, req.URL, req.Type, req.Enabled)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "更新内容源失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "更新内容源成功", "Data": source})
+}
+
+func DeleteDiscoverySource(c *gin.Context) {
+	sourceID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	if err := deleteDiscoverySource(sourceID); err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "删除内容源失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "删除内容源成功"})
+}
+
+func FetchDiscoverySource(c *gin.Context) {
+	sourceID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	result, err := fetchDiscoverySourceByID(c.Request.Context(), sourceID)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "刷新内容源失败", "Error": err.Error(), "Data": result})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "刷新内容源成功", "Data": result})
+}
+
+func ListDiscoveryCandidates(c *gin.Context) {
+	candidates, err := listDiscoveryCandidates(c.Query("status"), queryInt(c, "limit", 50))
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询候选文章失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询候选文章成功", "Data": candidates})
+}
+
+func MarkDiscoveryCandidateRead(c *gin.Context) {
+	candidateID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	candidate, err := markCandidateRead(candidateID)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "更新候选文章失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "候选文章已标记阅读", "Data": candidate})
+}
+
+func IgnoreDiscoveryCandidate(c *gin.Context) {
+	candidateID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	candidate, err := markCandidateIgnored(candidateID)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "忽略候选文章失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "候选文章已忽略", "Data": candidate})
+}
+
+func ArchiveDiscoveryCandidate(c *gin.Context) {
+	candidateID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	candidate, err := getDiscoveryCandidate(candidateID)
+	if err != nil {
+		c.JSON(404, gin.H{"Status": "0", "Message": "候选文章不存在", "Error": err.Error()})
+		return
+	}
+	task, _, err := addDocURLTask(candidate.URL)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "创建归档任务失败", "Error": err.Error()})
+		return
+	}
+	updatedCandidate, err := markCandidateArchived(candidateID, task.ID)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "更新候选文章失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(202, gin.H{"Status": "1", "Message": "候选文章已加入归档队列", "Data": gin.H{"candidate": updatedCandidate, "task": task}})
+}
+
+type discoverySourceRequest struct {
+	Name    string `json:"name"`
+	URL     string `json:"url"`
+	Type    string `json:"type"`
+	Enabled bool   `json:"enabled"`
+}
+
+func queryInt(c *gin.Context, key string, defaultValue int) int {
+	value := strings.TrimSpace(c.Query(key))
+	if value == "" {
+		return defaultValue
+	}
+	parsedValue, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultValue
+	}
+	return parsedValue
+}
+
+func parseUintParam(c *gin.Context, key string) (uint, bool) {
+	rawValue := strings.TrimSpace(c.Param(key))
+	parsedValue, err := strconv.ParseUint(rawValue, 10, 64)
+	if err != nil || parsedValue == 0 {
+		c.JSON(403, gin.H{"Status": "0", "Message": "编号参数错误"})
+		return 0, false
+	}
+	return uint(parsedValue), true
 }
 
 func GetArchiveConsistency(c *gin.Context) {
@@ -604,6 +819,8 @@ func WebStarter(debugMode bool) {
 		fmt.Printf("failed to initialize archive task queue: %v\n", err)
 		return
 	}
+	stopDiscoveryScheduler := startDiscoveryScheduler()
+	defer stopDiscoveryScheduler()
 	router := gin.Default()
 	if debugMode {
 		router.Use(CORSMiddleware())
@@ -617,15 +834,28 @@ func WebStarter(debugMode bool) {
 	protected.Use(AuthMiddleware())
 	{
 		protected.GET("/search", SearchByKeyword)
+		protected.GET("/search/keywords", GetSearchKeywords)
 		protected.POST("/uploadHtmlFile", AddHTMLFile)
 		protected.POST("/upload", AddDocByHTMLFile)
 		protected.POST("/archiveByURL", AddDocByURL)
 		protected.GET("/archiveTask/:taskId", GetArchiveTaskStatus)
+		protected.POST("/archive/clicks", RecordArchiveClick)
+		protected.GET("/archive/rankings", GetArchiveRankings)
+		protected.GET("/recommendations/archives", GetArchiveRecommendations)
 		protected.GET("/archiveStats", GetArchiveStats)
 		protected.POST("/archiveStats/refresh", RefreshArchiveStats)
 		protected.GET("/archiveConsistency", GetArchiveConsistency)
 		protected.POST("/archiveConsistency/repair", RepairArchiveConsistency)
 		protected.DELETE("/archive", DeleteArchiveDocument)
+		protected.GET("/discovery/sources", ListDiscoverySources)
+		protected.POST("/discovery/sources", CreateDiscoverySource)
+		protected.PUT("/discovery/sources/:id", UpdateDiscoverySource)
+		protected.DELETE("/discovery/sources/:id", DeleteDiscoverySource)
+		protected.POST("/discovery/sources/:id/fetch", FetchDiscoverySource)
+		protected.GET("/discovery/candidates", ListDiscoveryCandidates)
+		protected.POST("/discovery/candidates/:id/read", MarkDiscoveryCandidateRead)
+		protected.POST("/discovery/candidates/:id/archive", ArchiveDiscoveryCandidate)
+		protected.POST("/discovery/candidates/:id/ignore", IgnoreDiscoveryCandidate)
 		protected.POST("/backup", CreateBackup)
 		protected.POST("/backup/restore", RestoreBackup)
 		protected.GET("/authChecker", authController.AuthChecker)
@@ -644,6 +874,14 @@ func WebStarter(debugMode bool) {
 
 	router.GET("/", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "index.html", nil)
+	})
+	router.GET("/favicon.ico", func(c *gin.Context) {
+		iconBytes, err := assets.WebFiles.ReadFile("web/favicon.ico")
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.Data(http.StatusOK, "image/x-icon", iconBytes)
 	})
 
 	err := runGinRouter(router, "0.0.0.0:7845")

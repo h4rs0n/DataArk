@@ -420,7 +420,7 @@ func addDocFileByPath(htmlFilePath string, fileName string, originDomain string,
 	if err != nil {
 		return err
 	}
-	if err := common.SaveArchiveDocumentMetadata(originDomain, fileName, sourceURL); err != nil {
+	if err := common.SaveArchiveDocumentDetails(originDomain, fileName, sourceURL, title, common.BuildSummary(HTMLPureText, 220)); err != nil {
 		return err
 	}
 	// 统计只在新增归档文件时递增；同名覆盖不改变磁盘上的 HTML 文件总量。

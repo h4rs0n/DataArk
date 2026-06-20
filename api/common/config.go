@@ -13,3 +13,7 @@ var DBName = ""
 var DBUser = ""
 var DBPassword = ""
 var SINGLEFILEWEBSERVICEURL = "http://singlefile-webservice:8080"
+var DISCOVERYFETCHINTERVAL = "6h"
+var DISCOVERYREQUESTTIMEOUT = "12s"
+var DISCOVERYMAXCANDIDATES = 50
+var DISCOVERYUSERAGENT = "DataArkDiscovery/1.0"

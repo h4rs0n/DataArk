@@ -34,8 +34,13 @@ An executable file will be generated in the `api/bin` directory. After deploying
                       -dbname "postgres" \
                       -dbuser "postgres" \
                       -dbpasswd "postgres" \
+                      -discover-interval "6h" \
+                      -discover-timeout "12s" \
+                      -discover-max 50 \
 ```
 The backup feature depends on the `pg_dump` and `psql` commands. For manual deployments, install PostgreSQL client tools and point `-mdump` to the shared Meilisearch dump directory configured by `MEILI_DUMP_DIR` or `--dump-dir`.
+
+Content discovery uses the `-discover-interval`, `-discover-timeout`, `-discover-max`, and `-discover-ua` flags. Set `-discover-interval 0` to disable the background RSS/site discovery scheduler.
 
 
 

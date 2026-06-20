@@ -226,7 +226,7 @@ async function queryData(keyword: string, pages : string = "1") {
 }
 
 function htmlViewer(htmlLoc : string) {
-  router.push({ path: '/htmlviewer', query: { loc: htmlLoc } })
+  router.push({ path: '/htmlviewer', query: { loc: htmlLoc, q: pageData.searchKey } })
 }
 
 function openSourceURL(sourceURL: string) {

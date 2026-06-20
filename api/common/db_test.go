@@ -232,7 +232,17 @@ func setupSQLiteDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlite db: %v", err)
 	}
-	if err := sqliteDB.AutoMigrate(&User{}, &ArchiveTask{}, &ArchiveStat{}); err != nil {
+	if err := sqliteDB.AutoMigrate(
+		&User{},
+		&ArchiveTask{},
+		&ArchiveStat{},
+		&ArchiveDocument{},
+		&SearchEvent{},
+		&ArchiveClickEvent{},
+		&DiscoverySource{},
+		&DiscoveryCandidate{},
+		&DiscoveryCandidateFeedback{},
+	); err != nil {
 		t.Fatalf("failed to migrate sqlite db: %v", err)
 	}
 	db = sqliteDB

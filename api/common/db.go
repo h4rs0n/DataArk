@@ -58,8 +58,61 @@ type ArchiveDocument struct {
 	Domain    string    `json:"domain" gorm:"uniqueIndex:idx_archive_documents_identity;not null;size:255"`
 	FileName  string    `json:"fileName" gorm:"uniqueIndex:idx_archive_documents_identity;not null;size:1024"`
 	SourceURL string    `json:"sourceUrl"`
+	Title     string    `json:"title" gorm:"size:1024"`
+	Summary   string    `json:"summary" gorm:"type:text"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type SearchEvent struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	Keyword     string    `json:"keyword" gorm:"index;not null;size:255"`
+	ResultCount int       `json:"resultCount" gorm:"not null;default:0"`
+	CreatedAt   time.Time `json:"createdAt" gorm:"index"`
+}
+
+type ArchiveClickEvent struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Domain    string    `json:"domain" gorm:"index;not null;size:255"`
+	FileName  string    `json:"fileName" gorm:"index;not null;size:1024"`
+	Path      string    `json:"path" gorm:"index;not null;size:1400"`
+	Keyword   string    `json:"keyword" gorm:"size:255"`
+	CreatedAt time.Time `json:"createdAt" gorm:"index"`
+}
+
+type DiscoverySource struct {
+	ID            uint       `json:"id" gorm:"primaryKey"`
+	Name          string     `json:"name" gorm:"not null;size:255"`
+	URL           string     `json:"url" gorm:"uniqueIndex;not null;size:2048"`
+	Type          string     `json:"type" gorm:"not null;size:32"`
+	Enabled       bool       `json:"enabled" gorm:"not null;default:true"`
+	LastFetchedAt *time.Time `json:"lastFetchedAt"`
+	LastError     string     `json:"lastError" gorm:"type:text"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+}
+
+type DiscoveryCandidate struct {
+	ID             uint       `json:"id" gorm:"primaryKey"`
+	SourceID       uint       `json:"sourceId" gorm:"index;not null"`
+	SourceName     string     `json:"sourceName" gorm:"size:255"`
+	URL            string     `json:"url" gorm:"uniqueIndex;not null;size:2048"`
+	Title          string     `json:"title" gorm:"size:1024"`
+	Summary        string     `json:"summary" gorm:"type:text"`
+	Status         string     `json:"status" gorm:"index;not null;size:32"`
+	Score          float64    `json:"score" gorm:"not null;default:0"`
+	PublishedAt    *time.Time `json:"publishedAt"`
+	ArchivedTaskID string     `json:"archivedTaskId" gorm:"size:36"`
+	LastSeenAt     time.Time  `json:"lastSeenAt" gorm:"index"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+
+type DiscoveryCandidateFeedback struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	CandidateID uint      `json:"candidateId" gorm:"index;not null"`
+	Action      string    `json:"action" gorm:"index;not null;size:32"`
+	CreatedAt   time.Time `json:"createdAt" gorm:"index"`
 }
 
 // ArchiveStatsSnapshot 是接口返回的统计快照，总数由各来源数量求和得到。
@@ -85,7 +138,17 @@ func InitDB() {
 	// fmt.Println("Database connected successfully!")
 
 	// 自动迁移数据库表
-	err = db.AutoMigrate(&User{}, &ArchiveTask{}, &ArchiveStat{}, &ArchiveDocument{})
+	err = db.AutoMigrate(
+		&User{},
+		&ArchiveTask{},
+		&ArchiveStat{},
+		&ArchiveDocument{},
+		&SearchEvent{},
+		&ArchiveClickEvent{},
+		&DiscoverySource{},
+		&DiscoveryCandidate{},
+		&DiscoveryCandidateFeedback{},
+	)
 	if err != nil {
 		log.Fatal("failed to migrate database", err)
 	}
@@ -298,6 +361,10 @@ func ListArchiveTasksByStatuses(statuses []string) ([]ArchiveTask, error) {
 }
 
 func SaveArchiveDocumentMetadata(domain string, fileName string, sourceURL string) error {
+	return SaveArchiveDocumentDetails(domain, fileName, sourceURL, "", "")
+}
+
+func SaveArchiveDocumentDetails(domain string, fileName string, sourceURL string, title string, summary string) error {
 	domain = strings.TrimSpace(domain)
 	fileName = strings.TrimSpace(fileName)
 	sourceURL = strings.TrimSpace(sourceURL)
@@ -309,15 +376,38 @@ func SaveArchiveDocumentMetadata(domain string, fileName string, sourceURL strin
 		Domain:    domain,
 		FileName:  fileName,
 		SourceURL: sourceURL,
+		Title:     strings.TrimSpace(title),
+		Summary:   strings.TrimSpace(summary),
+	}
+	updates := map[string]interface{}{
+		"source_url": sourceURL,
+		"updated_at": time.Now(),
+	}
+	if strings.TrimSpace(title) != "" {
+		updates["title"] = strings.TrimSpace(title)
+	}
+	if strings.TrimSpace(summary) != "" {
+		updates["summary"] = strings.TrimSpace(summary)
 	}
 
 	return db.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "domain"}, {Name: "file_name"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"source_url": sourceURL,
-			"updated_at": time.Now(),
-		}),
+		Columns:   []clause.Column{{Name: "domain"}, {Name: "file_name"}},
+		DoUpdates: clause.Assignments(updates),
 	}).Create(&document).Error
+}
+
+func GetArchiveDocument(domain string, fileName string) (*ArchiveDocument, error) {
+	domain = strings.TrimSpace(domain)
+	fileName = strings.TrimSpace(fileName)
+	if db == nil || domain == "" || fileName == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var document ArchiveDocument
+	if err := db.First(&document, "domain = ? AND file_name = ?", domain, fileName).Error; err != nil {
+		return nil, err
+	}
+	return &document, nil
 }
 
 func GetArchiveDocumentSourceURL(domain string, fileName string) (string, error) {
