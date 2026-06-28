@@ -125,10 +125,13 @@ func GetArchiveRankings(window string, limit int) ([]ArchiveRankingItem, error) 
 	}
 
 	for index := range rows {
+		rows[index].Title = rows[index].FileName
 		if document, err := GetArchiveDocument(rows[index].Domain, rows[index].FileName); err == nil {
 			rows[index].Title = archiveDisplayTitle(document)
 			rows[index].Summary = document.Summary
 			rows[index].SourceURL = document.SourceURL
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
 		}
 	}
 	return rows, nil

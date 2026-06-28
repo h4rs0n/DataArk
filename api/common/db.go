@@ -404,8 +404,12 @@ func GetArchiveDocument(domain string, fileName string) (*ArchiveDocument, error
 	}
 
 	var document ArchiveDocument
-	if err := db.First(&document, "domain = ? AND file_name = ?", domain, fileName).Error; err != nil {
-		return nil, err
+	result := db.Where("domain = ? AND file_name = ?", domain, fileName).Limit(1).Find(&document)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
 	}
 	return &document, nil
 }
@@ -418,11 +422,12 @@ func GetArchiveDocumentSourceURL(domain string, fileName string) (string, error)
 	}
 
 	var document ArchiveDocument
-	if err := db.First(&document, "domain = ? AND file_name = ?", domain, fileName).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", nil
-		}
-		return "", err
+	result := db.Where("domain = ? AND file_name = ?", domain, fileName).Limit(1).Find(&document)
+	if result.Error != nil {
+		return "", result.Error
+	}
+	if result.RowsAffected == 0 {
+		return "", nil
 	}
 	return document.SourceURL, nil
 }

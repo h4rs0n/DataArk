@@ -62,6 +62,38 @@ func TestKeywordStatsAndArchiveRecommendations(t *testing.T) {
 	}
 }
 
+func TestArchiveRankingsTolerateMissingDocumentMetadata(t *testing.T) {
+	setupSQLiteDB(t)
+	rootDir := t.TempDir()
+	oldRoot := ARCHIVEFILELOACTION
+	ARCHIVEFILELOACTION = rootDir
+	t.Cleanup(func() {
+		ARCHIVEFILELOACTION = oldRoot
+	})
+
+	archiveDir := filepath.Join(rootDir, "legacy.example")
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveDir, "legacy.html"), []byte("<html><title>Legacy</title></html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := RecordArchiveClick("/archive/legacy.example/legacy.html", "legacy"); err != nil {
+		t.Fatal(err)
+	}
+	rankings, err := GetArchiveRankings("7d", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rankings) != 1 {
+		t.Fatalf("rankings = %#v, want one item", rankings)
+	}
+	if rankings[0].Title != "legacy.html" || rankings[0].ClickCount != 1 {
+		t.Fatalf("ranking fallback = %#v", rankings[0])
+	}
+}
+
 func TestDiscoverySourceFetchAndCandidateState(t *testing.T) {
 	setupSQLiteDB(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
