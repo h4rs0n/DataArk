@@ -1,4 +1,5 @@
 -- +goose Up
+-- +goose StatementBegin
 DO $$
 BEGIN
     CREATE EXTENSION IF NOT EXISTS vector;
@@ -7,6 +8,7 @@ EXCEPTION
         RAISE NOTICE 'pgvector extension is not installed; recommendation embedding column will be skipped';
 END
 $$;
+-- +goose StatementEnd
 
 ALTER TABLE discovery_sources
     ADD COLUMN IF NOT EXISTS etag VARCHAR(1024),
@@ -48,6 +50,7 @@ ALTER TABLE discovery_candidates
     ALTER COLUMN entities TYPE JSONB
     USING CASE WHEN entities IS NULL OR entities::TEXT = '' THEN NULL ELSE entities::JSONB END;
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'vector') THEN
@@ -55,6 +58,7 @@ BEGIN
     END IF;
 END
 $$;
+-- +goose StatementEnd
 
 CREATE TABLE IF NOT EXISTS recommendation_settings (
     id BIGSERIAL PRIMARY KEY,
