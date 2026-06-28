@@ -41,7 +41,15 @@ func runDueRecommendationGeneration(ctx context.Context, now time.Time) {
 		if !recommendationGenerationDue(item, now) {
 			continue
 		}
-		if _, err := GenerateDailyRecommendations(ctx, item.UserID, recommendationDateForSettings(item, now)); err != nil {
+		date := recommendationDateForSettings(item, now)
+		enqueued, err := EnqueueDailyRecommendation(ctx, item.UserID, date)
+		if err != nil {
+			log.Printf("recommendation scheduler enqueue failed for user %d: %v", item.UserID, err)
+		}
+		if enqueued {
+			continue
+		}
+		if _, err := GenerateDailyRecommendations(ctx, item.UserID, date); err != nil {
 			log.Printf("recommendation scheduler generation failed for user %d: %v", item.UserID, err)
 		}
 	}

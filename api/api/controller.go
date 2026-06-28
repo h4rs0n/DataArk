@@ -5,6 +5,7 @@ import (
 	"DataArk/backup"
 	"DataArk/common"
 	"DataArk/search"
+	"context"
 	"embed"
 	"errors"
 	"fmt"
@@ -58,6 +59,7 @@ var (
 	deleteUserBlockRule          = common.DeleteUserBlockRule
 	startDiscoveryScheduler      = common.StartDiscoveryScheduler
 	startRecommendationScheduler = common.StartRecommendationScheduler
+	startRecommendationJobQueue  = common.StartRecommendationJobQueue
 	addDocFileToIndex            = search.AddDocFile
 	deleteDocByHTMLPath          = search.DeleteDocByHTMLPath
 	createBackupArchive          = backup.CreateBackup
@@ -1014,6 +1016,12 @@ func WebStarter(debugMode bool) {
 	}
 	stopDiscoveryScheduler := startDiscoveryScheduler()
 	defer stopDiscoveryScheduler()
+	stopRecommendationJobQueue, err := startRecommendationJobQueue(context.Background())
+	if err != nil {
+		fmt.Printf("failed to initialize recommendation job queue: %v\n", err)
+		stopRecommendationJobQueue = func() {}
+	}
+	defer stopRecommendationJobQueue()
 	stopRecommendationScheduler := startRecommendationScheduler()
 	defer stopRecommendationScheduler()
 	router := gin.Default()
@@ -1089,7 +1097,7 @@ func WebStarter(debugMode bool) {
 		c.Data(http.StatusOK, "image/x-icon", iconBytes)
 	})
 
-	err := runGinRouter(router, "0.0.0.0:7845")
+	err = runGinRouter(router, "0.0.0.0:7845")
 	if err != nil {
 		fmt.Print("Maybe the port is already in use. Please check it.")
 		return

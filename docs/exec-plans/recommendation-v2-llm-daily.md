@@ -39,6 +39,9 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
 - [x] (2026-06-28 23:15+08:00) Added pending candidate enrichment before daily generation, with rule-based fallback when remote enrichment fails.
 - [x] (2026-06-28 23:30+08:00) Reworked `RecommendationsView.vue` so the recommendation center opens on Today, supports history, settings, block rules, sources, candidates, and five feedback actions.
 - [x] (2026-06-28 23:40+08:00) Verified the recommendation page in Vite with Chrome DevTools screenshot, DOM snapshot, and console check.
+- [x] (2026-06-28 23:55+08:00) Added pgvector-backed candidate embedding storage, profile embedding aggregation, and vector-boosted candidate recall for PostgreSQL installs.
+- [x] (2026-06-28 23:58+08:00) Added River-backed durable daily recommendation jobs, River schema migration, scheduler enqueue path, and synchronous fallback for non-PostgreSQL/test installs.
+- [x] (2026-06-28 23:59+08:00) Validated the completed backend plan with focused recommendation tests and full `go test ./...` using Go 1.26.4.
 
 ## Surprises & Discoveries
 
@@ -64,6 +67,10 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
   Evidence: fetched candidates are inserted with `enrichment_status=pending`; `TestGenerateDailyRecommendationsEnrichesPendingCandidates` now proves generation enriches a pending candidate and writes it to the daily snapshot.
 - Observation: The frontend needs article data inside each recommendation item, not just `candidateId`.
   Evidence: `GetRecommendationDaySnapshot` now attaches `DiscoveryCandidate` to each `RecommendationItem`, and the browser screenshot at `/tmp/dataark-recommendations-after.png` shows the Today page renders without console errors.
+- Observation: pgvector and River must remain PostgreSQL-only while the existing unit tests use SQLite.
+  Evidence: `StoreCandidateEmbedding`, `loadPGVectorCandidateIDs`, `StartRecommendationJobQueue`, and River migrations check `db.Dialector.Name() == "postgres"`; SQLite tests still exercise the fallback paths.
+- Observation: The shell PATH became unable to resolve a Linux `go` binary during the final validation pass.
+  Evidence: `go version` returned `permission denied`, while `/home/harson/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.4.linux-amd64/bin/go version` returned `go version go1.26.4 linux/amd64`; final tests used that absolute toolchain path.
 
 ## Decision Log
 
@@ -103,10 +110,13 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
 - Decision: Implement the OpenAI-compatible provider with `net/http` instead of introducing a large orchestration framework.
   Rationale: The immediate need is embeddings, structured JSON enrichment, and rerank calls behind existing provider interfaces. A small provider is testable with a fake HTTP client and keeps LangChain-style orchestration out of the business layer.
   Date/Author: 2026-06-28 / Codex
+- Decision: Gate River and pgvector behavior on PostgreSQL while keeping synchronous generation as a fallback.
+  Rationale: Production needs durable jobs and vector recall, but the repository's local tests and lightweight installs use SQLite. Keeping the fallback preserves current operability and lets PostgreSQL deployments get the durable path.
+  Date/Author: 2026-06-28 / Codex
 
 ## Outcomes & Retrospective
 
-The PR1 foundation, PR2 collection-layer upgrade, PR3 enrichment data path, PR4 deterministic daily generator, PR5 reranker boundary, PR6 scheduler/provider wiring, and PR7 recommendation center UI are implemented. The backend module now targets Go 1.26, dependencies are updated, Goose migrations create recommendation v2 schema, user-scoped settings/daily/feedback/block APIs exist, SSRF guard tests pass, provider interfaces are in place, feeds are parsed by `gofeed`, site discovery uses bounded Colly crawling, article normalization/extraction helpers exist, pending candidates are enriched before daily generation, OpenAI-compatible enrichment/embedding/rerank provider code exists, daily recommendation snapshots can be generated from enriched candidates with feedback-aware scoring and hard no-repeat filters, and the frontend opens on Today with history, settings, block rules, content sources, candidates, and feedback controls. pgvector-backed embedding retrieval and River-backed durable jobs remain for later infrastructure milestones.
+The PR1 foundation, PR2 collection-layer upgrade, PR3 enrichment data path, PR4 deterministic daily generator, PR5 reranker boundary, PR6 scheduler/provider wiring, PR7 recommendation center UI, and the infrastructure hardening slice are implemented. The backend module now targets Go 1.26, dependencies are updated, Goose migrations create recommendation v2 schema, River migrations create durable job tables for PostgreSQL, user-scoped settings/daily/feedback/block APIs exist, SSRF guard tests pass, provider interfaces are in place, feeds are parsed by `gofeed`, site discovery uses bounded Colly crawling, article normalization/extraction helpers exist, pending candidates are enriched before daily generation, OpenAI-compatible enrichment/embedding/rerank provider code exists, daily recommendation snapshots can be generated from enriched candidates with feedback-aware scoring and hard no-repeat filters, PostgreSQL installs can store pgvector embeddings and use vector recall as a ranking boost, the scheduler enqueues River jobs when available and falls back to synchronous generation otherwise, and the frontend opens on Today with history, settings, block rules, content sources, candidates, and feedback controls.
 
 ## Context and Orientation
 
@@ -218,7 +228,7 @@ The new tests prove:
 - recommendation snapshots include candidate data for frontend rendering;
 - the recommendation center renders in browser with no console messages.
 
-The full feature is accepted for the current single-process implementation. Remaining infrastructure hardening items are pgvector-backed embedding retrieval and River-backed durable jobs.
+The full planned backend and frontend feature is accepted for the repository implementation. Production PostgreSQL deployments should still validate River worker throughput, pgvector index performance, and real model quality against live data before broad rollout.
 
 ## Idempotence and Recovery
 
@@ -237,6 +247,22 @@ Validation evidence:
     ok  	DataArk/discovery	(cached)
     ok  	DataArk/recommendation	(cached)
     ok  	DataArk/search	(cached)
+
+Final backend validation after adding pgvector recall and River jobs:
+
+    cd api && env GOCACHE=/tmp/dataark-go-cache /home/harson/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.4.linux-amd64/bin/go test ./common -run 'TestRecommendation|TestGenerateDailyRecommendation|TestEmbedDiscoveryCandidate|TestRecommendationVector'
+    ok  	DataArk/common	0.072s
+
+    cd api && env GOCACHE=/tmp/dataark-go-cache /home/harson/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.4.linux-amd64/bin/go test ./... -count=1
+    ok  	DataArk	0.016s
+    ok  	DataArk/api	0.022s
+    ok  	DataArk/assets	0.003s
+    ok  	DataArk/backup	0.140s
+    ok  	DataArk/common	0.686s
+    ok  	DataArk/discovery	0.009s
+    ?   	DataArk/migrations	[no test files]
+    ok  	DataArk/recommendation	0.006s
+    ok  	DataArk/search	0.035s
 
 Browser verification:
 
@@ -301,6 +327,19 @@ In `api/recommendation/openai_provider.go`, define:
 
     type OpenAICompatibleProvider struct { ... }
 
+In `api/common/recommendation_vector.go`, define:
+
+    func EmbedDiscoveryCandidate(ctx context.Context, candidateID uint, provider recommendation.EmbeddingProvider, model string) error
+    func EmbedReadyDiscoveryCandidates(ctx context.Context, limit int, provider recommendation.EmbeddingProvider, model string) (int, error)
+    func StoreCandidateEmbedding(ctx context.Context, candidateID uint, model string, vector []float32) error
+
+In `api/common/recommendation_jobs.go`, define:
+
+    type GenerateDailyRecommendationArgs struct { ... }
+    type GenerateDailyRecommendationWorker struct { ... }
+    func StartRecommendationJobQueue(ctx context.Context) (func(), error)
+    func EnqueueDailyRecommendation(ctx context.Context, userID uint, date string) (bool, error)
+
 ## Revision Notes
 
 2026-06-28: Created the implementation ExecPlan from the combined user plan and repository audit. The first milestone is deliberately limited to foundation work because the complete feature spans multiple independently verifiable changes.
@@ -316,3 +355,5 @@ In `api/recommendation/openai_provider.go`, define:
 2026-06-28: Added the reranker boundary milestone. The generator can now accept a reranker provider, validate its output, persist rerank metadata, and fall back when reranking fails.
 
 2026-06-28: Added scheduler/provider/UI milestones. Daily generation now enriches pending candidates first, can use an OpenAI-compatible provider when configured, runs from a settings-aware in-process scheduler, and has a browser-verified recommendation center UI.
+
+2026-06-28: Completed the infrastructure hardening milestone. PostgreSQL installs now run River migrations and can use durable daily recommendation jobs; pgvector embeddings can be written and used for vector-boosted recall while SQLite tests retain deterministic fallback behavior.

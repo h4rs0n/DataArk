@@ -506,9 +506,15 @@ func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, 
 			candidates[candidate.ID] = candidate
 		}
 	}
+	embeddingVectors, err := loadCandidateEmbeddingVectors(candidateIDs)
+	if err != nil {
+		return nil, err
+	}
 	topicWeights := make(map[string]float64)
 	sourceWeights := make(map[string]float64)
 	styleWeights := make(map[string]float64)
+	positiveVectors := make([][]float32, 0)
+	negativeVectors := make([][]float32, 0)
 	depthPreference := 0.5
 	for _, event := range feedback {
 		candidate, ok := candidates[event.CandidateID]
@@ -529,12 +535,22 @@ func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, 
 				styleWeights[style] += styleDelta
 			}
 		}
+		if vector := embeddingVectors[event.CandidateID]; len(vector) > 0 {
+			switch normalizeFeedbackAction(event.Action) {
+			case RecommendationFeedbackValuable, RecommendationFeedbackDeepRead:
+				positiveVectors = append(positiveVectors, vector)
+			case RecommendationFeedbackNotInterested:
+				negativeVectors = append(negativeVectors, vector)
+			}
+		}
 		depthPreference += depthDelta
 	}
 	depthPreference = clampScore(depthPreference)
 	topicJSON, _ := json.Marshal(topicWeights)
 	sourceJSON, _ := json.Marshal(sourceWeights)
 	styleJSON, _ := json.Marshal(styleWeights)
+	positiveEmbedding := marshalVector(averageVectors(positiveVectors))
+	negativeEmbedding := marshalVector(averageVectors(negativeVectors))
 
 	var existing UserRecommendationProfile
 	result := db.Where("user_id = ?", userID).Limit(1).Find(&existing)
@@ -547,8 +563,8 @@ func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, 
 	}
 	profile := UserRecommendationProfile{
 		UserID:            userID,
-		PositiveEmbedding: "[]",
-		NegativeEmbedding: "[]",
+		PositiveEmbedding: positiveEmbedding,
+		NegativeEmbedding: negativeEmbedding,
 		TopicWeights:      string(topicJSON),
 		SourceWeights:     string(sourceJSON),
 		StyleWeights:      string(styleJSON),
@@ -682,6 +698,31 @@ func selectDailyRecommendationCandidates(ctx context.Context, userID uint, setti
 	if err := query.Find(&candidates).Error; err != nil {
 		return nil, err
 	}
+	vectorCandidateIDs, err := loadPGVectorCandidateIDs(ctx, profile, poolSize)
+	if err != nil {
+		return nil, err
+	}
+	vectorBoosts := make(map[uint]float64)
+	if len(vectorCandidateIDs) > 0 {
+		known := make(map[uint]struct{}, len(candidates))
+		for _, candidate := range candidates {
+			known[candidate.ID] = struct{}{}
+		}
+		missingIDs := make([]uint, 0)
+		for index, id := range vectorCandidateIDs {
+			vectorBoosts[id] = 0.25 * (1 - float64(index)/float64(len(vectorCandidateIDs)+1))
+			if _, ok := known[id]; !ok {
+				missingIDs = append(missingIDs, id)
+			}
+		}
+		if len(missingIDs) > 0 {
+			var vectorCandidates []DiscoveryCandidate
+			if err := db.Where("id IN ?", missingIDs).Find(&vectorCandidates).Error; err != nil {
+				return nil, err
+			}
+			candidates = append(candidates, vectorCandidates...)
+		}
+	}
 	seenCandidateIDs, seenDedupeKeys, err := loadPreviouslyRecommendedIdentity(userID)
 	if err != nil {
 		return nil, err
@@ -709,6 +750,7 @@ func selectDailyRecommendationCandidates(ctx context.Context, userID uint, setti
 			continue
 		}
 		score := scoreRecommendationCandidate(candidate, topics, host, topicWeights, sourceWeights, styleWeights, profile.DepthPreference)
+		score += vectorBoosts[candidate.ID]
 		scored = append(scored, recommendationCandidateScore{
 			Candidate:      candidate,
 			Topics:         topics,

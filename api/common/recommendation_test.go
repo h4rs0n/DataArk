@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/riverqueue/river"
 )
 
 type failingEnrichmentProvider struct{}
@@ -23,6 +25,15 @@ type fakeReranker struct {
 
 func (provider fakeReranker) Rerank(context.Context, recommendation.RerankInput) (recommendation.RerankResult, error) {
 	return provider.result, provider.err
+}
+
+type fakeEmbeddingProvider struct {
+	vectors [][]float32
+	err     error
+}
+
+func (provider fakeEmbeddingProvider) Embed(context.Context, []string) ([][]float32, error) {
+	return provider.vectors, provider.err
 }
 
 func TestRecommendationSettingsDefaultAndSave(t *testing.T) {
@@ -376,6 +387,82 @@ func TestRecommendationGenerationDueUsesSettingsTime(t *testing.T) {
 	}
 	if got := recommendationDateForSettings(settings, after); got != "2026-06-28" {
 		t.Fatalf("recommendation date = %q", got)
+	}
+}
+
+func TestRecommendationVectorHelpers(t *testing.T) {
+	literal, err := FormatPGVector([]float32{0.1, -2, 3.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if literal != "[0.1,-2,3.5]" {
+		t.Fatalf("literal = %q", literal)
+	}
+	parsed, err := ParsePGVector(literal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 3 || parsed[1] != -2 {
+		t.Fatalf("parsed = %#v", parsed)
+	}
+	average := averageVectors([][]float32{{1, 2}, {3, 4}, {9}})
+	if len(average) != 2 || average[0] != 2 || average[1] != 3 {
+		t.Fatalf("average = %#v", average)
+	}
+	jsonVector, err := parseFloat32JSONVector(marshalVector([]float32{0.25, 0.75}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jsonVector) != 2 || jsonVector[0] != 0.25 {
+		t.Fatalf("json vector = %#v", jsonVector)
+	}
+}
+
+func TestEmbedDiscoveryCandidateStoresModelWithoutPostgresVector(t *testing.T) {
+	setupSQLiteDB(t)
+	candidate := createReadyCandidate(t, "https://embed.example/post", "Embedding Post", []string{"Go"}, "embed", 0.8, 0.7)
+	err := EmbedDiscoveryCandidate(context.Background(), candidate.ID, fakeEmbeddingProvider{vectors: [][]float32{{0.1, 0.2}}}, "embedding-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got DiscoveryCandidate
+	if err := db.First(&got, candidate.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.EmbeddingModel != "embedding-model" {
+		t.Fatalf("embedding model = %q", got.EmbeddingModel)
+	}
+}
+
+func TestGenerateDailyRecommendationWorker(t *testing.T) {
+	setupSQLiteDB(t)
+	settings := DefaultRecommendationSettings(14)
+	settings.DailyLimit = 1
+	settings.Enabled = true
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	candidate := createReadyCandidate(t, "https://worker.example/post", "Worker Post", []string{"Go"}, "worker", 0.8, 0.7)
+	worker := GenerateDailyRecommendationWorker{}
+	if err := worker.Work(context.Background(), &river.Job[GenerateDailyRecommendationArgs]{
+		Args: GenerateDailyRecommendationArgs{UserID: 14, Date: "2026-06-28"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := GetRecommendationDaySnapshot(14, "2026-06-28")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Items) != 1 || snapshot.Items[0].CandidateID != candidate.ID {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	emptyArgs := GenerateDailyRecommendationArgs{}
+	if emptyArgs.Kind() != RecommendationGenerateDailyJobKind {
+		t.Fatalf("job kind = %q", emptyArgs.Kind())
+	}
+	opts := (GenerateDailyRecommendationArgs{UserID: 14, Date: "2026-06-28"}).InsertOpts()
+	if !opts.UniqueOpts.ByArgs {
+		t.Fatal("expected job to be unique by args")
 	}
 }
 
