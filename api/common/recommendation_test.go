@@ -3,9 +3,11 @@ package common
 import (
 	"DataArk/recommendation"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 type failingEnrichmentProvider struct{}
@@ -178,4 +180,114 @@ func TestEnrichDiscoveryCandidateRecordsFailure(t *testing.T) {
 	if got.EnrichmentStatus != RecommendationEnrichmentStatusFailed || got.EnrichmentError != "llm unavailable" {
 		t.Fatalf("failure fields = %#v", got)
 	}
+}
+
+func TestGenerateDailyRecommendationsFiltersHistoryAndBlocks(t *testing.T) {
+	setupSQLiteDB(t)
+	settings := DefaultRecommendationSettings(9)
+	settings.DailyLimit = 2
+	settings.Enabled = true
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	dupe := createReadyCandidate(t, "https://example.com/dupe", "Duplicate", []string{"Go"}, "dupe-key", 0.9, 0.4)
+	blocked := createReadyCandidate(t, "https://blocked.example/post", "Blocked", []string{"Kubernetes"}, "blocked-key", 0.95, 0.5)
+	first := createReadyCandidate(t, "https://go.example/post", "Go Guide", []string{"Go"}, "go-key", 0.8, 0.8)
+	second := createReadyCandidate(t, "https://pg.example/post", "PostgreSQL Guide", []string{"PostgreSQL"}, "pg-key", 0.7, 0.9)
+	oldDay, err := CreateRecommendationDay(9, "2026-06-27", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AddRecommendationItem(&RecommendationItem{DayID: oldDay.ID, UserID: 9, CandidateID: dupe.ID, DedupeKey: dupe.DedupeKey, Rank: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&UserBlockRule{UserID: 9, RuleType: UserBlockRuleTopic, RuleValue: "Kubernetes", Active: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := GenerateDailyRecommendations(context.Background(), 9, "2026-06-28")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Day.ActualCount != 2 || len(snapshot.Items) != 2 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	gotIDs := map[uint]bool{}
+	for _, item := range snapshot.Items {
+		gotIDs[item.CandidateID] = true
+	}
+	if gotIDs[dupe.ID] || gotIDs[blocked.ID] || !gotIDs[first.ID] || !gotIDs[second.ID] {
+		t.Fatalf("generated ids = %#v, dupe=%d blocked=%d first=%d second=%d", gotIDs, dupe.ID, blocked.ID, first.ID, second.ID)
+	}
+	again, err := GenerateDailyRecommendations(context.Background(), 9, "2026-06-28")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Items) != 2 || again.Items[0].ID != snapshot.Items[0].ID {
+		t.Fatalf("daily snapshot changed: first=%#v second=%#v", snapshot.Items, again.Items)
+	}
+}
+
+func TestGenerateDailyRecommendationsUsesFeedbackProfile(t *testing.T) {
+	setupSQLiteDB(t)
+	settings := DefaultRecommendationSettings(10)
+	settings.DailyLimit = 2
+	settings.Enabled = true
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	liked := createReadyCandidate(t, "https://old.example/postgres", "Old PostgreSQL", []string{"PostgreSQL"}, "old-pg", 0.6, 0.8)
+	oldDay, err := CreateRecommendationDay(10, "2026-06-27", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := AddRecommendationItem(&RecommendationItem{DayID: oldDay.ID, UserID: 10, CandidateID: liked.ID, DedupeKey: liked.DedupeKey, Rank: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := RecordRecommendationFeedback(10, item.ID, RecommendationFeedbackDeepRead, nil); err != nil {
+		t.Fatal(err)
+	}
+	postgres := createReadyCandidate(t, "https://new.example/postgres", "New PostgreSQL", []string{"PostgreSQL"}, "new-pg", 0.45, 0.6)
+	generic := createReadyCandidate(t, "https://new.example/generic", "Generic", []string{"Release"}, "generic", 0.65, 0.4)
+
+	snapshot, err := GenerateDailyRecommendations(context.Background(), 10, "2026-06-28")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Items) != 2 {
+		t.Fatalf("items = %#v", snapshot.Items)
+	}
+	if snapshot.Items[0].CandidateID != postgres.ID || snapshot.Items[1].CandidateID != generic.ID {
+		t.Fatalf("ranked items = %#v, want postgres %d before generic %d", snapshot.Items, postgres.ID, generic.ID)
+	}
+}
+
+func createReadyCandidate(t *testing.T, rawURL string, title string, topics []string, dedupeKey string, quality float64, depth float64) DiscoveryCandidate {
+	t.Helper()
+	topicBytes, _ := json.Marshal(topics)
+	now := time.Now()
+	candidate := DiscoveryCandidate{
+		SourceID:         1,
+		SourceName:       sourceHost(rawURL),
+		URL:              rawURL,
+		NormalizedURL:    rawURL,
+		CanonicalURL:     rawURL,
+		Title:            title,
+		Summary:          title,
+		Topics:           string(topicBytes),
+		ContentType:      "article",
+		ContentStyle:     "technical_deep_dive",
+		QualityScore:     quality,
+		DepthScore:       depth,
+		EnrichmentStatus: RecommendationEnrichmentStatusReady,
+		Status:           DiscoveryCandidateStatusNew,
+		DedupeKey:        dedupeKey,
+		PublishedAt:      &now,
+		LastSeenAt:       now,
+	}
+	if err := db.Create(&candidate).Error; err != nil {
+		t.Fatal(err)
+	}
+	return candidate
 }

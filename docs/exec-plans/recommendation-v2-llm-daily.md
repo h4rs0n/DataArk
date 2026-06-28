@@ -29,6 +29,9 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
 - [x] (2026-06-28 20:45+08:00) Added the candidate enrichment service that writes structured provider output back to `discovery_candidates`.
 - [x] (2026-06-28 20:50+08:00) Added a rule-based enrichment provider for local fallback and deterministic tests.
 - [x] (2026-06-28 20:55+08:00) Validated enrichment with full `cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...`.
+- [x] (2026-06-28 21:20+08:00) Added deterministic daily recommendation generation with candidate filtering, scoring, diversity selection, and immutable snapshot reuse.
+- [x] (2026-06-28 21:30+08:00) Added feedback-derived user profile rebuilding for topic, source, style, and depth preferences.
+- [x] (2026-06-28 21:35+08:00) Connected the admin generate endpoint to the real daily generation service.
 
 ## Surprises & Discoveries
 
@@ -46,6 +49,8 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
   Evidence: the extractor test initially returned article text but empty description and URL. The helper now falls back to parsing `meta property="og:*"`, `meta name="description"`, and `link rel="canonical"` directly.
 - Observation: The enrichment service can be tested without a network LLM by using a deterministic provider.
   Evidence: `recommendation.RuleBasedEnrichmentProvider` implements `EnrichmentProvider`, and `TestEnrichDiscoveryCandidateUpdatesStructuredFields` verifies database updates for status, normalized URL, content hash, dedupe key, topics, entities, scores, and provider model.
+- Observation: A useful first daily generator does not need to wait for pgvector or a remote LLM.
+  Evidence: `GenerateDailyRecommendations` now uses ready enriched candidates, feedback-derived weights, block rules, historical recommendation identity, and diversity constraints to generate a stable daily snapshot.
 
 ## Decision Log
 
@@ -73,10 +78,13 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
 - Decision: Add a rule-based enrichment provider before adding a remote OpenAI-compatible provider.
   Rationale: It proves the provider contract and database update path deterministically in tests, gives self-hosted installs a safe fallback, and keeps remote model integration isolated for the next milestone.
   Date/Author: 2026-06-28 / Codex
+- Decision: Implement deterministic retrieval, scoring, and diversity before embedding retrieval and LLM reranking.
+  Rationale: This creates a fully testable recommendation loop with stable snapshots and feedback behavior. Embeddings and LLM reranking can later improve ranking quality behind the same generator boundary without changing API semantics.
+  Date/Author: 2026-06-28 / Codex
 
 ## Outcomes & Retrospective
 
-The PR1 foundation, PR2 collection-layer upgrade, and PR3 enrichment data path are implemented. The backend module now targets Go 1.26, dependencies are updated, Goose migrations create recommendation v2 schema, user-scoped settings/daily/feedback/block APIs exist, SSRF guard tests pass, provider interfaces are in place, feeds are parsed by `gofeed`, site discovery uses bounded Colly crawling, article normalization/extraction helpers exist, and candidates can be enriched through a provider and written back to the database. Remote OpenAI-compatible enrichment, embeddings, vector retrieval, MMR, River jobs, and frontend redesign remain for later milestones.
+The PR1 foundation, PR2 collection-layer upgrade, PR3 enrichment data path, and PR4 deterministic daily generator are implemented. The backend module now targets Go 1.26, dependencies are updated, Goose migrations create recommendation v2 schema, user-scoped settings/daily/feedback/block APIs exist, SSRF guard tests pass, provider interfaces are in place, feeds are parsed by `gofeed`, site discovery uses bounded Colly crawling, article normalization/extraction helpers exist, candidates can be enriched through a provider, and daily recommendation snapshots can be generated from enriched candidates with feedback-aware scoring and hard no-repeat filters. Remote OpenAI-compatible enrichment, embeddings, vector retrieval, LLM reranking, River jobs, and frontend redesign remain for later milestones.
 
 ## Context and Orientation
 
@@ -103,6 +111,8 @@ Sixth, add focused tests for settings defaults, daily snapshot idempotence, feed
 Seventh, upgrade the content collection internals. In `api/common/discovery.go`, feed sources use `gofeed` so RSS, Atom, and JSON Feed are handled through one parser. The existing `fetchDiscoveryURL` path validates the requested URL and redirects with `api/discovery/ssrf.go`. Site sources use a bounded Colly crawler to discover alternate feeds and same-host article links. In `api/discovery/normalizer.go` and `api/discovery/extractor.go`, add reusable helpers for URL normalization, content hashing, and DOM Distiller-based article text extraction.
 
 Eighth, add the candidate enrichment data path. In `api/common/recommendation.go`, add `EnrichDiscoveryCandidate`, which loads a candidate, calls a `recommendation.EnrichmentProvider`, normalizes URL identity, computes content hash and dedupe key, serializes topics and entities, clamps scores, and updates `discovery_candidates` to `enrichment_status=ready` or `failed`. In `api/recommendation/rule_provider.go`, add a deterministic `RuleBasedEnrichmentProvider` so the data path can be tested and used as a fallback before remote LLM integration exists.
+
+Ninth, add deterministic daily generation. In `api/common/recommendation.go`, add `GenerateDailyRecommendations`, which reuses an already generated snapshot, rebuilds a user profile from feedback, filters out historical candidates and dedupe keys, applies active block rules, scores candidates by quality/depth/freshness/profile weights, applies greedy diversity constraints, writes `recommendation_items`, and marks the day generated. Update the admin generate endpoint to call this service instead of creating an empty day.
 
 ## Concrete Steps
 
@@ -147,6 +157,9 @@ The PR1 and PR2 milestones are accepted when the backend compiles and `cd api &&
     cd api && env GOCACHE=/tmp/dataark-go-cache go test ./common -run 'TestEnrichDiscoveryCandidate|TestRecommendation|TestParseFeed'
     ok  	DataArk/common	0.036s
 
+    cd api && env GOCACHE=/tmp/dataark-go-cache go test ./common -run 'TestGenerateDailyRecommendations|TestRecommendation|TestEnrichDiscoveryCandidate'
+    ok  	DataArk/common	0.054s
+
 The new tests prove:
 
 - default recommendation settings return `dailyLimit=10`;
@@ -161,8 +174,12 @@ The new tests prove:
 - article extraction returns readable text and metadata fallback values from HTML fixtures.
 - candidate enrichment writes provider results to database fields and changes status to `ready`;
 - failed enrichment records `enrichment_status=failed` and the error message.
+- daily generation excludes previously recommended candidates and dedupe keys;
+- daily generation applies user block rules before writing items;
+- generated daily snapshots are reused unchanged on repeated generation calls;
+- feedback-derived profiles can change the next day's ranking order.
 
-The full feature is accepted only after later milestones implement feed/crawler replacement, enrichment, embeddings, vector retrieval, MMR, LLM reranking, River jobs, and frontend verification.
+The full feature is accepted only after later milestones implement remote LLM enrichment, embeddings, vector retrieval, LLM reranking, River jobs, and frontend verification.
 
 ## Idempotence and Recovery
 
@@ -173,13 +190,13 @@ Goose migrations are idempotent because they run once per database version. Dail
 Validation evidence:
 
     cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...
-    ok  	DataArk	0.013s
-    ok  	DataArk/api	0.023s
+    ok  	DataArk	0.015s
+    ok  	DataArk/api	0.022s
     ok  	DataArk/assets	(cached)
-    ok  	DataArk/backup	0.144s
-    ok  	DataArk/common	0.611s
+    ok  	DataArk/backup	(cached)
+    ok  	DataArk/common	0.661s
     ok  	DataArk/discovery	(cached)
-    ok  	DataArk/search	0.030s
+    ok  	DataArk/search	(cached)
 
 ## Interfaces and Dependencies
 
@@ -226,6 +243,11 @@ In `api/recommendation/rule_provider.go`, define:
         PromptVersion string
     }
 
+In `api/common/recommendation.go`, define:
+
+    func GenerateDailyRecommendations(ctx context.Context, userID uint, date string) (*RecommendationDaySnapshot, error)
+    func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, error)
+
 ## Revision Notes
 
 2026-06-28: Created the implementation ExecPlan from the combined user plan and repository audit. The first milestone is deliberately limited to foundation work because the complete feature spans multiple independently verifiable changes.
@@ -235,3 +257,5 @@ In `api/recommendation/rule_provider.go`, define:
 2026-06-28: Added the collection-layer milestone. Feed parsing now uses `gofeed`, site discovery uses Colly, and article extraction/normalization helpers are available for later enrichment and embedding jobs.
 
 2026-06-28: Added the enrichment data-path milestone. Candidate enrichment is provider-driven and currently has a deterministic rule-based fallback for tests and local operation.
+
+2026-06-28: Added the deterministic daily generation milestone. The manual generate API now writes recommendation items and preserves generated snapshots instead of only registering empty days.

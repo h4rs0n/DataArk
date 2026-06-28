@@ -51,6 +51,7 @@ var (
 	getRecommendationDaySnapshot = common.GetRecommendationDaySnapshot
 	listRecommendationDays       = common.ListRecommendationDays
 	createRecommendationDay      = common.CreateRecommendationDay
+	generateDailyRecommendations = common.GenerateDailyRecommendations
 	recordRecommendationFeedback = common.RecordRecommendationFeedback
 	revertRecommendationFeedback = common.RevertRecommendationFeedback
 	listUserBlockRules           = common.ListUserBlockRules
@@ -518,17 +519,12 @@ func GenerateRecommendationDay(c *gin.Context) {
 	if !ok {
 		return
 	}
-	settings, err := getRecommendationSettings(userID)
+	snapshot, err := generateDailyRecommendations(c.Request.Context(), userID, c.Query("date"))
 	if err != nil {
-		c.JSON(500, gin.H{"Status": "0", "Message": "查询推荐设置失败", "Error": err.Error()})
+		c.JSON(500, gin.H{"Status": "0", "Message": "生成推荐日报失败", "Error": err.Error()})
 		return
 	}
-	day, err := createRecommendationDay(userID, c.Query("date"), settings.DailyLimit)
-	if err != nil {
-		c.JSON(500, gin.H{"Status": "0", "Message": "创建推荐日报失败", "Error": err.Error()})
-		return
-	}
-	c.JSON(202, gin.H{"Status": "1", "Message": "推荐日报生成任务已登记", "Data": day})
+	c.JSON(202, gin.H{"Status": "1", "Message": "推荐日报已生成", "Data": snapshot})
 }
 
 func GetRecommendationSettings(c *gin.Context) {
