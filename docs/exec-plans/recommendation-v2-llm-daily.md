@@ -19,7 +19,13 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
 - [x] (2026-06-28 19:12+08:00) Added SSRF guard primitives for later feed and crawler fetchers.
 - [x] (2026-06-28 19:15+08:00) Added provider interfaces for embedding, enrichment, and reranking without binding business code to a model vendor.
 - [x] (2026-06-28 19:20+08:00) Updated Meilisearch SDK call sites and tests for the upgraded dependency.
-- [ ] Validate with a full `cd api && go test ./...` outside the restricted sandbox.
+- [x] (2026-06-28 19:35+08:00) Validated PR1 foundation with full `cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...`.
+- [x] (2026-06-28 19:45+08:00) Added `gofeed`, `colly/v2`, `go-domdistiller`, and `purell` dependencies for the collection layer milestone.
+- [x] (2026-06-28 19:55+08:00) Replaced hand-written RSS/Atom feed parsing with `gofeed`, adding JSON Feed support.
+- [x] (2026-06-28 20:05+08:00) Routed discovery HTTP fetches through the SSRF guard and added redirect validation.
+- [x] (2026-06-28 20:15+08:00) Replaced site link discovery with a bounded Colly crawler that limits domain, depth, page count, concurrency, and delay.
+- [x] (2026-06-28 20:25+08:00) Added article URL normalization, content hashing, and DOM Distiller-based article extraction helpers.
+- [x] (2026-06-28 20:30+08:00) Validated the collection layer with full `cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...`.
 
 ## Surprises & Discoveries
 
@@ -31,6 +37,10 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
   Evidence: `AddDocuments`, `AddDocumentsWithContext`, `DeleteDocument`, and `DeleteDocuments` now take document options; search hits are `map[string]json.RawMessage`; `GetDocuments` uses `POST /documents/fetch`.
 - Observation: The managed sandbox blocks local listener sockets used by `httptest.NewServer`.
   Evidence: full `go test ./...` failed in `DataArk/search` with `httptest: failed to listen on a port: listen tcp6 [::1]:0: socket: operation not permitted`. A compile-only test run and focused non-listener tests passed.
+- Observation: After committing PR1 and continuing the next milestone, the same full test command succeeded in the current environment.
+  Evidence: `cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...` returned `ok` for all backend packages.
+- Observation: `go-domdistiller` extracts readable text from article HTML but does not always return OpenGraph metadata.
+  Evidence: the extractor test initially returned article text but empty description and URL. The helper now falls back to parsing `meta property="og:*"`, `meta name="description"`, and `link rel="canonical"` directly.
 
 ## Decision Log
 
@@ -49,10 +59,16 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
 - Decision: Keep production JSON/pgvector-only schema in Goose migrations while preserving SQLite-compatible model tests.
   Rationale: Existing unit tests use SQLite, but the production recommendation system needs PostgreSQL partial indexes and `vector`. Goose owns those details; GORM models provide shape and testability.
   Date/Author: 2026-06-28 / Codex
+- Decision: Keep existing content discovery service entrypoints while swapping internal feed/site discovery implementation.
+  Rationale: The frontend and controller APIs already call `FetchDiscoverySource`; replacing internals with `gofeed`, SSRF guard, and Colly preserves compatibility while improving correctness and safety.
+  Date/Author: 2026-06-28 / Codex
+- Decision: Use DOM Distiller only for local HTML body extraction, not for network fetching.
+  Rationale: Its `ApplyForURL` helper would bypass DataArk's SSRF guard. Fetching remains owned by DataArk; DOM Distiller receives already-fetched bytes.
+  Date/Author: 2026-06-28 / Codex
 
 ## Outcomes & Retrospective
 
-The PR1 foundation is implemented. The backend module now targets Go 1.26, dependencies are updated, Goose migrations create recommendation v2 schema, user-scoped settings/daily/feedback/block APIs exist, SSRF guard tests pass, and provider interfaces are in place. Full runtime recommendation generation, feed/crawler replacement, embeddings, LLM enrichment, vector retrieval, MMR, River jobs, and frontend redesign remain for later milestones.
+The PR1 foundation and PR2 collection-layer upgrade are implemented. The backend module now targets Go 1.26, dependencies are updated, Goose migrations create recommendation v2 schema, user-scoped settings/daily/feedback/block APIs exist, SSRF guard tests pass, provider interfaces are in place, feeds are parsed by `gofeed`, site discovery uses bounded Colly crawling, and article normalization/extraction helpers exist. Runtime recommendation generation, embeddings, LLM enrichment, vector retrieval, MMR, River jobs, and frontend redesign remain for later milestones.
 
 ## Context and Orientation
 
@@ -75,6 +91,8 @@ Fourth, add `api/recommendation/provider.go` with provider interfaces and lightw
 Fifth, expose authenticated APIs in `api/api/controller.go` under `/api/recommendations/*`. These endpoints use `GetCurrentUserID` and never operate on global recommendation state. The endpoints return empty but well-formed daily snapshots until the generator milestone is implemented.
 
 Sixth, add focused tests for settings defaults, daily snapshot idempotence, feedback validation, block rules, and SSRF rejection. Run all Go tests.
+
+Seventh, upgrade the content collection internals. In `api/common/discovery.go`, feed sources use `gofeed` so RSS, Atom, and JSON Feed are handled through one parser. The existing `fetchDiscoveryURL` path validates the requested URL and redirects with `api/discovery/ssrf.go`. Site sources use a bounded Colly crawler to discover alternate feeds and same-host article links. In `api/discovery/normalizer.go` and `api/discovery/extractor.go`, add reusable helpers for URL normalization, content hashing, and DOM Distiller-based article text extraction.
 
 ## Concrete Steps
 
@@ -99,7 +117,7 @@ Commit only files related to this milestone. Preserve existing unrelated working
 
 ## Validation and Acceptance
 
-The PR1 milestone is accepted when the backend compiles and, in an environment that allows `httptest` local listeners, `cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...` passes. In the restricted sandbox used during this implementation, the following commands passed:
+The PR1 and PR2 milestones are accepted when the backend compiles and `cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...` passes. The following focused commands were also used during implementation:
 
     cd api && env GOCACHE=/tmp/dataark-go-cache go test ./... -run '^$'
     ok  	DataArk/search	0.006s [no tests to run]
@@ -107,8 +125,11 @@ The PR1 milestone is accepted when the backend compiles and, in an environment t
     cd api && env GOCACHE=/tmp/dataark-go-cache go test ./common -run 'TestRecommendation|TestParseFlag'
     ok  	DataArk/common	0.022s
 
+    cd api && env GOCACHE=/tmp/dataark-go-cache go test ./common -run 'TestParseFeedCandidatesSupportsRSSAtomAndJSON|TestRecommendation|TestParseFlag'
+    ok  	DataArk/common	0.031s
+
     cd api && env GOCACHE=/tmp/dataark-go-cache go test ./discovery
-    ok  	DataArk/discovery
+    ok  	DataArk/discovery	0.008s
 
     cd api && env GOCACHE=/tmp/dataark-go-cache go test ./search -run 'TestDocumentString|TestNormalizeArchiveURL|TestResolveArchiveDocumentPath'
     ok  	DataArk/search	0.007s
@@ -121,6 +142,10 @@ The new tests prove:
 - feedback actions accept only the five supported semantics;
 - block rules can be created and deactivated per user;
 - SSRF guard rejects localhost, private IPv4, link-local, IPv6 local/private, and cloud metadata URLs.
+- RSS, Atom, and JSON Feed parse into one discovered candidate each through `gofeed`;
+- URL normalization removes known tracking parameters while preserving business query parameters;
+- content hashes are stable across whitespace differences;
+- article extraction returns readable text and metadata fallback values from HTML fixtures.
 
 The full feature is accepted only after later milestones implement feed/crawler replacement, enrichment, embeddings, vector retrieval, MMR, LLM reranking, River jobs, and frontend verification.
 
@@ -132,20 +157,14 @@ Goose migrations are idempotent because they run once per database version. Dail
 
 Validation evidence:
 
-    cd api && env GOCACHE=/tmp/dataark-go-cache go test ./... -run '^$'
-    ok  	DataArk	0.007s [no tests to run]
-    ok  	DataArk/api	0.007s [no tests to run]
-    ok  	DataArk/assets	0.003s [no tests to run]
-    ok  	DataArk/backup	0.005s [no tests to run]
-    ok  	DataArk/common	0.005s [no tests to run]
-    ok  	DataArk/discovery	0.003s [no tests to run]
-    ok  	DataArk/search	0.006s [no tests to run]
-
-    Full go test in the sandbox:
-    FAIL DataArk/search
-    panic: httptest: failed to listen on a port: listen tcp6 [::1]:0: socket: operation not permitted
-
-This failure is environmental; the compile-only run and focused non-listener tests passed.
+    cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...
+    ok  	DataArk	0.014s
+    ok  	DataArk/api	0.025s
+    ok  	DataArk/assets	(cached)
+    ok  	DataArk/backup	0.141s
+    ok  	DataArk/common	0.603s
+    ok  	DataArk/discovery	(cached)
+    ok  	DataArk/search	0.036s
 
 ## Interfaces and Dependencies
 
@@ -165,8 +184,27 @@ In `api/recommendation/provider.go`, define:
 
 In `api/discovery/ssrf.go`, define a guard function that validates HTTP and HTTPS URLs, rejects unsafe resolved IPs, and can be reused by future feed and crawler fetchers.
 
+In `api/discovery/normalizer.go`, define:
+
+    func NormalizeArticleURL(rawURL string) (string, error)
+    func ContentHash(text string) string
+
+In `api/discovery/extractor.go`, define:
+
+    type ExtractedArticle struct {
+        Title string
+        Text string
+        WordCount int
+        Description string
+        CanonicalURL string
+    }
+
+    func ExtractArticle(rawURL string, body []byte) (*ExtractedArticle, error)
+
 ## Revision Notes
 
 2026-06-28: Created the implementation ExecPlan from the combined user plan and repository audit. The first milestone is deliberately limited to foundation work because the complete feature spans multiple independently verifiable changes.
 
 2026-06-28: Revised the plan after the user requested Go 1.26 and dependency updates. The first milestone now includes dependency upgrade work and Meilisearch SDK adaptation.
+
+2026-06-28: Added the collection-layer milestone. Feed parsing now uses `gofeed`, site discovery uses Colly, and article extraction/normalization helpers are available for later enrichment and embedding jobs.

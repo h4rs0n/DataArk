@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -96,6 +97,13 @@ func TestArchiveRankingsTolerateMissingDocumentMetadata(t *testing.T) {
 
 func TestDiscoverySourceFetchAndCandidateState(t *testing.T) {
 	setupSQLiteDB(t)
+	oldValidator := validateDiscoveryFetchURL
+	validateDiscoveryFetchURL = func(_ context.Context, rawURL string) (*neturl.URL, error) {
+		return neturl.Parse(rawURL)
+	}
+	t.Cleanup(func() {
+		validateDiscoveryFetchURL = oldValidator
+	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/rss+xml")
 		_, _ = w.Write([]byte(`<?xml version="1.0"?>
@@ -133,5 +141,40 @@ func TestDiscoverySourceFetchAndCandidateState(t *testing.T) {
 	}
 	if len(ignored) != 1 {
 		t.Fatalf("ignored candidates = %#v", ignored)
+	}
+}
+
+func TestParseFeedCandidatesSupportsRSSAtomAndJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "rss",
+			body: `<?xml version="1.0"?><rss version="2.0"><channel><item><title>RSS Post</title><link>https://example.com/rss</link><description>RSS summary</description></item></channel></rss>`,
+			want: "RSS Post",
+		},
+		{
+			name: "atom",
+			body: `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Atom Post</title><link href="https://example.com/atom"/><summary>Atom summary</summary></entry></feed>`,
+			want: "Atom Post",
+		},
+		{
+			name: "json",
+			body: `{"version":"https://jsonfeed.org/version/1.1","title":"JSON Feed","items":[{"id":"1","url":"https://example.com/json","title":"JSON Post","summary":"JSON summary"}]}`,
+			want: "JSON Post",
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			candidates, err := parseFeedCandidates([]byte(testCase.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(candidates) != 1 || candidates[0].Title != testCase.want {
+				t.Fatalf("candidates = %#v, want title %q", candidates, testCase.want)
+			}
+		})
 	}
 }

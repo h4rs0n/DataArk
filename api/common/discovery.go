@@ -1,6 +1,7 @@
 package common
 
 import (
+	discoveryguard "DataArk/discovery"
 	"bytes"
 	"context"
 	"encoding/xml"
@@ -15,14 +16,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gocolly/colly/v2"
+	"github.com/mmcdole/gofeed"
 	"golang.org/x/net/html"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 const (
-	DiscoverySourceTypeFeed = "feed"
-	DiscoverySourceTypeSite = "site"
+	DiscoverySourceTypeFeed   = "feed"
+	DiscoverySourceTypeRSSHub = "rsshub"
+	DiscoverySourceTypeSite   = "site"
 
 	DiscoveryCandidateStatusNew      = "new"
 	DiscoveryCandidateStatusRead     = "read"
@@ -31,6 +35,8 @@ const (
 
 	discoveryMaxBodyBytes = 4 << 20
 )
+
+var validateDiscoveryFetchURL = discoveryguard.ValidateFetchURL
 
 type DiscoveryFetchResult struct {
 	SourceID    uint   `json:"sourceId"`
@@ -262,7 +268,7 @@ func NormalizeDiscoveryURL(rawURL string) (string, error) {
 
 func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discoveredCandidate, int, int, error) {
 	switch normalizeDiscoverySourceType(source.Type) {
-	case DiscoverySourceTypeFeed:
+	case DiscoverySourceTypeFeed, DiscoverySourceTypeRSSHub:
 		candidates, err := fetchFeedCandidates(ctx, source.URL)
 		return scoreAndLimitCandidates(candidates), 1, 0, err
 	case DiscoverySourceTypeSite:
@@ -273,7 +279,7 @@ func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discove
 }
 
 func fetchSiteCandidates(ctx context.Context, rawURL string) ([]discoveredCandidate, int, int, error) {
-	body, _, err := fetchDiscoveryURL(ctx, rawURL)
+	feedURLs, articleURLs, err := crawlSiteLinks(ctx, rawURL)
 	if err != nil {
 		return nil, 0, 0, err
 	}
@@ -281,7 +287,6 @@ func fetchSiteCandidates(ctx context.Context, rawURL string) ([]discoveredCandid
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	feedURLs, articleURLs := discoverLinksFromHTML(body, baseURL)
 	feedCandidates := make([]discoveredCandidate, 0)
 	for _, feedURL := range feedURLs {
 		candidates, err := fetchFeedCandidates(ctx, feedURL)
@@ -302,9 +307,36 @@ func fetchFeedCandidates(ctx context.Context, rawURL string) ([]discoveredCandid
 	if err != nil {
 		return nil, err
 	}
-	candidates := make([]discoveredCandidate, 0)
-	candidates = append(candidates, parseRSSCandidates(body)...)
-	candidates = append(candidates, parseAtomCandidates(body)...)
+	return parseFeedCandidates(body)
+}
+
+func parseFeedCandidates(body []byte) ([]discoveredCandidate, error) {
+	parser := gofeed.NewParser()
+	parser.UserAgent = strings.TrimSpace(DISCOVERYUSERAGENT)
+	feed, err := parser.Parse(bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	candidates := make([]discoveredCandidate, 0, len(feed.Items))
+	for _, item := range feed.Items {
+		if item == nil {
+			continue
+		}
+		link := strings.TrimSpace(item.Link)
+		if link == "" {
+			link = strings.TrimSpace(item.GUID)
+		}
+		summary := item.Description
+		if summary == "" {
+			summary = item.Content
+		}
+		candidates = append(candidates, discoveredCandidate{
+			URL:         link,
+			Title:       strings.TrimSpace(stripMarkup(item.Title)),
+			Summary:     BuildSummary(stripMarkup(summary), 260),
+			PublishedAt: firstFeedTime(item.PublishedParsed, item.UpdatedParsed),
+		})
+	}
 	return candidates, nil
 }
 
@@ -352,8 +384,12 @@ func fetchDiscoveryURL(ctx context.Context, rawURL string) ([]byte, string, erro
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	validatedURL, err := validateDiscoveryFetchURL(requestCtx, rawURL)
+	if err != nil {
+		return nil, "", err
+	}
 
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, validatedURL.String(), nil)
 	if err != nil {
 		return nil, "", err
 	}
@@ -364,7 +400,18 @@ func fetchDiscoveryURL(ctx context.Context, rawURL string) ([]byte, string, erro
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.9, */*;q=0.1")
 
-	client := &http.Client{Timeout: timeout}
+	redirects := 0
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			redirects++
+			if redirects > 5 {
+				return errors.New("too many discovery redirects")
+			}
+			_, err := validateDiscoveryFetchURL(requestCtx, req.URL.String())
+			return err
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", err
@@ -379,6 +426,82 @@ func fetchDiscoveryURL(ctx context.Context, rawURL string) ([]byte, string, erro
 		return nil, "", err
 	}
 	return body, contentType, nil
+}
+
+func crawlSiteLinks(ctx context.Context, rawURL string) ([]string, []string, error) {
+	baseURL, err := neturl.Parse(rawURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := validateDiscoveryFetchURL(ctx, rawURL); err != nil {
+		return nil, nil, err
+	}
+
+	feedSet := make(map[string]struct{})
+	articleSet := make(map[string]struct{})
+	timeout, err := time.ParseDuration(strings.TrimSpace(DISCOVERYREQUESTTIMEOUT))
+	if err != nil || timeout <= 0 {
+		timeout = 12 * time.Second
+	}
+	userAgent := strings.TrimSpace(DISCOVERYUSERAGENT)
+	if userAgent == "" {
+		userAgent = "DataArkDiscovery/1.0"
+	}
+	maxPages := DISCOVERYMAXCANDIDATES
+	if maxPages <= 0 {
+		maxPages = 50
+	}
+
+	collector := colly.NewCollector(
+		colly.AllowedDomains(baseURL.Hostname()),
+		colly.MaxDepth(2),
+		colly.UserAgent(userAgent),
+	)
+	collector.SetRequestTimeout(timeout)
+	_ = collector.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: 2, Delay: time.Second})
+
+	visited := 0
+	var firstErr error
+	collector.OnRequest(func(request *colly.Request) {
+		if _, err := validateDiscoveryFetchURL(ctx, request.URL.String()); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			request.Abort()
+			return
+		}
+		visited++
+		if visited > maxPages {
+			request.Abort()
+		}
+	})
+	collector.OnHTML("link[href]", func(element *colly.HTMLElement) {
+		rel := strings.ToLower(element.Attr("rel"))
+		linkType := strings.ToLower(element.Attr("type"))
+		if strings.Contains(rel, "alternate") && (strings.Contains(linkType, "rss") || strings.Contains(linkType, "atom") || strings.Contains(linkType, "json") || strings.Contains(linkType, "xml")) {
+			if absoluteURL, ok := sameHostURL(element.Attr("href"), baseURL); ok {
+				feedSet[absoluteURL] = struct{}{}
+			}
+		}
+	})
+	collector.OnHTML("a[href]", func(element *colly.HTMLElement) {
+		href := element.Attr("href")
+		if absoluteURL, ok := sameHostArticleURL(href, baseURL); ok {
+			articleSet[absoluteURL] = struct{}{}
+		}
+		if visited < maxPages {
+			_ = element.Request.Visit(href)
+		}
+	})
+
+	if err := collector.Visit(rawURL); err != nil {
+		return nil, nil, err
+	}
+	collector.Wait()
+	if firstErr != nil && len(feedSet) == 0 && len(articleSet) == 0 {
+		return nil, nil, firstErr
+	}
+	return sortedKeys(feedSet), sortedKeys(articleSet), nil
 }
 
 func parseRSSCandidates(body []byte) []discoveredCandidate {
@@ -651,11 +774,22 @@ func normalizeDiscoverySourceType(sourceType string) string {
 	switch strings.ToLower(strings.TrimSpace(sourceType)) {
 	case DiscoverySourceTypeFeed, "rss", "atom":
 		return DiscoverySourceTypeFeed
+	case DiscoverySourceTypeRSSHub:
+		return DiscoverySourceTypeRSSHub
 	case DiscoverySourceTypeSite, "crawler":
 		return DiscoverySourceTypeSite
 	default:
 		return DiscoverySourceTypeFeed
 	}
+}
+
+func firstFeedTime(values ...*time.Time) *time.Time {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 func parseFeedTime(value string) *time.Time {
