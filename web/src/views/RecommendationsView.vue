@@ -1,21 +1,31 @@
 <template>
   <div class="recommendations-view">
-    <div class="topbar">
-      <a-button type="text" @click="router.push('/')">
+    <div class="back-button-container">
+      <a-button type="text" class="back-button" @click="router.push('/')">
         <template #icon><icon-arrow-left /></template>
         返回首页
-      </a-button>
-      <a-button :loading="loading" @click="loadAll">
-        <template #icon><icon-refresh /></template>
-        刷新
       </a-button>
     </div>
 
     <main class="content">
-      <header class="page-header">
-        <h1>推荐中心</h1>
-        <p>查看近期使用趋势，管理外部博客源，并把感兴趣的文章加入归档。</p>
-      </header>
+      <div class="header-section">
+        <div class="icon-wrapper">
+          <icon-bulb class="header-icon" />
+        </div>
+        <h1 class="page-title">推荐中心</h1>
+        <p class="page-subtitle">查看近期使用趋势，管理外部博客源，并把感兴趣的文章加入归档。</p>
+      </div>
+
+      <div class="toolbar-band">
+        <div>
+          <strong>推荐数据</strong>
+          <span>点击、搜索和外部内容发现</span>
+        </div>
+        <a-button :loading="loading" @click="loadAll">
+          <template #icon><icon-refresh /></template>
+          刷新
+        </a-button>
+      </div>
 
       <a-tabs v-model:active-key="activeTab" class="tabs">
         <a-tab-pane key="ranking" title="点击排行">
@@ -30,7 +40,7 @@
             <a-empty v-if="rankings.length === 0" description="暂无点击记录" />
             <div v-else class="item-list">
               <article v-for="item in rankings" :key="item.path" class="archive-item">
-                <div>
+                <div class="item-content">
                   <h3>{{ item.title || item.fileName }}</h3>
                   <p>{{ item.summary || item.path }}</p>
                   <span>{{ item.domain }} · {{ item.clickCount }} 次点击</span>
@@ -72,7 +82,7 @@
             <a-empty v-if="recommendations.length === 0" description="暂无可推荐归档" />
             <div v-else class="item-list">
               <article v-for="item in recommendations" :key="item.path" class="archive-item">
-                <div>
+                <div class="item-content">
                   <h3>{{ item.title || item.fileName }}</h3>
                   <p>{{ item.summary || item.path }}</p>
                   <span>{{ item.domain }} · {{ item.reason }} · 分数 {{ item.score.toFixed(1) }}</span>
@@ -116,7 +126,7 @@
 
             <div class="source-list">
               <article v-for="source in sources" :key="source.id" class="source-row">
-                <div>
+                <div class="item-content">
                   <strong>{{ source.name }}</strong>
                   <span>{{ source.type }} · {{ source.url }}</span>
                   <small v-if="source.lastError">{{ source.lastError }}</small>
@@ -150,12 +160,12 @@
             <a-empty v-if="candidates.length === 0" description="暂无候选文章" />
             <div v-else class="item-list">
               <article v-for="candidate in candidates" :key="candidate.id" class="candidate-item">
-                <div>
+                <div class="item-content">
                   <h3>{{ candidate.title }}</h3>
                   <p>{{ candidate.summary || candidate.url }}</p>
                   <span>{{ candidate.sourceName }} · {{ candidate.status }} · 分数 {{ candidate.score.toFixed(1) }}</span>
                 </div>
-                <a-space wrap>
+                <a-space class="candidate-actions" wrap>
                   <a-button @click="openCandidate(candidate)">
                     <template #icon><icon-link /></template>
                     原文
@@ -184,6 +194,7 @@ import { useRouter } from 'vue-router'
 import { Message, Notification } from '@arco-design/web-vue'
 import {
   IconArrowLeft,
+  IconBulb,
   IconClose,
   IconDelete,
   IconEye,
@@ -422,46 +433,110 @@ onMounted(loadAll)
 <style scoped>
 .recommendations-view {
   min-height: 100vh;
-  background: #f7f8fa;
+  padding: 20px;
+  background:
+    linear-gradient(180deg, rgba(242, 247, 255, 0.9) 0%, rgba(248, 250, 252, 1) 42%),
+    #f8fafc;
   color: #1d2129;
+  position: relative;
 }
 
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 24px;
-  background: rgba(255, 255, 255, 0.92);
-  border-bottom: 1px solid #e5e6eb;
-  backdrop-filter: blur(10px);
+.back-button-container {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 10;
+}
+
+.back-button {
+  color: #4b5563;
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 8px;
+  padding: 8px 14px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.back-button:hover {
+  color: #1d4ed8;
+  background: #ffffff;
 }
 
 .content {
-  max-width: 1180px;
+  width: min(1120px, 100%);
   margin: 0 auto;
-  padding: 28px 20px 56px;
+  padding: 72px 0 40px;
 }
 
-.page-header {
-  margin-bottom: 18px;
+.header-section {
+  text-align: center;
+  margin-bottom: 32px;
 }
 
-.page-header h1 {
-  margin: 0 0 8px;
-  font-size: 30px;
+.icon-wrapper {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #2563eb, #059669);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  box-shadow: 0 16px 34px rgba(37, 99, 235, 0.22);
+}
+
+.header-icon {
+  font-size: 36px;
+  color: #ffffff;
+}
+
+.page-title {
+  font-size: 32px;
   font-weight: 700;
+  color: #111827;
+  margin: 0 0 8px;
 }
 
-.page-header p {
+.page-subtitle {
+  font-size: 16px;
+  color: #64748b;
   margin: 0;
-  color: #4e5969;
+  line-height: 1.6;
+}
+
+.toolbar-band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 18px 20px;
+  border: 1px solid rgba(203, 213, 225, 0.72);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+}
+
+.toolbar-band div {
+  display: grid;
+  gap: 4px;
+}
+
+.toolbar-band strong {
+  font-size: 17px;
+  color: #111827;
+}
+
+.toolbar-band span {
+  color: #64748b;
+  font-size: 14px;
 }
 
 .tabs {
-  background: transparent;
+  padding: 20px 24px 24px;
+  border: 1px solid rgba(203, 213, 225, 0.72);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
 }
 
 .panel {
@@ -495,13 +570,29 @@ onMounted(loadAll)
 .candidate-item,
 .source-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
   padding: 16px;
   background: #ffffff;
   border: 1px solid #e5e6eb;
   border-radius: 8px;
+}
+
+.item-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.archive-item > .arco-btn,
+.source-row > .arco-space,
+.candidate-actions {
+  flex: 0 0 auto;
+}
+
+/* Keep RSS action buttons anchored while summaries wrap to different heights. */
+.candidate-actions {
+  align-self: flex-start;
 }
 
 .archive-item h3,
@@ -612,6 +703,15 @@ onMounted(loadAll)
 
   .source-form {
     grid-template-columns: 1fr;
+  }
+
+  .toolbar-band {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .candidate-actions {
+    width: 100%;
   }
 }
 </style>
