@@ -61,7 +61,7 @@ func TestRecommendationSettingsDefaultAndSave(t *testing.T) {
 func TestRecommendationDayAndItemDeduplication(t *testing.T) {
 	setupSQLiteDB(t)
 
-	day, err := CreateRecommendationDay(3, "2026-06-28", 10)
+	day, err := CreateRecommendationDay(3, "2026-06-28T00:00:00Z", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +92,16 @@ func TestRecommendationDayAndItemDeduplication(t *testing.T) {
 	}
 	if snapshot.Day.ID != day.ID || len(snapshot.Items) != 1 || snapshot.Items[0].CandidateID != 11 {
 		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	if snapshot.Day.RecommendationDate != "2026-06-28" {
+		t.Fatalf("snapshot date = %q", snapshot.Day.RecommendationDate)
+	}
+	days, err := ListRecommendationDays(3, "2026-06-28T00:00:00Z", "", 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(days) != 1 || days[0].RecommendationDate != "2026-06-28" {
+		t.Fatalf("days = %#v", days)
 	}
 }
 

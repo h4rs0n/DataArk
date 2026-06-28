@@ -194,6 +194,7 @@ func GetRecommendationDaySnapshot(userID uint, date string) (*RecommendationDayS
 	if err := attachRecommendationItemCandidates(items); err != nil {
 		return nil, err
 	}
+	day.RecommendationDate = normalizeRecommendationDate(day.RecommendationDate)
 	day.Items = items
 	return &RecommendationDaySnapshot{Day: &day, Items: items}, nil
 }
@@ -211,8 +212,13 @@ func ListRecommendationDays(userID uint, from string, to string, page int, pageS
 	if strings.TrimSpace(to) != "" {
 		query = query.Where("recommendation_date <= ?", normalizeRecommendationDate(to))
 	}
-	err := query.Order("recommendation_date desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&days).Error
-	return days, err
+	if err := query.Order("recommendation_date desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&days).Error; err != nil {
+		return days, err
+	}
+	for index := range days {
+		days[index].RecommendationDate = normalizeRecommendationDate(days[index].RecommendationDate)
+	}
+	return days, nil
 }
 
 func CreateRecommendationDay(userID uint, date string, requestedCount int) (*RecommendationDay, error) {
@@ -1276,6 +1282,14 @@ func normalizeRecommendationDate(value string) string {
 	}
 	if parsed, err := time.Parse("2006-01-02", value); err == nil {
 		return parsed.Format("2006-01-02")
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed.Format("2006-01-02")
+	}
+	if len(value) >= len("2006-01-02") {
+		if parsed, err := time.Parse("2006-01-02", value[:len("2006-01-02")]); err == nil {
+			return parsed.Format("2006-01-02")
+		}
 	}
 	return value
 }
