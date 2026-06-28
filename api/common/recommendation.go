@@ -57,6 +57,7 @@ type recommendationCandidateScore struct {
 	Topics         []string
 	SourceHost     string
 	RetrievalScore float64
+	RerankScore    float64
 	FinalScore     float64
 	Reason         string
 }
@@ -242,6 +243,10 @@ func AddRecommendationItem(item *RecommendationItem) (*RecommendationItem, error
 }
 
 func GenerateDailyRecommendations(ctx context.Context, userID uint, date string) (*RecommendationDaySnapshot, error) {
+	return GenerateDailyRecommendationsWithReranker(ctx, userID, date, nil)
+}
+
+func GenerateDailyRecommendationsWithReranker(ctx context.Context, userID uint, date string, reranker recommendation.RerankProvider) (*RecommendationDaySnapshot, error) {
 	if db == nil || userID == 0 {
 		return &RecommendationDaySnapshot{Day: missingRecommendationDay(userID, normalizeRecommendationDate(date)), Items: []RecommendationItem{}}, nil
 	}
@@ -267,11 +272,16 @@ func GenerateDailyRecommendations(ctx context.Context, userID uint, date string)
 	if err != nil {
 		return nil, err
 	}
-	selected, err := selectDailyRecommendationCandidates(ctx, userID, *settings, profile)
+	selectionLimit := settings.DailyLimit
+	if reranker != nil && RECOMMENDATIONRERANKLIMIT > selectionLimit {
+		selectionLimit = RECOMMENDATIONRERANKLIMIT
+	}
+	selected, err := selectDailyRecommendationCandidates(ctx, userID, *settings, profile, selectionLimit)
 	if err != nil {
 		_ = markRecommendationDayFailed(day.ID, err)
 		return nil, err
 	}
+	selected, rerankModel, rerankPrompt := applyRecommendationReranker(ctx, userID, settings.DailyLimit, selected, profile, reranker)
 	now := time.Now()
 	written := make([]RecommendationItem, 0, len(selected))
 	for index, scored := range selected {
@@ -282,6 +292,7 @@ func GenerateDailyRecommendations(ctx context.Context, userID uint, date string)
 			DedupeKey:      strings.TrimSpace(scored.Candidate.DedupeKey),
 			Rank:           index + 1,
 			RetrievalScore: scored.RetrievalScore,
+			RerankScore:    scored.RerankScore,
 			FinalScore:     scored.FinalScore,
 			Reason:         scored.Reason,
 			ReasonMetadata: buildReasonMetadata(scored),
@@ -300,6 +311,8 @@ func GenerateDailyRecommendations(ctx context.Context, userID uint, date string)
 		"status":          RecommendationDayStatusGenerated,
 		"actual_count":    countRecommendationDayItems(day.ID, userID),
 		"profile_version": profile.ProfileVersion,
+		"llm_model":       rerankModel,
+		"prompt_version":  rerankPrompt,
 		"generated_at":    &now,
 		"updated_at":      now,
 	}
@@ -573,17 +586,19 @@ func EnrichDiscoveryCandidate(ctx context.Context, candidateID uint, provider re
 	return &candidate, nil
 }
 
-func selectDailyRecommendationCandidates(ctx context.Context, userID uint, settings RecommendationSettings, profile *UserRecommendationProfile) ([]recommendationCandidateScore, error) {
+func selectDailyRecommendationCandidates(ctx context.Context, userID uint, settings RecommendationSettings, profile *UserRecommendationProfile, selectionLimit int) ([]recommendationCandidateScore, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	limit := settings.DailyLimit
-	if limit <= 0 {
-		limit = 10
+	if selectionLimit <= 0 {
+		selectionLimit = settings.DailyLimit
+	}
+	if selectionLimit <= 0 {
+		selectionLimit = 10
 	}
 	poolSize := RECOMMENDATIONCANDIDATEPOOLSIZE
-	if poolSize < limit {
-		poolSize = limit * 10
+	if poolSize < selectionLimit {
+		poolSize = selectionLimit * 10
 	}
 	cutoff := time.Now().AddDate(0, 0, -settings.CandidateWindowDays)
 	var candidates []DiscoveryCandidate
@@ -637,7 +652,7 @@ func selectDailyRecommendationCandidates(ctx context.Context, userID uint, setti
 		}
 		return scored[i].Candidate.ID < scored[j].Candidate.ID
 	})
-	return diversifyRecommendationCandidates(scored, limit), nil
+	return diversifyRecommendationCandidates(scored, selectionLimit), nil
 }
 
 func diversifyRecommendationCandidates(candidates []recommendationCandidateScore, limit int) []recommendationCandidateScore {
@@ -708,6 +723,107 @@ func diversifyRecommendationCandidates(candidates []recommendationCandidateScore
 		selected = append(selected, candidate)
 	}
 	return selected
+}
+
+func applyRecommendationReranker(ctx context.Context, userID uint, requestedCount int, candidates []recommendationCandidateScore, profile *UserRecommendationProfile, reranker recommendation.RerankProvider) ([]recommendationCandidateScore, string, string) {
+	if requestedCount <= 0 {
+		requestedCount = 10
+	}
+	if len(candidates) == 0 {
+		return []recommendationCandidateScore{}, "", ""
+	}
+	if reranker == nil {
+		return trimRecommendationCandidates(candidates, requestedCount), "", ""
+	}
+	input := recommendation.RerankInput{
+		UserID:          userID,
+		RequestedCount:  requestedCount,
+		Candidates:      buildRerankCandidates(candidates),
+		UserProfileHint: buildUserProfileHint(profile),
+	}
+	result, err := reranker.Rerank(ctx, input)
+	if err != nil {
+		return trimRecommendationCandidates(candidates, requestedCount), "", ""
+	}
+	byID := make(map[uint]recommendationCandidateScore, len(candidates))
+	for _, candidate := range candidates {
+		byID[candidate.Candidate.ID] = candidate
+	}
+	sort.SliceStable(result.Items, func(i, j int) bool {
+		if result.Items[i].Rank != result.Items[j].Rank {
+			return result.Items[i].Rank < result.Items[j].Rank
+		}
+		return i < j
+	})
+	seen := make(map[uint]struct{})
+	reranked := make([]recommendationCandidateScore, 0, requestedCount)
+	for _, item := range result.Items {
+		candidate, ok := byID[item.CandidateID]
+		if !ok {
+			continue
+		}
+		if _, ok := seen[item.CandidateID]; ok {
+			continue
+		}
+		if strings.TrimSpace(item.Reason) != "" {
+			candidate.Reason = strings.TrimSpace(item.Reason)
+		}
+		candidate.RerankScore = clampScore(item.Confidence)
+		candidate.FinalScore += candidate.RerankScore * 0.05
+		reranked = append(reranked, candidate)
+		seen[item.CandidateID] = struct{}{}
+		if len(reranked) >= requestedCount {
+			break
+		}
+	}
+	if len(reranked) == 0 {
+		return trimRecommendationCandidates(candidates, requestedCount), "", ""
+	}
+	for _, candidate := range candidates {
+		if len(reranked) >= requestedCount {
+			break
+		}
+		if _, ok := seen[candidate.Candidate.ID]; ok {
+			continue
+		}
+		reranked = append(reranked, candidate)
+	}
+	return reranked, strings.TrimSpace(result.Model), strings.TrimSpace(result.PromptVersion)
+}
+
+func buildRerankCandidates(candidates []recommendationCandidateScore) []recommendation.RerankCandidate {
+	items := make([]recommendation.RerankCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		items = append(items, recommendation.RerankCandidate{
+			CandidateID:  candidate.Candidate.ID,
+			Title:        candidate.Candidate.Title,
+			Summary:      candidate.Candidate.Summary,
+			Topics:       candidate.Topics,
+			Source:       firstNonEmpty(candidate.Candidate.SourceName, candidate.SourceHost),
+			PublishedAt:  candidate.Candidate.PublishedAt,
+			QualityScore: candidate.Candidate.QualityScore,
+			DepthScore:   candidate.Candidate.DepthScore,
+		})
+	}
+	return items
+}
+
+func buildUserProfileHint(profile *UserRecommendationProfile) string {
+	if profile == nil {
+		return ""
+	}
+	return strings.Join([]string{
+		"topics=" + strings.TrimSpace(profile.TopicWeights),
+		"sources=" + strings.TrimSpace(profile.SourceWeights),
+		"styles=" + strings.TrimSpace(profile.StyleWeights),
+	}, "\n")
+}
+
+func trimRecommendationCandidates(candidates []recommendationCandidateScore, limit int) []recommendationCandidateScore {
+	if limit <= 0 || len(candidates) <= limit {
+		return candidates
+	}
+	return candidates[:limit]
 }
 
 func normalizeRecommendationSettings(settings RecommendationSettings) RecommendationSettings {

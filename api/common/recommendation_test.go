@@ -16,6 +16,15 @@ func (failingEnrichmentProvider) Enrich(context.Context, recommendation.Enrichme
 	return recommendation.EnrichmentResult{}, errors.New("llm unavailable")
 }
 
+type fakeReranker struct {
+	result recommendation.RerankResult
+	err    error
+}
+
+func (provider fakeReranker) Rerank(context.Context, recommendation.RerankInput) (recommendation.RerankResult, error) {
+	return provider.result, provider.err
+}
+
 func TestRecommendationSettingsDefaultAndSave(t *testing.T) {
 	setupSQLiteDB(t)
 
@@ -260,6 +269,56 @@ func TestGenerateDailyRecommendationsUsesFeedbackProfile(t *testing.T) {
 	}
 	if snapshot.Items[0].CandidateID != postgres.ID || snapshot.Items[1].CandidateID != generic.ID {
 		t.Fatalf("ranked items = %#v, want postgres %d before generic %d", snapshot.Items, postgres.ID, generic.ID)
+	}
+}
+
+func TestGenerateDailyRecommendationsRerankerValidationAndFallback(t *testing.T) {
+	setupSQLiteDB(t)
+	settings := DefaultRecommendationSettings(11)
+	settings.DailyLimit = 2
+	settings.Enabled = true
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	first := createReadyCandidate(t, "https://first.example/post", "First", []string{"Go"}, "first", 0.9, 0.7)
+	second := createReadyCandidate(t, "https://second.example/post", "Second", []string{"PostgreSQL"}, "second", 0.6, 0.5)
+	reranker := fakeReranker{result: recommendation.RerankResult{
+		Model:         "test-reranker",
+		PromptVersion: "test-v1",
+		Items: []recommendation.RerankItem{
+			{CandidateID: 9999, Rank: 1, Reason: "invalid", Confidence: 1},
+			{CandidateID: second.ID, Rank: 2, Reason: "reranked second", Confidence: 0.9},
+			{CandidateID: first.ID, Rank: 3, Reason: "reranked first", Confidence: 0.7},
+		},
+	}}
+	snapshot, err := GenerateDailyRecommendationsWithReranker(context.Background(), 11, "2026-06-28", reranker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Day.LLMModel != "test-reranker" || snapshot.Day.PromptVersion != "test-v1" {
+		t.Fatalf("rerank metadata day = %#v", snapshot.Day)
+	}
+	if len(snapshot.Items) != 2 || snapshot.Items[0].CandidateID != second.ID || snapshot.Items[0].Reason != "reranked second" || snapshot.Items[0].RerankScore != 0.9 {
+		t.Fatalf("reranked items = %#v", snapshot.Items)
+	}
+
+	if err := db.Model(&DiscoveryCandidate{}).Where("id IN ?", []uint{first.ID, second.ID}).Update("status", DiscoveryCandidateStatusIgnored).Error; err != nil {
+		t.Fatal(err)
+	}
+	settings = DefaultRecommendationSettings(12)
+	settings.DailyLimit = 2
+	settings.Enabled = true
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	fallbackFirst := createReadyCandidate(t, "https://fallback-a.example/post", "Fallback First", []string{"Go"}, "fallback-first", 0.9, 0.7)
+	createReadyCandidate(t, "https://fallback-b.example/post", "Fallback Second", []string{"PostgreSQL"}, "fallback-second", 0.5, 0.5)
+	fallback, err := GenerateDailyRecommendationsWithReranker(context.Background(), 12, "2026-06-28", fakeReranker{err: errors.New("reranker unavailable")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fallback.Items) != 2 || fallback.Items[0].CandidateID != fallbackFirst.ID || fallback.Items[0].RerankScore != 0 {
+		t.Fatalf("fallback items = %#v", fallback.Items)
 	}
 }
 
