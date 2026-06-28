@@ -33,6 +33,12 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
 - [x] (2026-06-28 21:30+08:00) Added feedback-derived user profile rebuilding for topic, source, style, and depth preferences.
 - [x] (2026-06-28 21:35+08:00) Connected the admin generate endpoint to the real daily generation service.
 - [x] (2026-06-28 21:55+08:00) Added optional reranker integration with strict candidate ID validation and deterministic fallback.
+- [x] (2026-06-28 22:35+08:00) Added snapshot candidate attachment so daily recommendation cards can render article title, URL, summary, source, and topics.
+- [x] (2026-06-28 22:45+08:00) Added process-local daily recommendation scheduler controlled by recommendation settings and generation time.
+- [x] (2026-06-28 23:05+08:00) Added OpenAI-compatible provider for embeddings, enrichment, and reranking with fake-client tests.
+- [x] (2026-06-28 23:15+08:00) Added pending candidate enrichment before daily generation, with rule-based fallback when remote enrichment fails.
+- [x] (2026-06-28 23:30+08:00) Reworked `RecommendationsView.vue` so the recommendation center opens on Today, supports history, settings, block rules, sources, candidates, and five feedback actions.
+- [x] (2026-06-28 23:40+08:00) Verified the recommendation page in Vite with Chrome DevTools screenshot, DOM snapshot, and console check.
 
 ## Surprises & Discoveries
 
@@ -54,6 +60,10 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
   Evidence: `GenerateDailyRecommendations` now uses ready enriched candidates, feedback-derived weights, block rules, historical recommendation identity, and diversity constraints to generate a stable daily snapshot.
 - Observation: Reranking can be integrated without making LLM availability a hard dependency.
   Evidence: `GenerateDailyRecommendationsWithReranker` accepts a `RerankProvider`, validates returned IDs against the input candidate pool, ignores invalid or duplicate IDs, records rerank metadata when valid, and falls back to deterministic order on provider errors.
+- Observation: Daily generation was not usable from freshly fetched RSS candidates until pending candidates were enriched.
+  Evidence: fetched candidates are inserted with `enrichment_status=pending`; `TestGenerateDailyRecommendationsEnrichesPendingCandidates` now proves generation enriches a pending candidate and writes it to the daily snapshot.
+- Observation: The frontend needs article data inside each recommendation item, not just `candidateId`.
+  Evidence: `GetRecommendationDaySnapshot` now attaches `DiscoveryCandidate` to each `RecommendationItem`, and the browser screenshot at `/tmp/dataark-recommendations-after.png` shows the Today page renders without console errors.
 
 ## Decision Log
 
@@ -87,10 +97,16 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
 - Decision: Add the reranker boundary before adding a concrete OpenAI-compatible client.
   Rationale: Provider validation and fallback behavior are business invariants independent of vendor SDK choice. Testing them with an injected provider prevents remote LLM failures from blocking the daily generator.
   Date/Author: 2026-06-28 / Codex
+- Decision: Add an in-process scheduler before River.
+  Rationale: DataArk already has an in-process discovery scheduler and no River/PostgreSQL worker runtime is configured. The scheduler uses the same idempotent daily generation service and can later be replaced by River without changing the API or snapshot model.
+  Date/Author: 2026-06-28 / Codex
+- Decision: Implement the OpenAI-compatible provider with `net/http` instead of introducing a large orchestration framework.
+  Rationale: The immediate need is embeddings, structured JSON enrichment, and rerank calls behind existing provider interfaces. A small provider is testable with a fake HTTP client and keeps LangChain-style orchestration out of the business layer.
+  Date/Author: 2026-06-28 / Codex
 
 ## Outcomes & Retrospective
 
-The PR1 foundation, PR2 collection-layer upgrade, PR3 enrichment data path, PR4 deterministic daily generator, and PR5 reranker boundary are implemented. The backend module now targets Go 1.26, dependencies are updated, Goose migrations create recommendation v2 schema, user-scoped settings/daily/feedback/block APIs exist, SSRF guard tests pass, provider interfaces are in place, feeds are parsed by `gofeed`, site discovery uses bounded Colly crawling, article normalization/extraction helpers exist, candidates can be enriched through a provider, daily recommendation snapshots can be generated from enriched candidates with feedback-aware scoring and hard no-repeat filters, and an optional reranker can reorder the Top-K candidate pool with validation and fallback. Remote OpenAI-compatible enrichment, embeddings, vector retrieval, River jobs, and frontend redesign remain for later milestones.
+The PR1 foundation, PR2 collection-layer upgrade, PR3 enrichment data path, PR4 deterministic daily generator, PR5 reranker boundary, PR6 scheduler/provider wiring, and PR7 recommendation center UI are implemented. The backend module now targets Go 1.26, dependencies are updated, Goose migrations create recommendation v2 schema, user-scoped settings/daily/feedback/block APIs exist, SSRF guard tests pass, provider interfaces are in place, feeds are parsed by `gofeed`, site discovery uses bounded Colly crawling, article normalization/extraction helpers exist, pending candidates are enriched before daily generation, OpenAI-compatible enrichment/embedding/rerank provider code exists, daily recommendation snapshots can be generated from enriched candidates with feedback-aware scoring and hard no-repeat filters, and the frontend opens on Today with history, settings, block rules, content sources, candidates, and feedback controls. pgvector-backed embedding retrieval and River-backed durable jobs remain for later infrastructure milestones.
 
 ## Context and Orientation
 
@@ -121,6 +137,8 @@ Eighth, add the candidate enrichment data path. In `api/common/recommendation.go
 Ninth, add deterministic daily generation. In `api/common/recommendation.go`, add `GenerateDailyRecommendations`, which reuses an already generated snapshot, rebuilds a user profile from feedback, filters out historical candidates and dedupe keys, applies active block rules, scores candidates by quality/depth/freshness/profile weights, applies greedy diversity constraints, writes `recommendation_items`, and marks the day generated. Update the admin generate endpoint to call this service instead of creating an empty day.
 
 Tenth, add the reranker boundary. Keep `GenerateDailyRecommendations` as the API-facing deterministic entrypoint, and add `GenerateDailyRecommendationsWithReranker` so future jobs can inject an LLM-backed `recommendation.RerankProvider`. Build a compact rerank input from candidate metadata and user profile hints, validate provider output against the supplied candidate IDs, ignore invalid or duplicate IDs, persist rerank score/model/prompt metadata, and fall back to deterministic order on provider errors or empty valid output.
+
+Eleventh, wire generation into runtime and UI. Attach candidate data to recommendation snapshots, enrich pending candidates before generation, add an OpenAI-compatible provider implementation, add an in-process scheduler guarded by recommendation settings, and rework the recommendation center frontend so Today is the default screen with history, settings, block rules, source management, candidate management, and five feedback actions.
 
 ## Concrete Steps
 
@@ -166,7 +184,14 @@ The PR1 and PR2 milestones are accepted when the backend compiles and `cd api &&
     ok  	DataArk/common	0.036s
 
     cd api && env GOCACHE=/tmp/dataark-go-cache go test ./common -run 'TestGenerateDailyRecommendations|TestRecommendation|TestEnrichDiscoveryCandidate'
-    ok  	DataArk/common	0.036s
+    ok  	DataArk/common	0.060s
+
+    cd api && env GOCACHE=/tmp/dataark-go-cache go test ./recommendation
+    ok  	DataArk/recommendation	0.004s
+
+    cd web && npm run build
+    > web2@0.0.0 build
+    > run-p type-check "build-only {@}" --
 
 The new tests prove:
 
@@ -188,8 +213,12 @@ The new tests prove:
 - feedback-derived profiles can change the next day's ranking order.
 - reranker output cannot introduce candidate IDs outside the supplied pool;
 - reranker provider failures fall back to deterministic ordering.
+- daily generation enriches pending candidates before selecting recommendations;
+- OpenAI-compatible embedding, enrichment, and rerank responses parse through fake HTTP client tests;
+- recommendation snapshots include candidate data for frontend rendering;
+- the recommendation center renders in browser with no console messages.
 
-The full feature is accepted only after later milestones implement remote LLM enrichment, embeddings, vector retrieval, LLM reranking, River jobs, and frontend verification.
+The full feature is accepted for the current single-process implementation. Remaining infrastructure hardening items are pgvector-backed embedding retrieval and River-backed durable jobs.
 
 ## Idempotence and Recovery
 
@@ -200,13 +229,21 @@ Goose migrations are idempotent because they run once per database version. Dail
 Validation evidence:
 
     cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...
-    ok  	DataArk	0.014s
-    ok  	DataArk/api	0.020s
+    ok  	DataArk	0.017s
+    ok  	DataArk/api	0.021s
     ok  	DataArk/assets	(cached)
     ok  	DataArk/backup	(cached)
-    ok  	DataArk/common	0.640s
+    ok  	DataArk/common	0.642s
     ok  	DataArk/discovery	(cached)
+    ok  	DataArk/recommendation	(cached)
     ok  	DataArk/search	(cached)
+
+Browser verification:
+
+    cd web && npm run dev -- --host 127.0.0.1
+    Chrome DevTools opened http://127.0.0.1:5173/#/recommendations
+    Console messages: none
+    Screenshot: /tmp/dataark-recommendations-after.png
 
 ## Interfaces and Dependencies
 
@@ -257,7 +294,12 @@ In `api/common/recommendation.go`, define:
 
     func GenerateDailyRecommendations(ctx context.Context, userID uint, date string) (*RecommendationDaySnapshot, error)
     func GenerateDailyRecommendationsWithReranker(ctx context.Context, userID uint, date string, reranker recommendation.RerankProvider) (*RecommendationDaySnapshot, error)
+    func EnrichPendingDiscoveryCandidates(ctx context.Context, limit int, provider recommendation.EnrichmentProvider) (int, error)
     func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, error)
+
+In `api/recommendation/openai_provider.go`, define:
+
+    type OpenAICompatibleProvider struct { ... }
 
 ## Revision Notes
 
@@ -272,3 +314,5 @@ In `api/common/recommendation.go`, define:
 2026-06-28: Added the deterministic daily generation milestone. The manual generate API now writes recommendation items and preserves generated snapshots instead of only registering empty days.
 
 2026-06-28: Added the reranker boundary milestone. The generator can now accept a reranker provider, validate its output, persist rerank metadata, and fall back when reranking fails.
+
+2026-06-28: Added scheduler/provider/UI milestones. Daily generation now enriches pending candidates first, can use an OpenAI-compatible provider when configured, runs from a settings-aware in-process scheduler, and has a browser-verified recommendation center UI.

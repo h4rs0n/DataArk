@@ -272,6 +272,45 @@ func TestGenerateDailyRecommendationsUsesFeedbackProfile(t *testing.T) {
 	}
 }
 
+func TestGenerateDailyRecommendationsEnrichesPendingCandidates(t *testing.T) {
+	setupSQLiteDB(t)
+	settings := DefaultRecommendationSettings(13)
+	settings.DailyLimit = 1
+	settings.Enabled = true
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	candidate := DiscoveryCandidate{
+		SourceID:         1,
+		SourceName:       "pending.example",
+		URL:              "https://pending.example/post?utm_source=test",
+		Title:            "Go RSS tutorial",
+		Summary:          "A Go RSS tutorial from a feed",
+		Status:           DiscoveryCandidateStatusNew,
+		EnrichmentStatus: RecommendationEnrichmentStatusPending,
+		LastSeenAt:       now,
+		PublishedAt:      &now,
+	}
+	if err := db.Create(&candidate).Error; err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := GenerateDailyRecommendations(context.Background(), 13, "2026-06-28")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Items) != 1 || snapshot.Items[0].CandidateID != candidate.ID {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	var enriched DiscoveryCandidate
+	if err := db.First(&enriched, candidate.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if enriched.EnrichmentStatus != RecommendationEnrichmentStatusReady || enriched.DedupeKey == "" {
+		t.Fatalf("enriched candidate = %#v", enriched)
+	}
+}
+
 func TestGenerateDailyRecommendationsRerankerValidationAndFallback(t *testing.T) {
 	setupSQLiteDB(t)
 	settings := DefaultRecommendationSettings(11)
@@ -301,6 +340,9 @@ func TestGenerateDailyRecommendationsRerankerValidationAndFallback(t *testing.T)
 	if len(snapshot.Items) != 2 || snapshot.Items[0].CandidateID != second.ID || snapshot.Items[0].Reason != "reranked second" || snapshot.Items[0].RerankScore != 0.9 {
 		t.Fatalf("reranked items = %#v", snapshot.Items)
 	}
+	if snapshot.Items[0].Candidate.ID != second.ID || snapshot.Items[0].Candidate.Title != "Second" {
+		t.Fatalf("snapshot candidate not attached: %#v", snapshot.Items[0])
+	}
 
 	if err := db.Model(&DiscoveryCandidate{}).Where("id IN ?", []uint{first.ID, second.ID}).Update("status", DiscoveryCandidateStatusIgnored).Error; err != nil {
 		t.Fatal(err)
@@ -319,6 +361,21 @@ func TestGenerateDailyRecommendationsRerankerValidationAndFallback(t *testing.T)
 	}
 	if len(fallback.Items) != 2 || fallback.Items[0].CandidateID != fallbackFirst.ID || fallback.Items[0].RerankScore != 0 {
 		t.Fatalf("fallback items = %#v", fallback.Items)
+	}
+}
+
+func TestRecommendationGenerationDueUsesSettingsTime(t *testing.T) {
+	settings := RecommendationSettings{UserID: 1, Timezone: "Asia/Shanghai", GenerationTime: "07:30"}
+	before := time.Date(2026, 6, 28, 7, 29, 0, 0, time.FixedZone("CST", 8*60*60))
+	after := time.Date(2026, 6, 28, 7, 30, 0, 0, time.FixedZone("CST", 8*60*60))
+	if recommendationGenerationDue(settings, before) {
+		t.Fatal("generation should not be due before configured time")
+	}
+	if !recommendationGenerationDue(settings, after) {
+		t.Fatal("generation should be due at configured time")
+	}
+	if got := recommendationDateForSettings(settings, after); got != "2026-06-28" {
+		t.Fatalf("recommendation date = %q", got)
 	}
 }
 

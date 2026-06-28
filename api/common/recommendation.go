@@ -97,6 +97,34 @@ func DefaultRecommendationSettings(userID uint) RecommendationSettings {
 	}
 }
 
+func ConfiguredEnrichmentProvider() recommendation.EnrichmentProvider {
+	if strings.TrimSpace(LLMCHATMODEL) == "" {
+		return recommendation.RuleBasedEnrichmentProvider{}
+	}
+	return configuredOpenAICompatibleProvider()
+}
+
+func ConfiguredRecommendationReranker() recommendation.RerankProvider {
+	if strings.TrimSpace(LLMCHATMODEL) == "" {
+		return nil
+	}
+	return configuredOpenAICompatibleProvider()
+}
+
+func configuredOpenAICompatibleProvider() recommendation.OpenAICompatibleProvider {
+	timeout, err := time.ParseDuration(strings.TrimSpace(LLMTIMEOUT))
+	if err != nil || timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	return recommendation.OpenAICompatibleProvider{
+		BaseURL:        LLMBASEURL,
+		APIKey:         LLMAPIKEY,
+		ChatModel:      LLMCHATMODEL,
+		EmbeddingModel: LLMEMBEDDINGMODEL,
+		Timeout:        timeout,
+	}
+}
+
 func GetRecommendationSettings(userID uint) (*RecommendationSettings, error) {
 	if db == nil || userID == 0 {
 		settings := DefaultRecommendationSettings(userID)
@@ -161,6 +189,9 @@ func GetRecommendationDaySnapshot(userID uint, date string) (*RecommendationDayS
 	}
 	items := make([]RecommendationItem, 0)
 	if err := db.Where("day_id = ? AND user_id = ?", day.ID, userID).Order("rank asc").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	if err := attachRecommendationItemCandidates(items); err != nil {
 		return nil, err
 	}
 	day.Items = items
@@ -243,7 +274,7 @@ func AddRecommendationItem(item *RecommendationItem) (*RecommendationItem, error
 }
 
 func GenerateDailyRecommendations(ctx context.Context, userID uint, date string) (*RecommendationDaySnapshot, error) {
-	return GenerateDailyRecommendationsWithReranker(ctx, userID, date, nil)
+	return GenerateDailyRecommendationsWithReranker(ctx, userID, date, ConfiguredRecommendationReranker())
 }
 
 func GenerateDailyRecommendationsWithReranker(ctx context.Context, userID uint, date string, reranker recommendation.RerankProvider) (*RecommendationDaySnapshot, error) {
@@ -257,6 +288,7 @@ func GenerateDailyRecommendationsWithReranker(ctx context.Context, userID uint, 
 	if !settings.Enabled {
 		return GetRecommendationDaySnapshot(userID, date)
 	}
+	_, _ = EnrichPendingDiscoveryCandidates(ctx, RECOMMENDATIONCANDIDATEPOOLSIZE, ConfiguredEnrichmentProvider())
 	day, err := CreateRecommendationDay(userID, date, settings.DailyLimit)
 	if err != nil {
 		return nil, err
@@ -410,6 +442,46 @@ func DeleteUserBlockRule(userID uint, ruleID uint) error {
 		"active":     false,
 		"updated_at": time.Now(),
 	}).Error
+}
+
+func EnrichPendingDiscoveryCandidates(ctx context.Context, limit int, provider recommendation.EnrichmentProvider) (int, error) {
+	if db == nil {
+		return 0, nil
+	}
+	if provider == nil {
+		provider = ConfiguredEnrichmentProvider()
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	var candidates []DiscoveryCandidate
+	if err := db.Where("enrichment_status = ? OR enrichment_status = '' OR enrichment_status IS NULL", RecommendationEnrichmentStatusPending).
+		Order("last_seen_at desc").
+		Limit(limit).
+		Find(&candidates).Error; err != nil {
+		return 0, err
+	}
+	enriched := 0
+	var firstErr error
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return enriched, err
+		}
+		if _, err := EnrichDiscoveryCandidate(ctx, candidate.ID, provider); err != nil {
+			if !isRuleBasedEnrichmentProvider(provider) {
+				if _, fallbackErr := EnrichDiscoveryCandidate(ctx, candidate.ID, recommendation.RuleBasedEnrichmentProvider{}); fallbackErr == nil {
+					enriched++
+					continue
+				}
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		enriched++
+	}
+	return enriched, firstErr
 }
 
 func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, error) {
@@ -868,6 +940,15 @@ func clampScore(value float64) float64 {
 	return value
 }
 
+func isRuleBasedEnrichmentProvider(provider recommendation.EnrichmentProvider) bool {
+	switch provider.(type) {
+	case recommendation.RuleBasedEnrichmentProvider, *recommendation.RuleBasedEnrichmentProvider:
+		return true
+	default:
+		return false
+	}
+}
+
 func markRecommendationDayFailed(dayID uint, cause error) error {
 	if db == nil || dayID == 0 {
 		return nil
@@ -881,6 +962,28 @@ func markRecommendationDayFailed(dayID uint, cause error) error {
 		"prompt_version": message,
 		"updated_at":     time.Now(),
 	}).Error
+}
+
+func attachRecommendationItemCandidates(items []RecommendationItem) error {
+	if db == nil || len(items) == 0 {
+		return nil
+	}
+	ids := make([]uint, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.CandidateID)
+	}
+	var candidates []DiscoveryCandidate
+	if err := db.Where("id IN ?", ids).Find(&candidates).Error; err != nil {
+		return err
+	}
+	byID := make(map[uint]DiscoveryCandidate, len(candidates))
+	for _, candidate := range candidates {
+		byID[candidate.ID] = candidate
+	}
+	for index := range items {
+		items[index].Candidate = byID[items[index].CandidateID]
+	}
+	return nil
 }
 
 func countRecommendationDayItems(dayID uint, userID uint) int {

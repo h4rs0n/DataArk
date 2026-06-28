@@ -57,6 +57,7 @@ var (
 	listUserBlockRules           = common.ListUserBlockRules
 	deleteUserBlockRule          = common.DeleteUserBlockRule
 	startDiscoveryScheduler      = common.StartDiscoveryScheduler
+	startRecommendationScheduler = common.StartRecommendationScheduler
 	addDocFileToIndex            = search.AddDocFile
 	deleteDocByHTMLPath          = search.DeleteDocByHTMLPath
 	createBackupArchive          = backup.CreateBackup
@@ -1013,6 +1014,8 @@ func WebStarter(debugMode bool) {
 	}
 	stopDiscoveryScheduler := startDiscoveryScheduler()
 	defer stopDiscoveryScheduler()
+	stopRecommendationScheduler := startRecommendationScheduler()
+	defer stopRecommendationScheduler()
 	router := gin.Default()
 	if debugMode {
 		router.Use(CORSMiddleware())

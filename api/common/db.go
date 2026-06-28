@@ -172,19 +172,20 @@ type RecommendationDay struct {
 }
 
 type RecommendationItem struct {
-	ID             uint      `json:"id" gorm:"primaryKey"`
-	DayID          uint      `json:"dayId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;index;not null"`
-	UserID         uint      `json:"userId" gorm:"uniqueIndex:idx_recommendation_items_user_candidate;index;not null"`
-	CandidateID    uint      `json:"candidateId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;uniqueIndex:idx_recommendation_items_user_candidate;index;not null"`
-	DedupeKey      string    `json:"dedupeKey" gorm:"index;size:128"`
-	Rank           int       `json:"rank" gorm:"not null"`
-	RetrievalScore float64   `json:"retrievalScore"`
-	RerankScore    float64   `json:"rerankScore"`
-	FinalScore     float64   `json:"finalScore"`
-	Reason         string    `json:"reason" gorm:"type:text"`
-	ReasonMetadata string    `json:"reasonMetadata" gorm:"type:text"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID             uint               `json:"id" gorm:"primaryKey"`
+	DayID          uint               `json:"dayId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;index;not null"`
+	UserID         uint               `json:"userId" gorm:"uniqueIndex:idx_recommendation_items_user_candidate;index;not null"`
+	CandidateID    uint               `json:"candidateId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;uniqueIndex:idx_recommendation_items_user_candidate;index;not null"`
+	Candidate      DiscoveryCandidate `json:"candidate" gorm:"-"`
+	DedupeKey      string             `json:"dedupeKey" gorm:"index;size:128"`
+	Rank           int                `json:"rank" gorm:"not null"`
+	RetrievalScore float64            `json:"retrievalScore"`
+	RerankScore    float64            `json:"rerankScore"`
+	FinalScore     float64            `json:"finalScore"`
+	Reason         string             `json:"reason" gorm:"type:text"`
+	ReasonMetadata string             `json:"reasonMetadata" gorm:"type:text"`
+	CreatedAt      time.Time          `json:"createdAt"`
+	UpdatedAt      time.Time          `json:"updatedAt"`
 }
 
 type RecommendationFeedback struct {
