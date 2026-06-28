@@ -399,7 +399,7 @@ func addDocFileByPath(htmlFilePath string, fileName string, originDomain string,
 	}
 	client := meilisearch.New(common.MEILIHOST, meilisearch.WithAPIKey(common.MEILIAPIKey))
 
-	_, err = client.Index(common.MEILIBlogsIndex).AddDocuments(documents)
+	_, err = client.Index(common.MEILIBlogsIndex).AddDocuments(documents, nil)
 	if err != nil {
 		return err
 	}

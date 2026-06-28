@@ -34,7 +34,7 @@ services:
       - ./meili_dumps:/meili_dumps
 
   database:
-    image: postgres:17-alpine3.21
+    image: pgvector/pgvector:pg17
     volumes:
       - ./database:/var/lib/postgresql/data
     environment:

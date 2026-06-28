@@ -26,9 +26,10 @@ func QueryByKeyword(keyword string, pageNum int64) (string, map[string]int) {
 
 	client := meilisearch.New(common.MEILIHOST, meilisearch.WithAPIKey(common.MEILIAPIKey))
 
+	hitsPerPage := int64(10)
 	meiliReqOpt := &meilisearch.SearchRequest{
 		Page:                  pageNum,
-		HitsPerPage:           10,
+		HitsPerPage:           &hitsPerPage,
 		AttributesToHighlight: []string{"content"},
 		ShowMatchesPosition:   true,
 		HighlightPreTag:       preTag,
@@ -52,20 +53,22 @@ func QueryByKeyword(keyword string, pageNum int64) (string, map[string]int) {
 
 	for _, hit := range hits {
 		var result Result
-		singleContent, _ := hit.(map[string]interface{})
 
 		// 获取高亮内容
-		formattedContent, _ := singleContent["_formatted"].(map[string]interface{})
+		formattedContent := make(map[string]interface{})
+		if rawFormatted, ok := hit["_formatted"]; ok {
+			_ = json.Unmarshal(rawFormatted, &formattedContent)
+		}
 		formattedContentStr, _ := formattedContent["content"].(string)
 
 		result.Id = documentString(formattedContent, "id")
 		if result.Id == "" {
-			result.Id = documentString(singleContent, "id")
+			result.Id = documentString(hit, "id")
 		}
-		result.Filename = documentString(singleContent, "filename")
-		result.Domain = documentString(singleContent, "domain")
-		result.Title = documentString(singleContent, "title")
-		result.Link = documentString(singleContent, "link")
+		result.Filename = documentString(hit, "filename")
+		result.Domain = documentString(hit, "domain")
+		result.Title = documentString(hit, "title")
+		result.Link = documentString(hit, "link")
 		result.Content = formattedContentStr
 
 		QueryResults = append(QueryResults, result)

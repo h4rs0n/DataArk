@@ -126,13 +126,13 @@ func TestWaitForArchivedFile(t *testing.T) {
 
 func TestMeiliArchiveIndexStoreListsDocuments(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/indexes/blogs/documents" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
+		if r.Method != http.MethodPost || r.URL.Path != "/indexes/blogs/documents/fetch" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(meilisearch.DocumentsResult{
-			Results: []map[string]interface{}{
-				{"id": "1", "domain": "example.com", "filename": "one.html"},
-				{"id": 2, "domain": "example.com", "filename": "two.html"},
+			Results: meilisearch.Hits{
+				testMeiliHit(map[string]interface{}{"id": "1", "domain": "example.com", "filename": "one.html"}),
+				testMeiliHit(map[string]interface{}{"id": 2, "domain": "example.com", "filename": "two.html"}),
 			},
 			Limit: 2,
 		})
@@ -207,11 +207,11 @@ func TestRebuildRecoverableIndexFromArchiveSkipsInvalidHTML(t *testing.T) {
 func TestDeleteDocumentHelpersUseMeiliIndex(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/indexes/blogs/documents":
+		case r.Method == http.MethodPost && r.URL.Path == "/indexes/blogs/documents/fetch":
 			_ = json.NewEncoder(w).Encode(meilisearch.DocumentsResult{
-				Results: []map[string]interface{}{
-					{"id": "keep", "domain": "example.com", "filename": "other.html"},
-					{"id": "delete-me", "domain": "example.com", "filename": "page.html"},
+				Results: meilisearch.Hits{
+					testMeiliHit(map[string]interface{}{"id": "keep", "domain": "example.com", "filename": "other.html"}),
+					testMeiliHit(map[string]interface{}{"id": "delete-me", "domain": "example.com", "filename": "page.html"}),
 				},
 			})
 		case r.Method == http.MethodDelete && r.URL.Path == "/indexes/blogs/documents/delete-me":
@@ -269,6 +269,15 @@ func TestDocumentString(t *testing.T) {
 	if documentString(document, "nil") != "" || documentString(document, "missing") != "" {
 		t.Fatal("nil or missing values should return empty string")
 	}
+}
+
+func testMeiliHit(document map[string]interface{}) meilisearch.Hit {
+	hit := make(meilisearch.Hit, len(document))
+	for key, value := range document {
+		rawValue, _ := json.Marshal(value)
+		hit[key] = rawValue
+	}
+	return hit
 }
 
 func TestAddDocFileRejectsMissingTemporaryFile(t *testing.T) {

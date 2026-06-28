@@ -3,6 +3,7 @@ package search
 import (
 	"DataArk/common"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/meilisearch/meilisearch-go"
@@ -132,14 +133,34 @@ func findArchiveDocumentIDs(index meilisearch.DocumentManager, domain string, fi
 
 func deleteArchiveDocuments(index meilisearch.DocumentManager, documentIDs []string) (*meilisearch.TaskInfo, error) {
 	if len(documentIDs) == 1 {
-		return index.DeleteDocument(documentIDs[0])
+		return index.DeleteDocument(documentIDs[0], nil)
 	}
-	return index.DeleteDocuments(documentIDs)
+	return index.DeleteDocuments(documentIDs, nil)
 }
 
-func documentString(document map[string]interface{}, key string) string {
-	value, ok := document[key]
+func documentString(document interface{}, key string) string {
+	var value interface{}
+	var ok bool
+	switch typedDocument := document.(type) {
+	case map[string]interface{}:
+		value, ok = typedDocument[key]
+	case meilisearch.Hit:
+		value, ok = typedDocument[key]
+	default:
+		return ""
+	}
 	if !ok || value == nil {
+		return ""
+	}
+	if rawValue, ok := value.(json.RawMessage); ok {
+		var stringValue string
+		if err := json.Unmarshal(rawValue, &stringValue); err == nil {
+			return stringValue
+		}
+		var decodedValue interface{}
+		if err := json.Unmarshal(rawValue, &decodedValue); err == nil && decodedValue != nil {
+			return fmt.Sprint(decodedValue)
+		}
 		return ""
 	}
 	stringValue, ok := value.(string)

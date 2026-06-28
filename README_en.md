@@ -23,7 +23,7 @@ When starting for the first time, an initial username and password will be gener
 make web
 make build
 ```
-An executable file will be generated in the `api/bin` directory. After deploying Meilisearch and PostgreSQL, start the service by running:
+An executable file will be generated in the `api/bin` directory. After deploying Meilisearch and PostgreSQL with pgvector available, start the service by running:
 ```
 ./api/bin/DataArk.exe -loc ./docker/archive \
                       -mhost "http://meili:7700" \
@@ -37,10 +37,19 @@ An executable file will be generated in the `api/bin` directory. After deploying
                       -discover-interval "6h" \
                       -discover-timeout "12s" \
                       -discover-max 50 \
+                      -recommend-enabled=false \
+                      -recommend-daily-limit 10 \
+                      -recommend-timezone "Asia/Shanghai" \
+                      -recommend-time "07:00" \
+                      -llm-base-url "" \
+                      -llm-chat-model "" \
+                      -llm-embedding-model "" \
 ```
 The backup feature depends on the `pg_dump` and `psql` commands. For manual deployments, install PostgreSQL client tools and point `-mdump` to the shared Meilisearch dump directory configured by `MEILI_DUMP_DIR` or `--dump-dir`.
 
 Content discovery uses the `-discover-interval`, `-discover-timeout`, `-discover-max`, and `-discover-ua` flags. Set `-discover-interval 0` to disable the background RSS/site discovery scheduler.
+
+LLM daily recommendations are prepared behind `-recommend-enabled`. PostgreSQL should provide the `vector` extension for embedding storage; Docker Compose uses a pgvector-enabled image. LLM calls are configured through `-llm-base-url`, `-llm-api-key`, `-llm-chat-model`, and `-llm-embedding-model`.
 
 
 

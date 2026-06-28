@@ -4,14 +4,15 @@ import (
 	"DataArk/common"
 	"context"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/meilisearch/meilisearch-go"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/meilisearch/meilisearch-go"
 )
 
 const rebuildBatchSize = 100
@@ -45,7 +46,7 @@ func rebuildIndexFromArchive(ctx context.Context, skipInvalidFiles bool) (*Rebui
 			return nil
 		}
 
-		taskInfo, err := client.Index(common.MEILIBlogsIndex).AddDocumentsWithContext(ctx, documents)
+		taskInfo, err := client.Index(common.MEILIBlogsIndex).AddDocumentsWithContext(ctx, documents, nil)
 		if err != nil {
 			return err
 		}

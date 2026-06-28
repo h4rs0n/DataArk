@@ -18,42 +18,52 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
-	checkArchiveConsistency   = search.CheckArchiveConsistency
-	repairArchiveConsistency  = search.RepairArchiveConsistency
-	registerWithToken         = common.RegisterWithToken
-	loginWithToken            = common.LoginWithToken
-	queryByKeyword            = search.QueryByKeyword
-	addDocURLTask             = search.AddDocURLTask
-	getArchiveTask            = search.GetArchiveTask
-	getArchiveStatsSnapshot   = common.GetArchiveStats
-	refreshStatsFromDisk      = common.RefreshArchiveStatsFromDisk
-	recordSearchEvent         = common.RecordSearchEvent
-	getKeywordStats           = common.GetKeywordStats
-	recordArchiveClick        = common.RecordArchiveClick
-	getArchiveRankings        = common.GetArchiveRankings
-	getArchiveRecommendations = common.GetArchiveRecommendations
-	listDiscoverySources      = common.ListDiscoverySources
-	createDiscoverySource     = common.CreateDiscoverySource
-	updateDiscoverySource     = common.UpdateDiscoverySource
-	deleteDiscoverySource     = common.DeleteDiscoverySource
-	fetchDiscoverySourceByID  = common.FetchDiscoverySourceByID
-	listDiscoveryCandidates   = common.ListDiscoveryCandidates
-	getDiscoveryCandidate     = common.GetDiscoveryCandidate
-	markCandidateRead         = common.MarkDiscoveryCandidateRead
-	markCandidateIgnored      = common.MarkDiscoveryCandidateIgnored
-	markCandidateArchived     = common.MarkDiscoveryCandidateArchived
-	startDiscoveryScheduler   = common.StartDiscoveryScheduler
-	addDocFileToIndex         = search.AddDocFile
-	deleteDocByHTMLPath       = search.DeleteDocByHTMLPath
-	createBackupArchive       = backup.CreateBackup
-	restoreBackupArchive      = backup.RestoreBackup
-	initDatabase              = common.InitDB
-	createSearchIndex         = search.CreateDefaultIndex
-	initArchiveQueue          = search.InitArchiveTaskQueue
-	runGinRouter              = func(router *gin.Engine, addr string) error {
+	checkArchiveConsistency      = search.CheckArchiveConsistency
+	repairArchiveConsistency     = search.RepairArchiveConsistency
+	registerWithToken            = common.RegisterWithToken
+	loginWithToken               = common.LoginWithToken
+	queryByKeyword               = search.QueryByKeyword
+	addDocURLTask                = search.AddDocURLTask
+	getArchiveTask               = search.GetArchiveTask
+	getArchiveStatsSnapshot      = common.GetArchiveStats
+	refreshStatsFromDisk         = common.RefreshArchiveStatsFromDisk
+	recordSearchEvent            = common.RecordSearchEvent
+	getKeywordStats              = common.GetKeywordStats
+	recordArchiveClick           = common.RecordArchiveClick
+	getArchiveRankings           = common.GetArchiveRankings
+	getArchiveRecommendations    = common.GetArchiveRecommendations
+	listDiscoverySources         = common.ListDiscoverySources
+	createDiscoverySource        = common.CreateDiscoverySource
+	updateDiscoverySource        = common.UpdateDiscoverySource
+	deleteDiscoverySource        = common.DeleteDiscoverySource
+	fetchDiscoverySourceByID     = common.FetchDiscoverySourceByID
+	listDiscoveryCandidates      = common.ListDiscoveryCandidates
+	getDiscoveryCandidate        = common.GetDiscoveryCandidate
+	markCandidateRead            = common.MarkDiscoveryCandidateRead
+	markCandidateIgnored         = common.MarkDiscoveryCandidateIgnored
+	markCandidateArchived        = common.MarkDiscoveryCandidateArchived
+	getRecommendationSettings    = common.GetRecommendationSettings
+	saveRecommendationSettings   = common.SaveRecommendationSettings
+	getRecommendationDaySnapshot = common.GetRecommendationDaySnapshot
+	listRecommendationDays       = common.ListRecommendationDays
+	createRecommendationDay      = common.CreateRecommendationDay
+	recordRecommendationFeedback = common.RecordRecommendationFeedback
+	revertRecommendationFeedback = common.RevertRecommendationFeedback
+	listUserBlockRules           = common.ListUserBlockRules
+	deleteUserBlockRule          = common.DeleteUserBlockRule
+	startDiscoveryScheduler      = common.StartDiscoveryScheduler
+	addDocFileToIndex            = search.AddDocFile
+	deleteDocByHTMLPath          = search.DeleteDocByHTMLPath
+	createBackupArchive          = backup.CreateBackup
+	restoreBackupArchive         = backup.RestoreBackup
+	initDatabase                 = common.InitDB
+	createSearchIndex            = search.CreateDefaultIndex
+	initArchiveQueue             = search.InitArchiveTaskQueue
+	runGinRouter                 = func(router *gin.Engine, addr string) error {
 		return router.Run(addr)
 	}
 )
@@ -464,6 +474,183 @@ func ArchiveDiscoveryCandidate(c *gin.Context) {
 	c.JSON(202, gin.H{"Status": "1", "Message": "候选文章已加入归档队列", "Data": gin.H{"candidate": updatedCandidate, "task": task}})
 }
 
+func GetRecommendationToday(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	snapshot, err := getRecommendationDaySnapshot(userID, time.Now().Format("2006-01-02"))
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询今日推荐失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询今日推荐成功", "Data": snapshot})
+}
+
+func GetRecommendationHistory(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	days, err := listRecommendationDays(userID, c.Query("from"), c.Query("to"), queryInt(c, "page", 1), queryInt(c, "pageSize", 20))
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询历史推荐失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询历史推荐成功", "Data": days})
+}
+
+func GetRecommendationDay(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	snapshot, err := getRecommendationDaySnapshot(userID, c.Param("date"))
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询推荐日报失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询推荐日报成功", "Data": snapshot})
+}
+
+func GenerateRecommendationDay(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	settings, err := getRecommendationSettings(userID)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询推荐设置失败", "Error": err.Error()})
+		return
+	}
+	day, err := createRecommendationDay(userID, c.Query("date"), settings.DailyLimit)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "创建推荐日报失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(202, gin.H{"Status": "1", "Message": "推荐日报生成任务已登记", "Data": day})
+}
+
+func GetRecommendationSettings(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	settings, err := getRecommendationSettings(userID)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询推荐设置失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询推荐设置成功", "Data": settings})
+}
+
+func UpdateRecommendationSettings(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		DailyLimit          int     `json:"dailyLimit"`
+		Timezone            string  `json:"timezone"`
+		GenerationTime      string  `json:"generationTime"`
+		CandidateWindowDays int     `json:"candidateWindowDays"`
+		ExplorationRate     float64 `json:"explorationRate"`
+		Enabled             bool    `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(403, gin.H{"Status": "0", "Message": "请求参数错误"})
+		return
+	}
+	settings, err := saveRecommendationSettings(&common.RecommendationSettings{
+		UserID:              userID,
+		DailyLimit:          req.DailyLimit,
+		Timezone:            req.Timezone,
+		GenerationTime:      req.GenerationTime,
+		CandidateWindowDays: req.CandidateWindowDays,
+		ExplorationRate:     req.ExplorationRate,
+		Enabled:             req.Enabled,
+	})
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "更新推荐设置失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "更新推荐设置成功", "Data": settings})
+}
+
+func RecordRecommendationItemFeedback(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	itemID, ok := parseUintParam(c, "itemId")
+	if !ok {
+		return
+	}
+	var req struct {
+		Action       string                             `json:"action"`
+		BlockTargets []common.RecommendationBlockTarget `json:"blockTargets"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(403, gin.H{"Status": "0", "Message": "请求参数错误"})
+		return
+	}
+	feedback, rules, err := recordRecommendationFeedback(userID, itemID, req.Action, req.BlockTargets)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, common.ErrInvalidRecommendationFeedback) || errors.Is(err, common.ErrInvalidBlockRule) {
+			status = http.StatusForbidden
+		}
+		c.JSON(status, gin.H{"Status": "0", "Message": "记录推荐反馈失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "推荐反馈已记录", "Data": gin.H{"feedback": feedback, "blockRules": rules}})
+}
+
+func RevertRecommendationItemFeedback(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	itemID, ok := parseUintParam(c, "itemId")
+	if !ok {
+		return
+	}
+	if err := revertRecommendationFeedback(userID, itemID); err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "撤销推荐反馈失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "推荐反馈已撤销"})
+}
+
+func ListRecommendationBlocks(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	rules, err := listUserBlockRules(userID, true)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询屏蔽规则失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询屏蔽规则成功", "Data": rules})
+}
+
+func DeleteRecommendationBlock(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	ruleID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	if err := deleteUserBlockRule(userID, ruleID); err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "删除屏蔽规则失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "屏蔽规则已删除"})
+}
+
 type discoverySourceRequest struct {
 	Name    string `json:"name"`
 	URL     string `json:"url"`
@@ -491,6 +678,15 @@ func parseUintParam(c *gin.Context, key string) (uint, bool) {
 		return 0, false
 	}
 	return uint(parsedValue), true
+}
+
+func requireCurrentUserID(c *gin.Context) (uint, bool) {
+	userID, ok := GetCurrentUserID(c)
+	if !ok || userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"Status": "0", "Message": "请先登录"})
+		return 0, false
+	}
+	return userID, true
 }
 
 func GetArchiveConsistency(c *gin.Context) {
@@ -856,6 +1052,16 @@ func WebStarter(debugMode bool) {
 		protected.POST("/discovery/candidates/:id/read", MarkDiscoveryCandidateRead)
 		protected.POST("/discovery/candidates/:id/archive", ArchiveDiscoveryCandidate)
 		protected.POST("/discovery/candidates/:id/ignore", IgnoreDiscoveryCandidate)
+		protected.GET("/recommendations/today", GetRecommendationToday)
+		protected.GET("/recommendations/history", GetRecommendationHistory)
+		protected.GET("/recommendations/days/:date", GetRecommendationDay)
+		protected.POST("/admin/recommendations/generate", GenerateRecommendationDay)
+		protected.GET("/recommendations/settings", GetRecommendationSettings)
+		protected.PUT("/recommendations/settings", UpdateRecommendationSettings)
+		protected.POST("/recommendations/items/:itemId/feedback", RecordRecommendationItemFeedback)
+		protected.DELETE("/recommendations/items/:itemId/feedback", RevertRecommendationItemFeedback)
+		protected.GET("/recommendations/blocks", ListRecommendationBlocks)
+		protected.DELETE("/recommendations/blocks/:id", DeleteRecommendationBlock)
 		protected.POST("/backup", CreateBackup)
 		protected.POST("/backup/restore", RestoreBackup)
 		protected.GET("/authChecker", authController.AuthChecker)
