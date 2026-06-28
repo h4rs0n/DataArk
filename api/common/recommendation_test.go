@@ -1,9 +1,18 @@
 package common
 
 import (
+	"DataArk/recommendation"
+	"context"
 	"errors"
+	"strings"
 	"testing"
 )
+
+type failingEnrichmentProvider struct{}
+
+func (failingEnrichmentProvider) Enrich(context.Context, recommendation.EnrichmentInput) (recommendation.EnrichmentResult, error) {
+	return recommendation.EnrichmentResult{}, errors.New("llm unavailable")
+}
 
 func TestRecommendationSettingsDefaultAndSave(t *testing.T) {
 	setupSQLiteDB(t)
@@ -108,5 +117,65 @@ func TestRecommendationFeedbackAndBlockRules(t *testing.T) {
 	}
 	if err := RevertRecommendationFeedback(5, item.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEnrichDiscoveryCandidateUpdatesStructuredFields(t *testing.T) {
+	setupSQLiteDB(t)
+	candidate := DiscoveryCandidate{
+		SourceID:         1,
+		SourceName:       "Feed",
+		URL:              "https://example.com/post?utm_source=newsletter",
+		Title:            "PostgreSQL pgvector Guide",
+		Summary:          "A tutorial about PostgreSQL vector search",
+		BodyText:         strings.Repeat("This PostgreSQL pgvector tutorial explains embedding search. ", 40),
+		Status:           DiscoveryCandidateStatusNew,
+		EnrichmentStatus: RecommendationEnrichmentStatusPending,
+	}
+	if err := db.Create(&candidate).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	enriched, err := EnrichDiscoveryCandidate(context.Background(), candidate.ID, recommendation.RuleBasedEnrichmentProvider{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enriched.EnrichmentStatus != RecommendationEnrichmentStatusReady || enriched.ContentHash == "" || enriched.DedupeKey != enriched.ContentHash {
+		t.Fatalf("enriched identity fields = %#v", enriched)
+	}
+	if enriched.NormalizedURL != "https://example.com/post" || enriched.CanonicalURL != "https://example.com/post" {
+		t.Fatalf("normalized urls = %#v", enriched)
+	}
+	if !strings.Contains(enriched.Topics, "PostgreSQL") || !strings.Contains(enriched.Entities, "pgvector") {
+		t.Fatalf("topics/entities not updated: topics=%q entities=%q", enriched.Topics, enriched.Entities)
+	}
+	if enriched.QualityScore <= 0 || enriched.DepthScore <= 0 || enriched.LLMModel != recommendation.RuleBasedProviderModel {
+		t.Fatalf("scores/model not updated: %#v", enriched)
+	}
+}
+
+func TestEnrichDiscoveryCandidateRecordsFailure(t *testing.T) {
+	setupSQLiteDB(t)
+	candidate := DiscoveryCandidate{
+		SourceID:         1,
+		SourceName:       "Feed",
+		URL:              "https://example.com/post",
+		Title:            "Post",
+		Status:           DiscoveryCandidateStatusNew,
+		EnrichmentStatus: RecommendationEnrichmentStatusPending,
+	}
+	if err := db.Create(&candidate).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := EnrichDiscoveryCandidate(context.Background(), candidate.ID, failingEnrichmentProvider{}); err == nil {
+		t.Fatal("expected enrichment error")
+	}
+	var got DiscoveryCandidate
+	if err := db.First(&got, candidate.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.EnrichmentStatus != RecommendationEnrichmentStatusFailed || got.EnrichmentError != "llm unavailable" {
+		t.Fatalf("failure fields = %#v", got)
 	}
 }

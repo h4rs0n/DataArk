@@ -26,6 +26,9 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
 - [x] (2026-06-28 20:15+08:00) Replaced site link discovery with a bounded Colly crawler that limits domain, depth, page count, concurrency, and delay.
 - [x] (2026-06-28 20:25+08:00) Added article URL normalization, content hashing, and DOM Distiller-based article extraction helpers.
 - [x] (2026-06-28 20:30+08:00) Validated the collection layer with full `cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...`.
+- [x] (2026-06-28 20:45+08:00) Added the candidate enrichment service that writes structured provider output back to `discovery_candidates`.
+- [x] (2026-06-28 20:50+08:00) Added a rule-based enrichment provider for local fallback and deterministic tests.
+- [x] (2026-06-28 20:55+08:00) Validated enrichment with full `cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...`.
 
 ## Surprises & Discoveries
 
@@ -41,6 +44,8 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
   Evidence: `cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...` returned `ok` for all backend packages.
 - Observation: `go-domdistiller` extracts readable text from article HTML but does not always return OpenGraph metadata.
   Evidence: the extractor test initially returned article text but empty description and URL. The helper now falls back to parsing `meta property="og:*"`, `meta name="description"`, and `link rel="canonical"` directly.
+- Observation: The enrichment service can be tested without a network LLM by using a deterministic provider.
+  Evidence: `recommendation.RuleBasedEnrichmentProvider` implements `EnrichmentProvider`, and `TestEnrichDiscoveryCandidateUpdatesStructuredFields` verifies database updates for status, normalized URL, content hash, dedupe key, topics, entities, scores, and provider model.
 
 ## Decision Log
 
@@ -65,10 +70,13 @@ DataArk already discovers candidate articles from RSS, Atom, sitemap, and same-s
 - Decision: Use DOM Distiller only for local HTML body extraction, not for network fetching.
   Rationale: Its `ApplyForURL` helper would bypass DataArk's SSRF guard. Fetching remains owned by DataArk; DOM Distiller receives already-fetched bytes.
   Date/Author: 2026-06-28 / Codex
+- Decision: Add a rule-based enrichment provider before adding a remote OpenAI-compatible provider.
+  Rationale: It proves the provider contract and database update path deterministically in tests, gives self-hosted installs a safe fallback, and keeps remote model integration isolated for the next milestone.
+  Date/Author: 2026-06-28 / Codex
 
 ## Outcomes & Retrospective
 
-The PR1 foundation and PR2 collection-layer upgrade are implemented. The backend module now targets Go 1.26, dependencies are updated, Goose migrations create recommendation v2 schema, user-scoped settings/daily/feedback/block APIs exist, SSRF guard tests pass, provider interfaces are in place, feeds are parsed by `gofeed`, site discovery uses bounded Colly crawling, and article normalization/extraction helpers exist. Runtime recommendation generation, embeddings, LLM enrichment, vector retrieval, MMR, River jobs, and frontend redesign remain for later milestones.
+The PR1 foundation, PR2 collection-layer upgrade, and PR3 enrichment data path are implemented. The backend module now targets Go 1.26, dependencies are updated, Goose migrations create recommendation v2 schema, user-scoped settings/daily/feedback/block APIs exist, SSRF guard tests pass, provider interfaces are in place, feeds are parsed by `gofeed`, site discovery uses bounded Colly crawling, article normalization/extraction helpers exist, and candidates can be enriched through a provider and written back to the database. Remote OpenAI-compatible enrichment, embeddings, vector retrieval, MMR, River jobs, and frontend redesign remain for later milestones.
 
 ## Context and Orientation
 
@@ -93,6 +101,8 @@ Fifth, expose authenticated APIs in `api/api/controller.go` under `/api/recommen
 Sixth, add focused tests for settings defaults, daily snapshot idempotence, feedback validation, block rules, and SSRF rejection. Run all Go tests.
 
 Seventh, upgrade the content collection internals. In `api/common/discovery.go`, feed sources use `gofeed` so RSS, Atom, and JSON Feed are handled through one parser. The existing `fetchDiscoveryURL` path validates the requested URL and redirects with `api/discovery/ssrf.go`. Site sources use a bounded Colly crawler to discover alternate feeds and same-host article links. In `api/discovery/normalizer.go` and `api/discovery/extractor.go`, add reusable helpers for URL normalization, content hashing, and DOM Distiller-based article text extraction.
+
+Eighth, add the candidate enrichment data path. In `api/common/recommendation.go`, add `EnrichDiscoveryCandidate`, which loads a candidate, calls a `recommendation.EnrichmentProvider`, normalizes URL identity, computes content hash and dedupe key, serializes topics and entities, clamps scores, and updates `discovery_candidates` to `enrichment_status=ready` or `failed`. In `api/recommendation/rule_provider.go`, add a deterministic `RuleBasedEnrichmentProvider` so the data path can be tested and used as a fallback before remote LLM integration exists.
 
 ## Concrete Steps
 
@@ -134,6 +144,9 @@ The PR1 and PR2 milestones are accepted when the backend compiles and `cd api &&
     cd api && env GOCACHE=/tmp/dataark-go-cache go test ./search -run 'TestDocumentString|TestNormalizeArchiveURL|TestResolveArchiveDocumentPath'
     ok  	DataArk/search	0.007s
 
+    cd api && env GOCACHE=/tmp/dataark-go-cache go test ./common -run 'TestEnrichDiscoveryCandidate|TestRecommendation|TestParseFeed'
+    ok  	DataArk/common	0.036s
+
 The new tests prove:
 
 - default recommendation settings return `dailyLimit=10`;
@@ -146,6 +159,8 @@ The new tests prove:
 - URL normalization removes known tracking parameters while preserving business query parameters;
 - content hashes are stable across whitespace differences;
 - article extraction returns readable text and metadata fallback values from HTML fixtures.
+- candidate enrichment writes provider results to database fields and changes status to `ready`;
+- failed enrichment records `enrichment_status=failed` and the error message.
 
 The full feature is accepted only after later milestones implement feed/crawler replacement, enrichment, embeddings, vector retrieval, MMR, LLM reranking, River jobs, and frontend verification.
 
@@ -158,13 +173,13 @@ Goose migrations are idempotent because they run once per database version. Dail
 Validation evidence:
 
     cd api && env GOCACHE=/tmp/dataark-go-cache go test ./...
-    ok  	DataArk	0.014s
-    ok  	DataArk/api	0.025s
+    ok  	DataArk	0.013s
+    ok  	DataArk/api	0.023s
     ok  	DataArk/assets	(cached)
-    ok  	DataArk/backup	0.141s
-    ok  	DataArk/common	0.603s
+    ok  	DataArk/backup	0.144s
+    ok  	DataArk/common	0.611s
     ok  	DataArk/discovery	(cached)
-    ok  	DataArk/search	0.036s
+    ok  	DataArk/search	0.030s
 
 ## Interfaces and Dependencies
 
@@ -201,6 +216,16 @@ In `api/discovery/extractor.go`, define:
 
     func ExtractArticle(rawURL string, body []byte) (*ExtractedArticle, error)
 
+In `api/common/recommendation.go`, define:
+
+    func EnrichDiscoveryCandidate(ctx context.Context, candidateID uint, provider recommendation.EnrichmentProvider) (*DiscoveryCandidate, error)
+
+In `api/recommendation/rule_provider.go`, define:
+
+    type RuleBasedEnrichmentProvider struct {
+        PromptVersion string
+    }
+
 ## Revision Notes
 
 2026-06-28: Created the implementation ExecPlan from the combined user plan and repository audit. The first milestone is deliberately limited to foundation work because the complete feature spans multiple independently verifiable changes.
@@ -208,3 +233,5 @@ In `api/discovery/extractor.go`, define:
 2026-06-28: Revised the plan after the user requested Go 1.26 and dependency updates. The first milestone now includes dependency upgrade work and Meilisearch SDK adaptation.
 
 2026-06-28: Added the collection-layer milestone. Feed parsing now uses `gofeed`, site discovery uses Colly, and article extraction/normalization helpers are available for later enrichment and embedding jobs.
+
+2026-06-28: Added the enrichment data-path milestone. Candidate enrichment is provider-driven and currently has a deterministic rule-based fallback for tests and local operation.

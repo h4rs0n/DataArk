@@ -2,9 +2,6 @@ package common
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
-	neturl "net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -97,21 +94,16 @@ func TestArchiveRankingsTolerateMissingDocumentMetadata(t *testing.T) {
 
 func TestDiscoverySourceFetchAndCandidateState(t *testing.T) {
 	setupSQLiteDB(t)
-	oldValidator := validateDiscoveryFetchURL
-	validateDiscoveryFetchURL = func(_ context.Context, rawURL string) (*neturl.URL, error) {
-		return neturl.Parse(rawURL)
+	oldFetcher := fetchDiscoveryBody
+	fetchDiscoveryBody = func(_ context.Context, _ string) ([]byte, string, error) {
+		return []byte(`<?xml version="1.0"?>
+<rss version="2.0"><channel><item><title>First Post</title><link>https://example.com/posts/first</link><description>Useful summary</description><pubDate>Mon, 02 Jan 2006 15:04:05 -0700</pubDate></item></channel></rss>`), "application/rss+xml", nil
 	}
 	t.Cleanup(func() {
-		validateDiscoveryFetchURL = oldValidator
+		fetchDiscoveryBody = oldFetcher
 	})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/rss+xml")
-		_, _ = w.Write([]byte(`<?xml version="1.0"?>
-<rss version="2.0"><channel><item><title>First Post</title><link>` + "http://" + r.Host + `/posts/first</link><description>Useful summary</description><pubDate>Mon, 02 Jan 2006 15:04:05 -0700</pubDate></item></channel></rss>`))
-	}))
-	defer server.Close()
 
-	source, err := CreateDiscoverySource("Feed", server.URL+"/feed.xml", DiscoverySourceTypeFeed, true)
+	source, err := CreateDiscoverySource("Feed", "https://example.com/feed.xml", DiscoverySourceTypeFeed, true)
 	if err != nil {
 		t.Fatal(err)
 	}

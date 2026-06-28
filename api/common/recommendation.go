@@ -1,6 +1,9 @@
 package common
 
 import (
+	"DataArk/discovery"
+	"DataArk/recommendation"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -25,6 +28,10 @@ const (
 	UserBlockRuleTopic  = "topic"
 	UserBlockRuleSource = "source"
 	UserBlockRuleStyle  = "style"
+
+	RecommendationEnrichmentStatusPending = "pending"
+	RecommendationEnrichmentStatusReady   = "ready"
+	RecommendationEnrichmentStatusFailed  = "failed"
 )
 
 var (
@@ -313,6 +320,89 @@ func DeleteUserBlockRule(userID uint, ruleID uint) error {
 	}).Error
 }
 
+func EnrichDiscoveryCandidate(ctx context.Context, candidateID uint, provider recommendation.EnrichmentProvider) (*DiscoveryCandidate, error) {
+	if provider == nil {
+		return nil, errors.New("missing enrichment provider")
+	}
+	if db == nil || candidateID == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var candidate DiscoveryCandidate
+	if err := db.First(&candidate, candidateID).Error; err != nil {
+		return nil, err
+	}
+	input := recommendation.EnrichmentInput{
+		CandidateID: candidate.ID,
+		URL:         candidate.URL,
+		Title:       candidate.Title,
+		Summary:     candidate.Summary,
+		BodyText:    candidate.BodyText,
+		PublishedAt: candidate.PublishedAt,
+	}
+	result, err := provider.Enrich(ctx, input)
+	if err != nil {
+		_ = db.Model(&candidate).Updates(map[string]interface{}{
+			"enrichment_status": RecommendationEnrichmentStatusFailed,
+			"enrichment_error":  err.Error(),
+			"updated_at":        time.Now(),
+		}).Error
+		return nil, err
+	}
+
+	bodyForHash := candidate.BodyText
+	if strings.TrimSpace(bodyForHash) == "" {
+		bodyForHash = candidate.Summary
+	}
+	contentHash := candidate.ContentHash
+	if strings.TrimSpace(bodyForHash) != "" {
+		contentHash = discovery.ContentHash(bodyForHash)
+	}
+	normalizedURL := candidate.NormalizedURL
+	if normalizedURL == "" {
+		if value, err := discovery.NormalizeArticleURL(candidate.URL); err == nil {
+			normalizedURL = value
+		}
+	}
+	canonicalURL := candidate.CanonicalURL
+	if canonicalURL == "" {
+		canonicalURL = normalizedURL
+	}
+	dedupeKey := normalizedURL
+	if contentHash != "" {
+		dedupeKey = contentHash
+	}
+	topics, _ := json.Marshal(result.Topics)
+	entities, _ := json.Marshal(result.Entities)
+
+	updates := map[string]interface{}{
+		"summary":           firstNonEmpty(result.Summary, candidate.Summary),
+		"normalized_url":    normalizedURL,
+		"canonical_url":     canonicalURL,
+		"content_hash":      contentHash,
+		"dedupe_key":        dedupeKey,
+		"topics":            string(topics),
+		"entities":          string(entities),
+		"content_type":      strings.TrimSpace(result.ContentType),
+		"content_style":     strings.TrimSpace(result.ContentStyle),
+		"language":          strings.TrimSpace(result.Language),
+		"quality_score":     clampScore(result.QualityScore),
+		"depth_score":       clampScore(result.DepthScore),
+		"llm_model":         strings.TrimSpace(result.Model),
+		"prompt_version":    strings.TrimSpace(result.PromptVersion),
+		"enrichment_status": RecommendationEnrichmentStatusReady,
+		"enrichment_error":  "",
+		"enriched_at":       time.Now(),
+		"updated_at":        time.Now(),
+	}
+	if err := db.Model(&candidate).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	if err := db.First(&candidate, candidateID).Error; err != nil {
+		return nil, err
+	}
+	return &candidate, nil
+}
+
 func normalizeRecommendationSettings(settings RecommendationSettings) RecommendationSettings {
 	defaults := DefaultRecommendationSettings(settings.UserID)
 	if settings.DailyLimit <= 0 {
@@ -334,6 +424,25 @@ func normalizeRecommendationSettings(settings RecommendationSettings) Recommenda
 		settings.ExplorationRate = 1
 	}
 	return settings
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func clampScore(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
 }
 
 func normalizeRecommendationDate(value string) string {

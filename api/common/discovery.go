@@ -37,6 +37,7 @@ const (
 )
 
 var validateDiscoveryFetchURL = discoveryguard.ValidateFetchURL
+var fetchDiscoveryBody = fetchDiscoveryURL
 
 type DiscoveryFetchResult struct {
 	SourceID    uint   `json:"sourceId"`
@@ -303,7 +304,7 @@ func fetchSiteCandidates(ctx context.Context, rawURL string) ([]discoveredCandid
 }
 
 func fetchFeedCandidates(ctx context.Context, rawURL string) ([]discoveredCandidate, error) {
-	body, _, err := fetchDiscoveryURL(ctx, rawURL)
+	body, _, err := fetchDiscoveryBody(ctx, rawURL)
 	if err != nil {
 		return nil, err
 	}
@@ -609,21 +610,29 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 	if err != nil {
 		return nil
 	}
+	articleURL, err := discoveryguard.NormalizeArticleURL(normalizedURL)
+	if err != nil {
+		articleURL = normalizedURL
+	}
 	title := strings.TrimSpace(candidate.Title)
 	if title == "" {
 		title = normalizedURL
 	}
 	now := time.Now()
 	record := DiscoveryCandidate{
-		SourceID:    source.ID,
-		SourceName:  source.Name,
-		URL:         normalizedURL,
-		Title:       title,
-		Summary:     BuildSummary(candidate.Summary, 260),
-		Status:      DiscoveryCandidateStatusNew,
-		Score:       scoreDiscoveredCandidate(candidate),
-		PublishedAt: candidate.PublishedAt,
-		LastSeenAt:  now,
+		SourceID:         source.ID,
+		SourceName:       source.Name,
+		URL:              normalizedURL,
+		NormalizedURL:    articleURL,
+		CanonicalURL:     articleURL,
+		Title:            title,
+		Summary:          BuildSummary(candidate.Summary, 260),
+		Status:           DiscoveryCandidateStatusNew,
+		EnrichmentStatus: RecommendationEnrichmentStatusPending,
+		DedupeKey:        articleURL,
+		Score:            scoreDiscoveredCandidate(candidate),
+		PublishedAt:      candidate.PublishedAt,
+		LastSeenAt:       now,
 	}
 	if db == nil {
 		return nil
@@ -631,14 +640,18 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 	return db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "url"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{
-			"source_id":    source.ID,
-			"source_name":  source.Name,
-			"title":        record.Title,
-			"summary":      record.Summary,
-			"score":        record.Score,
-			"published_at": record.PublishedAt,
-			"last_seen_at": now,
-			"updated_at":   now,
+			"source_id":         source.ID,
+			"source_name":       source.Name,
+			"normalized_url":    record.NormalizedURL,
+			"canonical_url":     record.CanonicalURL,
+			"title":             record.Title,
+			"summary":           record.Summary,
+			"score":             record.Score,
+			"published_at":      record.PublishedAt,
+			"enrichment_status": record.EnrichmentStatus,
+			"dedupe_key":        record.DedupeKey,
+			"last_seen_at":      now,
+			"updated_at":        now,
 		}),
 	}).Create(&record).Error
 }
