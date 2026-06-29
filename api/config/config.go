@@ -1,4 +1,4 @@
-package common
+package config
 
 var DEBUG = false
 var MEILIHOST = ""

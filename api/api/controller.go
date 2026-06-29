@@ -1,9 +1,14 @@
 package api
 
 import (
+	"DataArk/archive"
 	"DataArk/assets"
+	"DataArk/auth"
 	"DataArk/backup"
-	"DataArk/common"
+	"DataArk/bootstrap"
+	"DataArk/config"
+	"DataArk/discovery"
+	"DataArk/recommendation"
 	"DataArk/search"
 	"context"
 	"embed"
@@ -25,47 +30,47 @@ import (
 var (
 	checkArchiveConsistency      = search.CheckArchiveConsistency
 	repairArchiveConsistency     = search.RepairArchiveConsistency
-	registerWithToken            = common.RegisterWithToken
-	loginWithToken               = common.LoginWithToken
+	registerWithToken            = auth.RegisterWithToken
+	loginWithToken               = auth.LoginWithToken
 	queryByKeyword               = search.QueryByKeyword
 	addDocURLTask                = search.AddDocURLTask
 	getArchiveTask               = search.GetArchiveTask
-	getArchiveStatsSnapshot      = common.GetArchiveStats
-	refreshStatsFromDisk         = common.RefreshArchiveStatsFromDisk
-	recordSearchEvent            = common.RecordSearchEvent
-	getKeywordStats              = common.GetKeywordStats
-	recordArchiveClick           = common.RecordArchiveClick
-	getArchiveRankings           = common.GetArchiveRankings
-	getArchiveRecommendations    = common.GetArchiveRecommendations
-	listDiscoverySources         = common.ListDiscoverySources
-	createDiscoverySource        = common.CreateDiscoverySource
-	updateDiscoverySource        = common.UpdateDiscoverySource
-	deleteDiscoverySource        = common.DeleteDiscoverySource
-	fetchDiscoverySourceByID     = common.FetchDiscoverySourceByID
-	listDiscoveryCandidates      = common.ListDiscoveryCandidates
-	getDiscoveryCandidate        = common.GetDiscoveryCandidate
-	markCandidateRead            = common.MarkDiscoveryCandidateRead
-	markCandidateIgnored         = common.MarkDiscoveryCandidateIgnored
-	markCandidateArchived        = common.MarkDiscoveryCandidateArchived
-	getRecommendationSettings    = common.GetRecommendationSettings
-	saveRecommendationSettings   = common.SaveRecommendationSettings
-	getRecommendationDaySnapshot = common.GetRecommendationDaySnapshot
-	listRecommendationDays       = common.ListRecommendationDays
-	createRecommendationDay      = common.CreateRecommendationDay
-	generateDailyRecommendations = common.GenerateDailyRecommendations
-	regenerateRecommendations    = common.RegenerateDailyRecommendations
-	recordRecommendationFeedback = common.RecordRecommendationFeedback
-	revertRecommendationFeedback = common.RevertRecommendationFeedback
-	listUserBlockRules           = common.ListUserBlockRules
-	deleteUserBlockRule          = common.DeleteUserBlockRule
-	startDiscoveryScheduler      = common.StartDiscoveryScheduler
-	startRecommendationScheduler = common.StartRecommendationScheduler
-	startRecommendationJobQueue  = common.StartRecommendationJobQueue
+	getArchiveStatsSnapshot      = archive.GetArchiveStats
+	refreshStatsFromDisk         = archive.RefreshArchiveStatsFromDisk
+	recordSearchEvent            = archive.RecordSearchEvent
+	getKeywordStats              = archive.GetKeywordStats
+	recordArchiveClick           = archive.RecordArchiveClick
+	getArchiveRankings           = archive.GetArchiveRankings
+	getArchiveRecommendations    = archive.GetArchiveRecommendations
+	listDiscoverySources         = discovery.ListDiscoverySources
+	createDiscoverySource        = discovery.CreateDiscoverySource
+	updateDiscoverySource        = discovery.UpdateDiscoverySource
+	deleteDiscoverySource        = discovery.DeleteDiscoverySource
+	fetchDiscoverySourceByID     = discovery.FetchDiscoverySourceByID
+	listDiscoveryCandidates      = discovery.ListDiscoveryCandidates
+	getDiscoveryCandidate        = discovery.GetDiscoveryCandidate
+	markCandidateRead            = discovery.MarkDiscoveryCandidateRead
+	markCandidateIgnored         = discovery.MarkDiscoveryCandidateIgnored
+	markCandidateArchived        = discovery.MarkDiscoveryCandidateArchived
+	getRecommendationSettings    = recommendation.GetRecommendationSettings
+	saveRecommendationSettings   = recommendation.SaveRecommendationSettings
+	getRecommendationDaySnapshot = recommendation.GetRecommendationDaySnapshot
+	listRecommendationDays       = recommendation.ListRecommendationDays
+	createRecommendationDay      = recommendation.CreateRecommendationDay
+	generateDailyRecommendations = recommendation.GenerateDailyRecommendations
+	regenerateRecommendations    = recommendation.RegenerateDailyRecommendations
+	recordRecommendationFeedback = recommendation.RecordRecommendationFeedback
+	revertRecommendationFeedback = recommendation.RevertRecommendationFeedback
+	listUserBlockRules           = recommendation.ListUserBlockRules
+	deleteUserBlockRule          = recommendation.DeleteUserBlockRule
+	startDiscoveryScheduler      = discovery.StartDiscoveryScheduler
+	startRecommendationScheduler = recommendation.StartRecommendationScheduler
+	startRecommendationJobQueue  = recommendation.StartRecommendationJobQueue
 	addDocFileToIndex            = search.AddDocFile
 	deleteDocByHTMLPath          = search.DeleteDocByHTMLPath
 	createBackupArchive          = backup.CreateBackup
 	restoreBackupArchive         = backup.RestoreBackup
-	initDatabase                 = common.InitDB
+	initDatabase                 = bootstrap.InitDB
 	createSearchIndex            = search.CreateDefaultIndex
 	initArchiveQueue             = search.InitArchiveTaskQueue
 	runGinRouter                 = func(router *gin.Engine, addr string) error {
@@ -561,7 +566,7 @@ func UpdateRecommendationSettings(c *gin.Context) {
 		c.JSON(403, gin.H{"Status": "0", "Message": "请求参数错误"})
 		return
 	}
-	settings, err := saveRecommendationSettings(&common.RecommendationSettings{
+	settings, err := saveRecommendationSettings(&recommendation.RecommendationSettings{
 		UserID:              userID,
 		DailyLimit:          req.DailyLimit,
 		Timezone:            req.Timezone,
@@ -587,8 +592,8 @@ func RecordRecommendationItemFeedback(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Action       string                             `json:"action"`
-		BlockTargets []common.RecommendationBlockTarget `json:"blockTargets"`
+		Action       string                                     `json:"action"`
+		BlockTargets []recommendation.RecommendationBlockTarget `json:"blockTargets"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(403, gin.H{"Status": "0", "Message": "请求参数错误"})
@@ -597,7 +602,7 @@ func RecordRecommendationItemFeedback(c *gin.Context) {
 	feedback, rules, err := recordRecommendationFeedback(userID, itemID, req.Action, req.BlockTargets)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, common.ErrInvalidRecommendationFeedback) || errors.Is(err, common.ErrInvalidBlockRule) {
+		if errors.Is(err, recommendation.ErrInvalidRecommendationFeedback) || errors.Is(err, recommendation.ErrInvalidBlockRule) {
 			status = http.StatusForbidden
 		}
 		c.JSON(status, gin.H{"Status": "0", "Message": "记录推荐反馈失败", "Error": err.Error()})
@@ -725,7 +730,7 @@ func RepairArchiveConsistency(c *gin.Context) {
 	})
 }
 
-func buildArchiveTaskResponse(task *common.ArchiveTask, created bool) (int, string) {
+func buildArchiveTaskResponse(task *archive.ArchiveTask, created bool) (int, string) {
 	if created {
 		return http.StatusAccepted, "链接离线任务已加入队列"
 	}
@@ -754,7 +759,7 @@ func AddHTMLFile(c *gin.Context) {
 		return
 	}
 
-	tempDir := filepath.Join(common.ARCHIVEFILELOACTION, "Temporary")
+	tempDir := filepath.Join(config.ARCHIVEFILELOACTION, "Temporary")
 	if err := os.MkdirAll(tempDir, os.ModePerm); err != nil {
 		c.JSON(500, gin.H{
 			"Status":  "0",
@@ -1078,7 +1083,7 @@ func WebStarter(debugMode bool) {
 	archiveGroup := router.Group("/")
 	archiveGroup.Use(AuthMiddleware())
 	{
-		archiveGroup.Static("/archive", common.ARCHIVEFILELOACTION)
+		archiveGroup.Static("/archive", config.ARCHIVEFILELOACTION)
 	}
 	router.Static("/static", "./static/web/")
 	router.StaticFS("/assets", http.FS(assets.LoadFile()))

@@ -1,7 +1,8 @@
 package search
 
 import (
-	"DataArk/common"
+	"DataArk/archive"
+	"DataArk/config"
 	"context"
 	"fmt"
 	"io/fs"
@@ -31,12 +32,12 @@ func RebuildRecoverableIndexFromArchive(ctx context.Context) (*RebuildIndexResul
 }
 
 func rebuildIndexFromArchive(ctx context.Context, skipInvalidFiles bool) (*RebuildIndexResult, []ArchiveConsistencyIssue, error) {
-	client := meilisearch.New(common.MEILIHOST, meilisearch.WithAPIKey(common.MEILIAPIKey))
+	client := meilisearch.New(config.MEILIHOST, meilisearch.WithAPIKey(config.MEILIAPIKey))
 	if err := recreateBlogsIndex(ctx, client); err != nil {
 		return nil, nil, err
 	}
 
-	archiveRoot := filepath.Clean(common.ARCHIVEFILELOACTION)
+	archiveRoot := filepath.Clean(config.ARCHIVEFILELOACTION)
 	documents := make([]map[string]interface{}, 0, rebuildBatchSize)
 	indexedDocuments := 0
 	unrecoverableIssues := make([]ArchiveConsistencyIssue, 0)
@@ -46,7 +47,7 @@ func rebuildIndexFromArchive(ctx context.Context, skipInvalidFiles bool) (*Rebui
 			return nil
 		}
 
-		taskInfo, err := client.Index(common.MEILIBlogsIndex).AddDocumentsWithContext(ctx, documents, nil)
+		taskInfo, err := client.Index(config.MEILIBlogsIndex).AddDocumentsWithContext(ctx, documents, nil)
 		if err != nil {
 			return err
 		}
@@ -137,10 +138,10 @@ func recreateBlogsIndex(ctx context.Context, client meilisearch.ServiceManager) 
 	}
 
 	for _, index := range indexes.Results {
-		if index.UID != common.MEILIBlogsIndex {
+		if index.UID != config.MEILIBlogsIndex {
 			continue
 		}
-		taskInfo, err := client.DeleteIndexWithContext(ctx, common.MEILIBlogsIndex)
+		taskInfo, err := client.DeleteIndexWithContext(ctx, config.MEILIBlogsIndex)
 		if err != nil {
 			return err
 		}
@@ -151,7 +152,7 @@ func recreateBlogsIndex(ctx context.Context, client meilisearch.ServiceManager) 
 	}
 
 	taskInfo, err := client.CreateIndexWithContext(ctx, &meilisearch.IndexConfig{
-		Uid:        common.MEILIBlogsIndex,
+		Uid:        config.MEILIBlogsIndex,
 		PrimaryKey: "id",
 	})
 	if err != nil {
@@ -172,19 +173,19 @@ func waitForServiceTask(ctx context.Context, client meilisearch.ServiceManager, 
 }
 
 func buildDocumentFromHTML(htmlPath string, domain string, fileName string) (map[string]interface{}, error) {
-	htmlContent, err := common.GetHTMLFileContent(htmlPath)
+	htmlContent, err := archive.GetHTMLFileContent(htmlPath)
 	if err != nil {
 		return nil, err
 	}
-	title, err := common.GetHTMLTitle(htmlContent)
+	title, err := archive.GetHTMLTitle(htmlContent)
 	if err != nil {
 		return nil, err
 	}
-	pureText, err := common.ExtractHTMLText(htmlContent)
+	pureText, err := archive.ExtractHTMLText(htmlContent)
 	if err != nil {
 		return nil, err
 	}
-	sourceURL, err := common.GetArchiveDocumentSourceURL(domain, fileName)
+	sourceURL, err := archive.GetArchiveDocumentSourceURL(domain, fileName)
 	if err != nil {
 		return nil, err
 	}

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"DataArk/common"
+	"DataArk/config"
 	"bytes"
 	"io"
 	"os"
@@ -12,17 +12,17 @@ import (
 func TestMainRunsStartupSequence(t *testing.T) {
 	oldParseFlags := parseFlags
 	oldStartWeb := startWeb
-	oldDebug := common.DEBUG
+	oldDebug := config.DEBUG
 	t.Cleanup(func() {
 		parseFlags = oldParseFlags
 		startWeb = oldStartWeb
-		common.DEBUG = oldDebug
+		config.DEBUG = oldDebug
 	})
 
 	var calls []string
 	parseFlags = func() {
 		calls = append(calls, "parse")
-		common.DEBUG = true
+		config.DEBUG = true
 	}
 	startWeb = func(debug bool) {
 		if !debug {

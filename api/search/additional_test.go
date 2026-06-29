@@ -1,7 +1,7 @@
 package search
 
 import (
-	"DataArk/common"
+	"DataArk/config"
 	"context"
 	"encoding/json"
 	"errors"
@@ -54,11 +54,11 @@ func TestSingleFileRequestHelpers(t *testing.T) {
 	}))
 	defer server.Close()
 
-	oldSingleFileURL := common.SINGLEFILEWEBSERVICEURL
+	oldSingleFileURL := config.SINGLEFILEWEBSERVICEURL
 	t.Cleanup(func() {
-		common.SINGLEFILEWEBSERVICEURL = oldSingleFileURL
+		config.SINGLEFILEWEBSERVICEURL = oldSingleFileURL
 	})
-	common.SINGLEFILEWEBSERVICEURL = server.URL
+	config.SINGLEFILEWEBSERVICEURL = server.URL
 
 	created, err := createSingleFileTask("https://example.com")
 	if err != nil {
@@ -104,12 +104,12 @@ func TestBuildSingleFileTaskError(t *testing.T) {
 }
 
 func TestWaitForArchivedFile(t *testing.T) {
-	oldArchiveRoot := common.ARCHIVEFILELOACTION
+	oldArchiveRoot := config.ARCHIVEFILELOACTION
 	t.Cleanup(func() {
-		common.ARCHIVEFILELOACTION = oldArchiveRoot
+		config.ARCHIVEFILELOACTION = oldArchiveRoot
 	})
 	root := t.TempDir()
-	common.ARCHIVEFILELOACTION = root
+	config.ARCHIVEFILELOACTION = root
 	writeFile(t, filepath.Join(root, "page.html"), "<html></html>")
 
 	got, err := waitForArchivedFile("page.html")
@@ -139,11 +139,11 @@ func TestMeiliArchiveIndexStoreListsDocuments(t *testing.T) {
 	}))
 	defer server.Close()
 
-	oldHost := common.MEILIHOST
+	oldHost := config.MEILIHOST
 	t.Cleanup(func() {
-		common.MEILIHOST = oldHost
+		config.MEILIHOST = oldHost
 	})
-	common.MEILIHOST = server.URL
+	config.MEILIHOST = server.URL
 
 	documents, err := (meiliArchiveIndexStore{}).ListArchiveDocuments(context.Background())
 	if err != nil {
@@ -183,14 +183,14 @@ func TestRebuildRecoverableIndexFromArchiveSkipsInvalidHTML(t *testing.T) {
 	}))
 	defer server.Close()
 
-	oldHost := common.MEILIHOST
-	oldRoot := common.ARCHIVEFILELOACTION
+	oldHost := config.MEILIHOST
+	oldRoot := config.ARCHIVEFILELOACTION
 	t.Cleanup(func() {
-		common.MEILIHOST = oldHost
-		common.ARCHIVEFILELOACTION = oldRoot
+		config.MEILIHOST = oldHost
+		config.ARCHIVEFILELOACTION = oldRoot
 	})
-	common.MEILIHOST = server.URL
-	common.ARCHIVEFILELOACTION = root
+	config.MEILIHOST = server.URL
+	config.ARCHIVEFILELOACTION = root
 
 	result, issues, err := RebuildRecoverableIndexFromArchive(context.Background())
 	if err != nil {
@@ -281,11 +281,11 @@ func testMeiliHit(document map[string]interface{}) meilisearch.Hit {
 }
 
 func TestAddDocFileRejectsMissingTemporaryFile(t *testing.T) {
-	oldRoot := common.ARCHIVEFILELOACTION
+	oldRoot := config.ARCHIVEFILELOACTION
 	t.Cleanup(func() {
-		common.ARCHIVEFILELOACTION = oldRoot
+		config.ARCHIVEFILELOACTION = oldRoot
 	})
-	common.ARCHIVEFILELOACTION = t.TempDir()
+	config.ARCHIVEFILELOACTION = t.TempDir()
 
 	err := AddDocFile("missing.html", "example.com", "")
 	if err == nil || !errors.Is(err, os.ErrNotExist) {

@@ -1,7 +1,7 @@
 package search
 
 import (
-	"DataArk/common"
+	"DataArk/config"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -9,10 +9,10 @@ import (
 
 func TestResolveArchiveDocumentPath(t *testing.T) {
 	rootDir := t.TempDir()
-	oldRoot := common.ARCHIVEFILELOACTION
-	common.ARCHIVEFILELOACTION = rootDir
+	oldRoot := config.ARCHIVEFILELOACTION
+	config.ARCHIVEFILELOACTION = rootDir
 	t.Cleanup(func() {
-		common.ARCHIVEFILELOACTION = oldRoot
+		config.ARCHIVEFILELOACTION = oldRoot
 	})
 
 	got, err := resolveArchiveDocumentPath("/archive/example.com/saved%20page.html")
@@ -33,10 +33,10 @@ func TestResolveArchiveDocumentPath(t *testing.T) {
 }
 
 func TestResolveArchiveDocumentPathRejectsTraversal(t *testing.T) {
-	oldRoot := common.ARCHIVEFILELOACTION
-	common.ARCHIVEFILELOACTION = t.TempDir()
+	oldRoot := config.ARCHIVEFILELOACTION
+	config.ARCHIVEFILELOACTION = t.TempDir()
 	t.Cleanup(func() {
-		common.ARCHIVEFILELOACTION = oldRoot
+		config.ARCHIVEFILELOACTION = oldRoot
 	})
 
 	_, err := resolveArchiveDocumentPath("/archive/example.com/../secret.html")

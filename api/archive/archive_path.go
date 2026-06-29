@@ -1,6 +1,7 @@
-package common
+package archive
 
 import (
+	"DataArk/config"
 	"fmt"
 	neturl "net/url"
 	"os"
@@ -48,7 +49,7 @@ func ResolveArchiveDocumentPath(rawPath string) (*ArchiveDocumentPath, error) {
 	}
 
 	cleanArchiveRelPath := path.Clean(strings.Join(segments, "/"))
-	rootAbs, err := filepath.Abs(ARCHIVEFILELOACTION)
+	rootAbs, err := filepath.Abs(config.ARCHIVEFILELOACTION)
 	if err != nil {
 		return nil, err
 	}

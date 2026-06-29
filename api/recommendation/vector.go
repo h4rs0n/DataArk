@@ -1,7 +1,6 @@
-package common
+package recommendation
 
 import (
-	"DataArk/recommendation"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,7 +11,7 @@ import (
 	"time"
 )
 
-func EmbedDiscoveryCandidate(ctx context.Context, candidateID uint, provider recommendation.EmbeddingProvider, model string) error {
+func EmbedDiscoveryCandidate(ctx context.Context, candidateID uint, provider EmbeddingProvider, model string) error {
 	if provider == nil {
 		return errors.New("missing embedding provider")
 	}
@@ -37,7 +36,7 @@ func EmbedDiscoveryCandidate(ctx context.Context, candidateID uint, provider rec
 	return StoreCandidateEmbedding(ctx, candidateID, model, vectors[0])
 }
 
-func EmbedReadyDiscoveryCandidates(ctx context.Context, limit int, provider recommendation.EmbeddingProvider, model string) (int, error) {
+func EmbedReadyDiscoveryCandidates(ctx context.Context, limit int, provider EmbeddingProvider, model string) (int, error) {
 	if db == nil || provider == nil {
 		return 0, nil
 	}

@@ -1,7 +1,6 @@
-package common
+package recommendation
 
 import (
-	"DataArk/recommendation"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,16 +13,16 @@ import (
 
 type failingEnrichmentProvider struct{}
 
-func (failingEnrichmentProvider) Enrich(context.Context, recommendation.EnrichmentInput) (recommendation.EnrichmentResult, error) {
-	return recommendation.EnrichmentResult{}, errors.New("llm unavailable")
+func (failingEnrichmentProvider) Enrich(context.Context, EnrichmentInput) (EnrichmentResult, error) {
+	return EnrichmentResult{}, errors.New("llm unavailable")
 }
 
 type fakeReranker struct {
-	result recommendation.RerankResult
+	result RerankResult
 	err    error
 }
 
-func (provider fakeReranker) Rerank(context.Context, recommendation.RerankInput) (recommendation.RerankResult, error) {
+func (provider fakeReranker) Rerank(context.Context, RerankInput) (RerankResult, error) {
 	return provider.result, provider.err
 }
 
@@ -168,7 +167,7 @@ func TestEnrichDiscoveryCandidateUpdatesStructuredFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	enriched, err := EnrichDiscoveryCandidate(context.Background(), candidate.ID, recommendation.RuleBasedEnrichmentProvider{})
+	enriched, err := EnrichDiscoveryCandidate(context.Background(), candidate.ID, RuleBasedEnrichmentProvider{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +180,7 @@ func TestEnrichDiscoveryCandidateUpdatesStructuredFields(t *testing.T) {
 	if !strings.Contains(enriched.Topics, "PostgreSQL") || !strings.Contains(enriched.Entities, "pgvector") {
 		t.Fatalf("topics/entities not updated: topics=%q entities=%q", enriched.Topics, enriched.Entities)
 	}
-	if enriched.QualityScore <= 0 || enriched.DepthScore <= 0 || enriched.LLMModel != recommendation.RuleBasedProviderModel {
+	if enriched.QualityScore <= 0 || enriched.DepthScore <= 0 || enriched.LLMModel != RuleBasedProviderModel {
 		t.Fatalf("scores/model not updated: %#v", enriched)
 	}
 }
@@ -400,10 +399,10 @@ func TestGenerateDailyRecommendationsRerankerValidationAndFallback(t *testing.T)
 	}
 	first := createReadyCandidate(t, "https://first.example/post", "First", []string{"Go"}, "first", 0.9, 0.7)
 	second := createReadyCandidate(t, "https://second.example/post", "Second", []string{"PostgreSQL"}, "second", 0.6, 0.5)
-	reranker := fakeReranker{result: recommendation.RerankResult{
+	reranker := fakeReranker{result: RerankResult{
 		Model:         "test-reranker",
 		PromptVersion: "test-v1",
-		Items: []recommendation.RerankItem{
+		Items: []RerankItem{
 			{CandidateID: 9999, Rank: 1, Reason: "invalid", Confidence: 1},
 			{CandidateID: second.ID, Rank: 2, Reason: "reranked second", Confidence: 0.9},
 			{CandidateID: first.ID, Rank: 3, Reason: "reranked first", Confidence: 0.7},

@@ -1,7 +1,7 @@
-package common
+package discovery
 
-import (
-	discoveryguard "DataArk/discovery"
+import (	"DataArk/archive"
+	"DataArk/config"
 	"bytes"
 	"context"
 	"encoding/xml"
@@ -33,10 +33,12 @@ const (
 	DiscoveryCandidateStatusIgnored  = "ignored"
 	DiscoveryCandidateStatusArchived = "archived"
 
+	DiscoveryCandidateEnrichmentStatusPending = "pending"
+
 	discoveryMaxBodyBytes = 4 << 20
 )
 
-var validateDiscoveryFetchURL = discoveryguard.ValidateFetchURL
+var validateDiscoveryFetchURL = ValidateFetchURL
 var fetchDiscoveryBody = fetchDiscoveryURL
 
 type DiscoveryFetchResult struct {
@@ -210,7 +212,7 @@ func FetchDiscoverySource(ctx context.Context, source *DiscoverySource) (*Discov
 }
 
 func StartDiscoveryScheduler() func() {
-	interval, err := time.ParseDuration(strings.TrimSpace(DISCOVERYFETCHINTERVAL))
+	interval, err := time.ParseDuration(strings.TrimSpace(config.DISCOVERYFETCHINTERVAL))
 	if err != nil || interval <= 0 {
 		return func() {}
 	}
@@ -313,7 +315,7 @@ func fetchFeedCandidates(ctx context.Context, rawURL string) ([]discoveredCandid
 
 func parseFeedCandidates(body []byte) ([]discoveredCandidate, error) {
 	parser := gofeed.NewParser()
-	parser.UserAgent = strings.TrimSpace(DISCOVERYUSERAGENT)
+	parser.UserAgent = strings.TrimSpace(config.DISCOVERYUSERAGENT)
 	feed, err := parser.Parse(bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -334,7 +336,7 @@ func parseFeedCandidates(body []byte) ([]discoveredCandidate, error) {
 		candidates = append(candidates, discoveredCandidate{
 			URL:         link,
 			Title:       strings.TrimSpace(stripMarkup(item.Title)),
-			Summary:     BuildSummary(stripMarkup(summary), 260),
+			Summary:     archive.BuildSummary(stripMarkup(summary), 260),
 			PublishedAt: firstFeedTime(item.PublishedParsed, item.UpdatedParsed),
 		})
 	}
@@ -379,7 +381,7 @@ func fetchSitemapCandidates(ctx context.Context, baseURL *neturl.URL) ([]discove
 }
 
 func fetchDiscoveryURL(ctx context.Context, rawURL string) ([]byte, string, error) {
-	timeout, err := time.ParseDuration(strings.TrimSpace(DISCOVERYREQUESTTIMEOUT))
+	timeout, err := time.ParseDuration(strings.TrimSpace(config.DISCOVERYREQUESTTIMEOUT))
 	if err != nil || timeout <= 0 {
 		timeout = 12 * time.Second
 	}
@@ -394,7 +396,7 @@ func fetchDiscoveryURL(ctx context.Context, rawURL string) ([]byte, string, erro
 	if err != nil {
 		return nil, "", err
 	}
-	userAgent := strings.TrimSpace(DISCOVERYUSERAGENT)
+	userAgent := strings.TrimSpace(config.DISCOVERYUSERAGENT)
 	if userAgent == "" {
 		userAgent = "DataArkDiscovery/1.0"
 	}
@@ -440,15 +442,15 @@ func crawlSiteLinks(ctx context.Context, rawURL string) ([]string, []string, err
 
 	feedSet := make(map[string]struct{})
 	articleSet := make(map[string]struct{})
-	timeout, err := time.ParseDuration(strings.TrimSpace(DISCOVERYREQUESTTIMEOUT))
+	timeout, err := time.ParseDuration(strings.TrimSpace(config.DISCOVERYREQUESTTIMEOUT))
 	if err != nil || timeout <= 0 {
 		timeout = 12 * time.Second
 	}
-	userAgent := strings.TrimSpace(DISCOVERYUSERAGENT)
+	userAgent := strings.TrimSpace(config.DISCOVERYUSERAGENT)
 	if userAgent == "" {
 		userAgent = "DataArkDiscovery/1.0"
 	}
-	maxPages := DISCOVERYMAXCANDIDATES
+	maxPages := config.DISCOVERYMAXCANDIDATES
 	if maxPages <= 0 {
 		maxPages = 50
 	}
@@ -524,7 +526,7 @@ func parseRSSCandidates(body []byte) []discoveredCandidate {
 		candidates = append(candidates, discoveredCandidate{
 			URL:         strings.TrimSpace(item.Link),
 			Title:       strings.TrimSpace(stripMarkup(item.Title)),
-			Summary:     BuildSummary(stripMarkup(item.Description), 260),
+			Summary:     archive.BuildSummary(stripMarkup(item.Description), 260),
 			PublishedAt: parseFeedTime(item.PubDate),
 		})
 	}
@@ -563,7 +565,7 @@ func parseAtomCandidates(body []byte) []discoveredCandidate {
 		candidates = append(candidates, discoveredCandidate{
 			URL:         strings.TrimSpace(link),
 			Title:       strings.TrimSpace(stripMarkup(entry.Title)),
-			Summary:     BuildSummary(stripMarkup(summary), 260),
+			Summary:     archive.BuildSummary(stripMarkup(summary), 260),
 			PublishedAt: parseFeedTime(entry.Updated),
 		})
 	}
@@ -610,7 +612,7 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 	if err != nil {
 		return nil
 	}
-	articleURL, err := discoveryguard.NormalizeArticleURL(normalizedURL)
+	articleURL, err := NormalizeArticleURL(normalizedURL)
 	if err != nil {
 		articleURL = normalizedURL
 	}
@@ -626,9 +628,9 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 		NormalizedURL:    articleURL,
 		CanonicalURL:     articleURL,
 		Title:            title,
-		Summary:          BuildSummary(candidate.Summary, 260),
+		Summary:          archive.BuildSummary(candidate.Summary, 260),
 		Status:           DiscoveryCandidateStatusNew,
-		EnrichmentStatus: RecommendationEnrichmentStatusPending,
+		EnrichmentStatus: DiscoveryCandidateEnrichmentStatusPending,
 		DedupeKey:        articleURL,
 		Score:            scoreDiscoveredCandidate(candidate),
 		PublishedAt:      candidate.PublishedAt,
@@ -702,7 +704,7 @@ func scoreAndLimitCandidates(candidates []discoveredCandidate) []discoveredCandi
 	sort.SliceStable(result, func(i, j int) bool {
 		return scoreDiscoveredCandidate(result[i]) > scoreDiscoveredCandidate(result[j])
 	})
-	limit := DISCOVERYMAXCANDIDATES
+	limit := config.DISCOVERYMAXCANDIDATES
 	if limit <= 0 {
 		limit = 50
 	}
@@ -730,7 +732,7 @@ func scoreDiscoveredCandidate(candidate discoveredCandidate) float64 {
 			score += 1
 		}
 	}
-	keywords, err := GetKeywordStats("", "30d", 20)
+	keywords, err := archive.GetKeywordStats("", "30d", 20)
 	if err == nil {
 		text := strings.ToLower(candidate.Title + " " + candidate.Summary + " " + candidate.URL)
 		for _, keyword := range keywords {
@@ -740,6 +742,16 @@ func scoreDiscoveredCandidate(candidate discoveredCandidate) float64 {
 		}
 	}
 	return score
+}
+
+func normalizeLimit(limit int, defaultLimit int, maxLimit int) int {
+	if limit <= 0 {
+		return defaultLimit
+	}
+	if limit > maxLimit {
+		return maxLimit
+	}
+	return limit
 }
 
 func sameHostArticleURL(rawURL string, baseURL *neturl.URL) (string, bool) {

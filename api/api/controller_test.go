@@ -1,8 +1,10 @@
 package api
 
 import (
+	"DataArk/archive"
+	"DataArk/auth"
 	"DataArk/backup"
-	"DataArk/common"
+	"DataArk/config"
 	"DataArk/search"
 	"bytes"
 	"context"
@@ -109,16 +111,16 @@ func TestRepairArchiveConsistencyReturnsError(t *testing.T) {
 func TestBuildArchiveTaskResponse(t *testing.T) {
 	cases := []struct {
 		name       string
-		task       *common.ArchiveTask
+		task       *archive.ArchiveTask
 		created    bool
 		wantStatus int
 		wantText   string
 	}{
-		{name: "created", task: &common.ArchiveTask{Status: search.ArchiveTaskStatusPending}, created: true, wantStatus: http.StatusAccepted, wantText: "已加入队列"},
-		{name: "running", task: &common.ArchiveTask{Status: search.ArchiveTaskStatusRunning}, wantStatus: http.StatusAccepted, wantText: "正在处理中"},
-		{name: "success", task: &common.ArchiveTask{Status: search.ArchiveTaskStatusSuccess}, wantStatus: http.StatusOK, wantText: "已完成"},
-		{name: "failed", task: &common.ArchiveTask{Status: search.ArchiveTaskStatusFailed}, wantStatus: http.StatusOK, wantText: "执行失败"},
-		{name: "unknown", task: &common.ArchiveTask{Status: "paused"}, wantStatus: http.StatusOK, wantText: "状态已返回"},
+		{name: "created", task: &archive.ArchiveTask{Status: search.ArchiveTaskStatusPending}, created: true, wantStatus: http.StatusAccepted, wantText: "已加入队列"},
+		{name: "running", task: &archive.ArchiveTask{Status: search.ArchiveTaskStatusRunning}, wantStatus: http.StatusAccepted, wantText: "正在处理中"},
+		{name: "success", task: &archive.ArchiveTask{Status: search.ArchiveTaskStatusSuccess}, wantStatus: http.StatusOK, wantText: "已完成"},
+		{name: "failed", task: &archive.ArchiveTask{Status: search.ArchiveTaskStatusFailed}, wantStatus: http.StatusOK, wantText: "执行失败"},
+		{name: "unknown", task: &archive.ArchiveTask{Status: "paused"}, wantStatus: http.StatusOK, wantText: "状态已返回"},
 	}
 
 	for _, tc := range cases {
@@ -140,18 +142,18 @@ func TestAuthControllerRegisterAndLogin(t *testing.T) {
 		loginWithToken = oldLogin
 	})
 
-	registerWithToken = func(username string, password string) (*common.TokenResponse, error) {
+	registerWithToken = func(username string, password string) (*auth.TokenResponse, error) {
 		if username != "alice" || password != "secret1" {
 			t.Fatalf("unexpected register input %q %q", username, password)
 		}
-		return &common.TokenResponse{Token: "registered"}, nil
+		return &auth.TokenResponse{Token: "registered"}, nil
 	}
 	response := performJSONControllerRequest(http.MethodPost, "/register", `{"username":"alice","password":"secret1"}`, controller.Register)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("register status = %d, want 201", response.Code)
 	}
 
-	registerWithToken = func(string, string) (*common.TokenResponse, error) {
+	registerWithToken = func(string, string) (*auth.TokenResponse, error) {
 		return nil, errors.New("duplicate")
 	}
 	response = performJSONControllerRequest(http.MethodPost, "/register", `{"username":"alice","password":"secret1"}`, controller.Register)
@@ -163,15 +165,15 @@ func TestAuthControllerRegisterAndLogin(t *testing.T) {
 		t.Fatalf("invalid register status = %d, want 400", response.Code)
 	}
 
-	loginWithToken = func(username string, password string) (*common.TokenResponse, error) {
-		return &common.TokenResponse{Token: username + ":" + password}, nil
+	loginWithToken = func(username string, password string) (*auth.TokenResponse, error) {
+		return &auth.TokenResponse{Token: username + ":" + password}, nil
 	}
 	response = performJSONControllerRequest(http.MethodPost, "/login", `{"username":"alice","password":"secret1"}`, controller.Login)
 	if response.Code != http.StatusOK {
 		t.Fatalf("login status = %d, want 200", response.Code)
 	}
 
-	loginWithToken = func(string, string) (*common.TokenResponse, error) {
+	loginWithToken = func(string, string) (*auth.TokenResponse, error) {
 		return nil, errors.New("invalid")
 	}
 	response = performJSONControllerRequest(http.MethodPost, "/login", `{"username":"alice","password":"secret1"}`, controller.Login)
@@ -234,18 +236,18 @@ func TestAddDocByURLBranches(t *testing.T) {
 		t.Fatalf("invalid url status = %d, want 403", response.Code)
 	}
 
-	addDocURLTask = func(rawURL string) (*common.ArchiveTask, bool, error) {
+	addDocURLTask = func(rawURL string) (*archive.ArchiveTask, bool, error) {
 		if rawURL != "https://example.com" {
 			t.Fatalf("rawURL = %q", rawURL)
 		}
-		return &common.ArchiveTask{ID: "task", Status: search.ArchiveTaskStatusPending}, true, nil
+		return &archive.ArchiveTask{ID: "task", Status: search.ArchiveTaskStatusPending}, true, nil
 	}
 	response = performJSONControllerRequest(http.MethodPost, "/archiveByURL", `{"url":"https://example.com"}`, AddDocByURL)
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("success status = %d, want 202", response.Code)
 	}
 
-	addDocURLTask = func(string) (*common.ArchiveTask, bool, error) {
+	addDocURLTask = func(string) (*archive.ArchiveTask, bool, error) {
 		return nil, false, errors.New("queue down")
 	}
 	response = performJSONControllerRequest(http.MethodPost, "/archiveByURL", `{"url":"https://example.com"}`, AddDocByURL)
@@ -264,21 +266,21 @@ func TestArchiveTaskAndStatsHandlers(t *testing.T) {
 		refreshStatsFromDisk = oldRefresh
 	})
 
-	getArchiveTask = func(id string) (*common.ArchiveTask, error) {
-		return &common.ArchiveTask{ID: id, Status: search.ArchiveTaskStatusSuccess}, nil
+	getArchiveTask = func(id string) (*archive.ArchiveTask, error) {
+		return &archive.ArchiveTask{ID: id, Status: search.ArchiveTaskStatusSuccess}, nil
 	}
 	response := performPathControllerRequest(http.MethodGet, "/archiveTask/:taskId", "/archiveTask/task-1", GetArchiveTaskStatus)
 	if response.Code != http.StatusOK {
 		t.Fatalf("task status = %d, want 200", response.Code)
 	}
-	getArchiveTask = func(string) (*common.ArchiveTask, error) {
+	getArchiveTask = func(string) (*archive.ArchiveTask, error) {
 		return nil, gorm.ErrRecordNotFound
 	}
 	response = performPathControllerRequest(http.MethodGet, "/archiveTask/:taskId", "/archiveTask/missing", GetArchiveTaskStatus)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("missing task status = %d, want 404", response.Code)
 	}
-	getArchiveTask = func(string) (*common.ArchiveTask, error) {
+	getArchiveTask = func(string) (*archive.ArchiveTask, error) {
 		return nil, errors.New("db down")
 	}
 	response = performPathControllerRequest(http.MethodGet, "/archiveTask/:taskId", "/archiveTask/error", GetArchiveTaskStatus)
@@ -286,14 +288,14 @@ func TestArchiveTaskAndStatsHandlers(t *testing.T) {
 		t.Fatalf("task error status = %d, want 500", response.Code)
 	}
 
-	getArchiveStatsSnapshot = func() (*common.ArchiveStatsSnapshot, error) {
-		return &common.ArchiveStatsSnapshot{TotalFiles: 2}, nil
+	getArchiveStatsSnapshot = func() (*archive.ArchiveStatsSnapshot, error) {
+		return &archive.ArchiveStatsSnapshot{TotalFiles: 2}, nil
 	}
 	response = performControllerRequest(http.MethodGet, "/stats", GetArchiveStats)
 	if response.Code != http.StatusOK {
 		t.Fatalf("stats status = %d, want 200", response.Code)
 	}
-	getArchiveStatsSnapshot = func() (*common.ArchiveStatsSnapshot, error) {
+	getArchiveStatsSnapshot = func() (*archive.ArchiveStatsSnapshot, error) {
 		return nil, errors.New("stats failed")
 	}
 	response = performControllerRequest(http.MethodGet, "/stats", GetArchiveStats)
@@ -301,14 +303,14 @@ func TestArchiveTaskAndStatsHandlers(t *testing.T) {
 		t.Fatalf("stats error status = %d, want 500", response.Code)
 	}
 
-	refreshStatsFromDisk = func() (*common.ArchiveStatsSnapshot, error) {
-		return &common.ArchiveStatsSnapshot{TotalFiles: 3}, nil
+	refreshStatsFromDisk = func() (*archive.ArchiveStatsSnapshot, error) {
+		return &archive.ArchiveStatsSnapshot{TotalFiles: 3}, nil
 	}
 	response = performControllerRequest(http.MethodPost, "/stats/refresh", RefreshArchiveStats)
 	if response.Code != http.StatusOK {
 		t.Fatalf("refresh status = %d, want 200", response.Code)
 	}
-	refreshStatsFromDisk = func() (*common.ArchiveStatsSnapshot, error) {
+	refreshStatsFromDisk = func() (*archive.ArchiveStatsSnapshot, error) {
 		return nil, errors.New("scan failed")
 	}
 	response = performControllerRequest(http.MethodPost, "/stats/refresh", RefreshArchiveStats)
@@ -403,11 +405,11 @@ func TestDeleteArchiveDocumentBranches(t *testing.T) {
 }
 
 func TestAddHTMLFile(t *testing.T) {
-	oldRoot := common.ARCHIVEFILELOACTION
+	oldRoot := config.ARCHIVEFILELOACTION
 	t.Cleanup(func() {
-		common.ARCHIVEFILELOACTION = oldRoot
+		config.ARCHIVEFILELOACTION = oldRoot
 	})
-	common.ARCHIVEFILELOACTION = t.TempDir()
+	config.ARCHIVEFILELOACTION = t.TempDir()
 
 	response := performControllerRequest(http.MethodPost, "/uploadHtmlFile", AddHTMLFile)
 	if response.Code != http.StatusInternalServerError {
@@ -419,7 +421,7 @@ func TestAddHTMLFile(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("upload status = %d, want 200 body=%s", response.Code, response.Body.String())
 	}
-	if _, err := os.Stat(filepath.Join(common.ARCHIVEFILELOACTION, "Temporary", "page.html")); err != nil {
+	if _, err := os.Stat(filepath.Join(config.ARCHIVEFILELOACTION, "Temporary", "page.html")); err != nil {
 		t.Fatalf("uploaded file missing: %v", err)
 	}
 }

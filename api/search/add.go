@@ -1,7 +1,8 @@
 package search
 
 import (
-	"DataArk/common"
+	"DataArk/archive"
+	"DataArk/config"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -62,7 +63,7 @@ func InitArchiveTaskQueue() error {
 	var initErr error
 
 	archiveTaskQueueOnce.Do(func() {
-		tempDir := filepath.Join(common.ARCHIVEFILELOACTION, "Temporary")
+		tempDir := filepath.Join(config.ARCHIVEFILELOACTION, "Temporary")
 		if err := os.MkdirAll(tempDir, os.ModePerm); err != nil {
 			initErr = err
 			return
@@ -73,7 +74,7 @@ func InitArchiveTaskQueue() error {
 
 		// 队列本身只存在于进程内，所以启动时需要把数据库里未完成的任务重新塞回队列，
 		// 否则服务重启后这些任务会永久停在 pending/running。
-		pendingTasks, err := common.ListArchiveTasksByStatuses([]string{
+		pendingTasks, err := archive.ListArchiveTasksByStatuses([]string{
 			ArchiveTaskStatusPending,
 			ArchiveTaskStatusRunning,
 		})
@@ -91,7 +92,7 @@ func InitArchiveTaskQueue() error {
 }
 
 func AddDocFile(fileName string, originDomain string, sourceURL string) (err error) {
-	htmlFilePath := filepath.Join(common.ARCHIVEFILELOACTION, "Temporary", fileName)
+	htmlFilePath := filepath.Join(config.ARCHIVEFILELOACTION, "Temporary", fileName)
 	_, err = os.Stat(htmlFilePath)
 	if err != nil {
 		return err
@@ -99,7 +100,7 @@ func AddDocFile(fileName string, originDomain string, sourceURL string) (err err
 	return addDocFileByPath(htmlFilePath, fileName, originDomain, sourceURL)
 }
 
-func AddDocURLTask(rawURL string) (*common.ArchiveTask, bool, error) {
+func AddDocURLTask(rawURL string) (*archive.ArchiveTask, bool, error) {
 	if err := ensureArchiveTaskQueue(); err != nil {
 		return nil, false, err
 	}
@@ -114,7 +115,7 @@ func AddDocURLTask(rawURL string) (*common.ArchiveTask, bool, error) {
 
 	// 先查正在执行的任务，是为了保证同一个 URL 在外部 SingleFile 服务和我们内部索引链路里
 	// 都只会有一个活跃任务，避免重复抓取、重复建索引。
-	activeTask, err := common.FindActiveArchiveTaskByURL(normalizedURL)
+	activeTask, err := archive.FindActiveArchiveTaskByURL(normalizedURL)
 	if err == nil {
 		return activeTask, false, nil
 	}
@@ -124,7 +125,7 @@ func AddDocURLTask(rawURL string) (*common.ArchiveTask, bool, error) {
 
 	// 成功任务直接复用已有结果，而不是再次请求外部服务。
 	// 这样做可以保持接口幂等，也避免同一页面被重复保存出多个归档文件。
-	latestTask, err := common.GetLatestArchiveTaskByURL(normalizedURL)
+	latestTask, err := archive.GetLatestArchiveTaskByURL(normalizedURL)
 	if err == nil && latestTask.Status == ArchiveTaskStatusSuccess {
 		return latestTask, false, nil
 	}
@@ -132,13 +133,13 @@ func AddDocURLTask(rawURL string) (*common.ArchiveTask, bool, error) {
 		return nil, false, err
 	}
 
-	task := &common.ArchiveTask{
+	task := &archive.ArchiveTask{
 		ID:     uuid.New().String(),
 		URL:    normalizedURL,
 		Domain: domain,
 		Status: ArchiveTaskStatusPending,
 	}
-	if err := common.CreateArchiveTask(task); err != nil {
+	if err := archive.CreateArchiveTask(task); err != nil {
 		return nil, false, err
 	}
 
@@ -146,11 +147,11 @@ func AddDocURLTask(rawURL string) (*common.ArchiveTask, bool, error) {
 	return task, true, nil
 }
 
-func GetArchiveTask(taskID string) (*common.ArchiveTask, error) {
+func GetArchiveTask(taskID string) (*archive.ArchiveTask, error) {
 	if err := ensureArchiveTaskQueue(); err != nil {
 		return nil, err
 	}
-	return common.GetArchiveTaskByID(taskID)
+	return archive.GetArchiveTaskByID(taskID)
 }
 
 func processArchiveTasks() {
@@ -160,7 +161,7 @@ func processArchiveTasks() {
 }
 
 func processArchiveTask(taskID string) {
-	task, err := common.GetArchiveTaskByID(taskID)
+	task, err := archive.GetArchiveTaskByID(taskID)
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("failed to load archive task %s: %v", taskID, err)
@@ -179,7 +180,7 @@ func processArchiveTask(taskID string) {
 	if task.StartedAt == nil {
 		task.StartedAt = &now
 	}
-	if err := common.SaveArchiveTask(task); err != nil {
+	if err := archive.SaveArchiveTask(task); err != nil {
 		log.Printf("failed to mark archive task %s as running: %v", task.ID, err)
 		return
 	}
@@ -208,12 +209,12 @@ func processArchiveTask(taskID string) {
 	task.FileName = singleFileResp.FileName
 	task.ExternalTaskID = singleFileResp.TaskID
 	task.FinishedAt = &finishedAt
-	if err := common.SaveArchiveTask(task); err != nil {
+	if err := archive.SaveArchiveTask(task); err != nil {
 		log.Printf("failed to save successful archive task %s: %v", task.ID, err)
 	}
 }
 
-func finishArchiveTaskWithError(task *common.ArchiveTask, resp *singleFileTaskResponse, err error) {
+func finishArchiveTaskWithError(task *archive.ArchiveTask, resp *singleFileTaskResponse, err error) {
 	finishedAt := time.Now()
 	task.Status = ArchiveTaskStatusFailed
 	task.Error = err.Error()
@@ -224,7 +225,7 @@ func finishArchiveTaskWithError(task *common.ArchiveTask, resp *singleFileTaskRe
 			task.FileName = resp.FileName
 		}
 	}
-	if saveErr := common.SaveArchiveTask(task); saveErr != nil {
+	if saveErr := archive.SaveArchiveTask(task); saveErr != nil {
 		log.Printf("failed to save failed archive task %s: %v", task.ID, saveErr)
 	}
 }
@@ -279,7 +280,7 @@ func createSingleFileTask(rawURL string) (*singleFileTaskResponse, error) {
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, common.SINGLEFILEWEBSERVICEURL+"/task/create", bytes.NewReader(requestBody))
+	req, err := http.NewRequest(http.MethodPost, config.SINGLEFILEWEBSERVICEURL+"/task/create", bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +290,7 @@ func createSingleFileTask(rawURL string) (*singleFileTaskResponse, error) {
 }
 
 func querySingleFileTask(rawURL string) (*singleFileTaskResponse, error) {
-	queryURL := common.SINGLEFILEWEBSERVICEURL + "/task/create?url=" + neturl.QueryEscape(rawURL)
+	queryURL := config.SINGLEFILEWEBSERVICEURL + "/task/create?url=" + neturl.QueryEscape(rawURL)
 	req, err := http.NewRequest(http.MethodGet, queryURL, nil)
 	if err != nil {
 		return nil, err
@@ -328,7 +329,7 @@ func waitForArchivedFile(fileName string) (string, error) {
 		return "", fmt.Errorf("SingleFile WEBService 未返回文件名")
 	}
 
-	filePath := filepath.Join(common.ARCHIVEFILELOACTION, fileName)
+	filePath := filepath.Join(config.ARCHIVEFILELOACTION, fileName)
 	// 外部容器先返回 success，再通过共享卷把文件暴露给当前服务是有时间差的，
 	// 所以这里额外等待文件真正出现在归档目录，避免后续解析阶段偶发找不到文件。
 	deadline := time.Now().Add(archiveFileDetectTimeout)
@@ -365,7 +366,7 @@ func normalizeArchiveURL(rawURL string) (string, string, error) {
 }
 
 func addDownloadedDocFile(fileName string, originDomain string, sourceURL string) error {
-	htmlFilePath := filepath.Join(common.ARCHIVEFILELOACTION, fileName)
+	htmlFilePath := filepath.Join(config.ARCHIVEFILELOACTION, fileName)
 	_, err := os.Stat(htmlFilePath)
 	if err != nil {
 		return err
@@ -374,15 +375,15 @@ func addDownloadedDocFile(fileName string, originDomain string, sourceURL string
 }
 
 func addDocFileByPath(htmlFilePath string, fileName string, originDomain string, sourceURL string) (err error) {
-	HTMLContent, err := common.GetHTMLFileContent(htmlFilePath)
+	HTMLContent, err := archive.GetHTMLFileContent(htmlFilePath)
 	if err != nil {
 		return err
 	}
-	title, err := common.GetHTMLTitle(HTMLContent)
+	title, err := archive.GetHTMLTitle(HTMLContent)
 	if err != nil {
 		return err
 	}
-	HTMLPureText, err := common.ExtractHTMLText(HTMLContent)
+	HTMLPureText, err := archive.ExtractHTMLText(HTMLContent)
 	if err != nil {
 		return err
 	}
@@ -397,15 +398,15 @@ func addDocFileByPath(htmlFilePath string, fileName string, originDomain string,
 			"content":  HTMLPureText,
 		},
 	}
-	client := meilisearch.New(common.MEILIHOST, meilisearch.WithAPIKey(common.MEILIAPIKey))
+	client := meilisearch.New(config.MEILIHOST, meilisearch.WithAPIKey(config.MEILIAPIKey))
 
-	_, err = client.Index(common.MEILIBlogsIndex).AddDocuments(documents, nil)
+	_, err = client.Index(config.MEILIBlogsIndex).AddDocuments(documents, nil)
 	if err != nil {
 		return err
 	}
 
 	// 成功添加索引内容后，移动文件到域名目录
-	targetDir := filepath.Join(common.ARCHIVEFILELOACTION, originDomain)
+	targetDir := filepath.Join(config.ARCHIVEFILELOACTION, originDomain)
 	if err := os.MkdirAll(targetDir, os.ModePerm); err != nil {
 		return err
 	}
@@ -420,12 +421,12 @@ func addDocFileByPath(htmlFilePath string, fileName string, originDomain string,
 	if err != nil {
 		return err
 	}
-	if err := common.SaveArchiveDocumentDetails(originDomain, fileName, sourceURL, title, common.BuildSummary(HTMLPureText, 220)); err != nil {
+	if err := archive.SaveArchiveDocumentDetails(originDomain, fileName, sourceURL, title, archive.BuildSummary(HTMLPureText, 220)); err != nil {
 		return err
 	}
 	// 统计只在新增归档文件时递增；同名覆盖不改变磁盘上的 HTML 文件总量。
 	if !targetExists {
-		if err := common.IncrementArchiveStat(originDomain, 1); err != nil {
+		if err := archive.IncrementArchiveStat(originDomain, 1); err != nil {
 			return err
 		}
 	}
@@ -433,13 +434,13 @@ func addDocFileByPath(htmlFilePath string, fileName string, originDomain string,
 }
 
 func CreateDefaultIndex() (err error) {
-	client := meilisearch.New(common.MEILIHOST, meilisearch.WithAPIKey(common.MEILIAPIKey))
-	_, err = client.GetIndex(common.MEILIBlogsIndex)
+	client := meilisearch.New(config.MEILIHOST, meilisearch.WithAPIKey(config.MEILIAPIKey))
+	_, err = client.GetIndex(config.MEILIBlogsIndex)
 	if err == nil {
 		return nil
 	} else {
 		client.CreateIndex(&meilisearch.IndexConfig{
-			Uid:        common.MEILIBlogsIndex,
+			Uid:        config.MEILIBlogsIndex,
 			PrimaryKey: "id",
 		})
 	}

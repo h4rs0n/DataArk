@@ -1,7 +1,7 @@
 package search
 
 import (
-	"DataArk/common"
+	"DataArk/config"
 	"encoding/json"
 	"log"
 	"strings"
@@ -24,7 +24,7 @@ func QueryByKeyword(keyword string, pageNum int64) (string, map[string]int) {
 	preTag := "<span style=\"color: red;\">"
 	postTag := "</span>"
 
-	client := meilisearch.New(common.MEILIHOST, meilisearch.WithAPIKey(common.MEILIAPIKey))
+	client := meilisearch.New(config.MEILIHOST, meilisearch.WithAPIKey(config.MEILIAPIKey))
 
 	hitsPerPage := int64(10)
 	meiliReqOpt := &meilisearch.SearchRequest{

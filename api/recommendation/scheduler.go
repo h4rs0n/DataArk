@@ -1,6 +1,7 @@
-package common
+package recommendation
 
 import (
+	"DataArk/config"
 	"context"
 	"log"
 	"strings"
@@ -8,7 +9,7 @@ import (
 )
 
 func StartRecommendationScheduler() func() {
-	if !RECOMMENDATIONENABLED {
+	if !config.RECOMMENDATIONENABLED {
 		return func() {}
 	}
 	stop := make(chan struct{})

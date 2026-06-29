@@ -1,7 +1,8 @@
 package backup
 
 import (
-	"DataArk/common"
+	"DataArk/archive"
+	"DataArk/config"
 	"DataArk/search"
 	"archive/zip"
 	"context"
@@ -183,7 +184,7 @@ func RestoreBackup(ctx context.Context, zipPath string) (*RestoreResult, error) 
 		return nil, err
 	}
 
-	stats, err := common.RefreshArchiveStatsFromDisk()
+	stats, err := archive.RefreshArchiveStatsFromDisk()
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +199,7 @@ func RestoreBackup(ctx context.Context, zipPath string) (*RestoreResult, error) 
 }
 
 func createMeiliDump(ctx context.Context, backupDir string) (string, string, error) {
-	client := meilisearch.New(common.MEILIHOST, meilisearch.WithAPIKey(common.MEILIAPIKey))
+	client := meilisearch.New(config.MEILIHOST, meilisearch.WithAPIKey(config.MEILIAPIKey))
 	taskInfo, err := client.CreateDumpWithContext(ctx)
 	if err != nil {
 		return "", "", fmt.Errorf("create meilisearch dump: %w", err)
@@ -220,7 +221,7 @@ func createMeiliDump(ctx context.Context, backupDir string) (string, string, err
 		return "", "", fmt.Errorf("meilisearch dump task %d did not return dump uid", taskInfo.TaskUID)
 	}
 
-	sourcePath := filepath.Join(common.MEILIDumpDir, dumpUID+".dump")
+	sourcePath := filepath.Join(config.MEILIDumpDir, dumpUID+".dump")
 	if err := waitForFile(waitCtx, sourcePath, meiliDumpFileTimeout); err != nil {
 		return "", "", fmt.Errorf("find meilisearch dump file %s: %w", sourcePath, err)
 	}
@@ -233,7 +234,7 @@ func createMeiliDump(ctx context.Context, backupDir string) (string, string, err
 }
 
 func createDatabaseDump(ctx context.Context, destination string) error {
-	if strings.TrimSpace(common.DBName) == "" {
+	if strings.TrimSpace(config.DBName) == "" {
 		return errors.New("database name is empty")
 	}
 
@@ -241,10 +242,10 @@ func createDatabaseDump(ctx context.Context, destination string) error {
 	defer cancel()
 
 	args := []string{
-		"--host", common.DBHost,
-		"--port", common.DBPort,
-		"--username", common.DBUser,
-		"--dbname", common.DBName,
+		"--host", config.DBHost,
+		"--port", config.DBPort,
+		"--username", config.DBUser,
+		"--dbname", config.DBName,
 		"--format", "plain",
 		"--clean",
 		"--if-exists",
@@ -261,10 +262,10 @@ func restoreDatabaseDump(ctx context.Context, sqlPath string) error {
 	defer cancel()
 
 	args := []string{
-		"--host", common.DBHost,
-		"--port", common.DBPort,
-		"--username", common.DBUser,
-		"--dbname", common.DBName,
+		"--host", config.DBHost,
+		"--port", config.DBPort,
+		"--username", config.DBUser,
+		"--dbname", config.DBName,
 		"--set", "ON_ERROR_STOP=on",
 		"--single-transaction",
 		"--file", sqlPath,
@@ -275,7 +276,7 @@ func restoreDatabaseDump(ctx context.Context, sqlPath string) error {
 
 func runDatabaseCommand(ctx context.Context, command string, args ...string) error {
 	cmd := exec.CommandContext(ctx, command, args...)
-	cmd.Env = append(os.Environ(), "PGPASSWORD="+common.DBPassword)
+	cmd.Env = append(os.Environ(), "PGPASSWORD="+config.DBPassword)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -289,7 +290,7 @@ func runDatabaseCommand(ctx context.Context, command string, args ...string) err
 }
 
 func copyArchiveSnapshot(destination string) error {
-	source := strings.TrimSpace(common.ARCHIVEFILELOACTION)
+	source := strings.TrimSpace(config.ARCHIVEFILELOACTION)
 	if source == "" {
 		return errors.New("archive location is empty")
 	}
@@ -305,12 +306,12 @@ func copyArchiveSnapshot(destination string) error {
 }
 
 func restoreMeiliDumpFile(source string) (string, error) {
-	if err := os.MkdirAll(common.MEILIDumpDir, 0o755); err != nil {
+	if err := os.MkdirAll(config.MEILIDumpDir, 0o755); err != nil {
 		return "", err
 	}
 
 	fileName := "restored-" + time.Now().Format("20060102-150405") + "-" + filepath.Base(source)
-	destination := filepath.Join(common.MEILIDumpDir, fileName)
+	destination := filepath.Join(config.MEILIDumpDir, fileName)
 	if err := copyFile(source, destination); err != nil {
 		return "", err
 	}
@@ -377,7 +378,7 @@ func removeDirContents(dir string) error {
 }
 
 func cleanArchiveRoot() (string, error) {
-	root := strings.TrimSpace(common.ARCHIVEFILELOACTION)
+	root := strings.TrimSpace(config.ARCHIVEFILELOACTION)
 	if root == "" {
 		return "", errors.New("archive location is empty")
 	}

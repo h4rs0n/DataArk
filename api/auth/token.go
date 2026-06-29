@@ -1,6 +1,7 @@
-package common
+package auth
 
 import (
+	"DataArk/config"
 	"errors"
 	"fmt"
 	"github.com/golang-jwt/jwt/v5"
@@ -10,8 +11,6 @@ import (
 
 // JWT配置
 var (
-	// JWT密钥，生产环境中应该从环境变量或配置文件中读取
-	jwtSecret = []byte(MEILIAPIKey)
 	// Token过期时间
 	tokenExpiration = time.Hour * 24 * 7 // 7天
 )
@@ -62,7 +61,7 @@ func GenerateToken(user *User) (*TokenResponse, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
 	// 签名Token
-	tokenString, err := token.SignedString(jwtSecret)
+	tokenString, err := token.SignedString(jwtSecret())
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign token: %v", err)
 	}
@@ -86,7 +85,7 @@ func ValidateToken(tokenString string) (*Claims, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return jwtSecret, nil
+		return jwtSecret(), nil
 	})
 
 	if err != nil {
@@ -105,6 +104,10 @@ func ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	return claims, nil
+}
+
+func jwtSecret() []byte {
+	return []byte(config.MEILIAPIKey)
 }
 
 // RefreshToken 刷新Token

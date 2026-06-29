@@ -1,7 +1,7 @@
 package api
 
 import (
-	"DataArk/common"
+	"DataArk/auth"
 	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
@@ -30,7 +30,7 @@ func TestAuthMiddlewareBranches(t *testing.T) {
 	t.Run("invalid token", func(t *testing.T) {
 		withAuthFakes(t,
 			func(header string) (string, error) { return "token", nil },
-			func(token string) (*common.Claims, error) { return nil, errors.New("bad token") },
+			func(token string) (*auth.Claims, error) { return nil, errors.New("bad token") },
 			nil,
 		)
 		response := performMiddlewareRequest(AuthMiddleware(), "Bearer token")
@@ -42,8 +42,8 @@ func TestAuthMiddlewareBranches(t *testing.T) {
 	t.Run("missing user", func(t *testing.T) {
 		withAuthFakes(t,
 			func(header string) (string, error) { return "token", nil },
-			func(token string) (*common.Claims, error) { return &common.Claims{UserID: 9, Username: "missing"}, nil },
-			func(id uint) (*common.User, error) { return nil, errors.New("not found") },
+			func(token string) (*auth.Claims, error) { return &auth.Claims{UserID: 9, Username: "missing"}, nil },
+			func(id uint) (*auth.User, error) { return nil, errors.New("not found") },
 		)
 		response := performMiddlewareRequest(AuthMiddleware(), "Bearer token")
 		if response.Code != http.StatusUnauthorized {
@@ -54,8 +54,8 @@ func TestAuthMiddlewareBranches(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		withAuthFakes(t,
 			func(header string) (string, error) { return "token", nil },
-			func(token string) (*common.Claims, error) { return &common.Claims{UserID: 1, Username: "alice"}, nil },
-			func(id uint) (*common.User, error) { return &common.User{ID: id, Username: "alice"}, nil },
+			func(token string) (*auth.Claims, error) { return &auth.Claims{UserID: 1, Username: "alice"}, nil },
+			func(id uint) (*auth.User, error) { return &auth.User{ID: id, Username: "alice"}, nil },
 		)
 		response := performMiddlewareRequest(AuthMiddleware(), "Bearer token")
 		if response.Code != http.StatusOK || response.Body.String() != "alice" {
@@ -83,7 +83,7 @@ func TestOptionalAuthMiddlewareBranches(t *testing.T) {
 	t.Run("bad token continues", func(t *testing.T) {
 		withAuthFakes(t,
 			func(header string) (string, error) { return "token", nil },
-			func(token string) (*common.Claims, error) { return nil, errors.New("bad token") },
+			func(token string) (*auth.Claims, error) { return nil, errors.New("bad token") },
 			nil,
 		)
 		response := performMiddlewareRequest(OptionalAuthMiddleware(), "Bearer token")
@@ -95,8 +95,8 @@ func TestOptionalAuthMiddlewareBranches(t *testing.T) {
 	t.Run("missing user continues", func(t *testing.T) {
 		withAuthFakes(t,
 			func(header string) (string, error) { return "token", nil },
-			func(token string) (*common.Claims, error) { return &common.Claims{UserID: 2}, nil },
-			func(id uint) (*common.User, error) { return nil, errors.New("missing") },
+			func(token string) (*auth.Claims, error) { return &auth.Claims{UserID: 2}, nil },
+			func(id uint) (*auth.User, error) { return nil, errors.New("missing") },
 		)
 		response := performMiddlewareRequest(OptionalAuthMiddleware(), "Bearer token")
 		if response.Code != http.StatusOK || response.Body.String() != "anonymous" {
@@ -107,8 +107,8 @@ func TestOptionalAuthMiddlewareBranches(t *testing.T) {
 	t.Run("success sets context", func(t *testing.T) {
 		withAuthFakes(t,
 			func(header string) (string, error) { return "token", nil },
-			func(token string) (*common.Claims, error) { return &common.Claims{UserID: 3, Username: "carol"}, nil },
-			func(id uint) (*common.User, error) { return &common.User{ID: id, Username: "carol"}, nil },
+			func(token string) (*auth.Claims, error) { return &auth.Claims{UserID: 3, Username: "carol"}, nil },
+			func(id uint) (*auth.User, error) { return &auth.User{ID: id, Username: "carol"}, nil },
 		)
 		response := performMiddlewareRequest(OptionalAuthMiddleware(), "Bearer token")
 		if response.Code != http.StatusOK || response.Body.String() != "carol" {
@@ -133,7 +133,7 @@ func TestContextAuthHelpers(t *testing.T) {
 		t.Fatal("empty context should not return username")
 	}
 
-	user := &common.User{ID: 5, Username: "dana"}
+	user := &auth.User{ID: 5, Username: "dana"}
 	context.Set("user", user)
 	context.Set("user_id", user.ID)
 	context.Set("username", user.Username)
@@ -182,8 +182,8 @@ func performMiddlewareRequest(middleware gin.HandlerFunc, authHeader string) *ht
 func withAuthFakes(
 	t *testing.T,
 	extract func(string) (string, error),
-	validate func(string) (*common.Claims, error),
-	getUser func(uint) (*common.User, error),
+	validate func(string) (*auth.Claims, error),
+	getUser func(uint) (*auth.User, error),
 ) {
 	t.Helper()
 	oldExtract := extractTokenFromHeader

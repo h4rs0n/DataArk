@@ -1,7 +1,7 @@
 package backup
 
 import (
-	"DataArk/common"
+	"DataArk/config"
 	"archive/zip"
 	"bytes"
 	"context"
@@ -121,15 +121,15 @@ func TestBackupFileHelpers(t *testing.T) {
 }
 
 func TestArchiveSnapshotAndDumpRestoreHelpers(t *testing.T) {
-	oldArchiveRoot := common.ARCHIVEFILELOACTION
-	oldDumpDir := common.MEILIDumpDir
+	oldArchiveRoot := config.ARCHIVEFILELOACTION
+	oldDumpDir := config.MEILIDumpDir
 	t.Cleanup(func() {
-		common.ARCHIVEFILELOACTION = oldArchiveRoot
-		common.MEILIDumpDir = oldDumpDir
+		config.ARCHIVEFILELOACTION = oldArchiveRoot
+		config.MEILIDumpDir = oldDumpDir
 	})
 
 	root := t.TempDir()
-	common.ARCHIVEFILELOACTION = filepath.Join(root, "missing-archive")
+	config.ARCHIVEFILELOACTION = filepath.Join(root, "missing-archive")
 	destination := filepath.Join(root, "snapshot")
 	if err := copyArchiveSnapshot(destination); err != nil {
 		t.Fatalf("copyArchiveSnapshot missing source returned error: %v", err)
@@ -142,7 +142,7 @@ func TestArchiveSnapshotAndDumpRestoreHelpers(t *testing.T) {
 	if err := os.WriteFile(dumpSource, []byte("dump"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	common.MEILIDumpDir = filepath.Join(root, "dumps")
+	config.MEILIDumpDir = filepath.Join(root, "dumps")
 	restored, err := restoreMeiliDumpFile(dumpSource)
 	if err != nil {
 		t.Fatalf("restoreMeiliDumpFile returned error: %v", err)
@@ -150,7 +150,7 @@ func TestArchiveSnapshotAndDumpRestoreHelpers(t *testing.T) {
 	if !strings.HasPrefix(restored, "restored-") {
 		t.Fatalf("restored file name = %q", restored)
 	}
-	if _, err := os.Stat(filepath.Join(common.MEILIDumpDir, restored)); err != nil {
+	if _, err := os.Stat(filepath.Join(config.MEILIDumpDir, restored)); err != nil {
 		t.Fatalf("restored dump missing: %v", err)
 	}
 }

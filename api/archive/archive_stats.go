@@ -1,6 +1,7 @@
-package common
+package archive
 
 import (
+	"DataArk/config"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,7 +12,7 @@ const temporaryArchiveDirName = "Temporary"
 
 // RefreshArchiveStatsFromDisk 根据归档目录重建数据库统计信息。
 func RefreshArchiveStatsFromDisk() (*ArchiveStatsSnapshot, error) {
-	stats, err := ScanArchiveStats(ARCHIVEFILELOACTION)
+	stats, err := ScanArchiveStats(config.ARCHIVEFILELOACTION)
 	if err != nil {
 		return nil, err
 	}

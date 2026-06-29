@@ -1,7 +1,8 @@
 package search
 
 import (
-	"DataArk/common"
+	"DataArk/archive"
+	"DataArk/config"
 	"context"
 	"fmt"
 	"github.com/meilisearch/meilisearch-go"
@@ -44,8 +45,8 @@ type ArchiveConsistencyReport struct {
 	HTMLFiles            int                       `json:"htmlFiles"`
 	MeiliDocuments       int                       `json:"meiliDocuments"`
 	DatabaseStatTotal    int                       `json:"databaseStatTotal"`
-	DiskSources          []common.ArchiveStatItem  `json:"diskSources"`
-	DatabaseSources      []common.ArchiveStatItem  `json:"databaseSources"`
+	DiskSources          []archive.ArchiveStatItem `json:"diskSources"`
+	DatabaseSources      []archive.ArchiveStatItem `json:"databaseSources"`
 	RecoverableIssues    []ArchiveConsistencyIssue `json:"recoverableIssues"`
 	UnrecoverableIssues  []ArchiveConsistencyIssue `json:"unrecoverableIssues"`
 	Actions              []string                  `json:"actions"`
@@ -72,8 +73,8 @@ type archiveIndexStore interface {
 }
 
 type archiveStatsStore interface {
-	GetArchiveStats() (*common.ArchiveStatsSnapshot, error)
-	RefreshArchiveStats() (*common.ArchiveStatsSnapshot, error)
+	GetArchiveStats() (*archive.ArchiveStatsSnapshot, error)
+	RefreshArchiveStats() (*archive.ArchiveStatsSnapshot, error)
 }
 
 type archiveConsistencyService struct {
@@ -97,7 +98,7 @@ func RepairArchiveConsistency(ctx context.Context) (*ArchiveConsistencyReport, e
 
 func newArchiveConsistencyService() archiveConsistencyService {
 	return archiveConsistencyService{
-		archiveRoot: common.ARCHIVEFILELOACTION,
+		archiveRoot: config.ARCHIVEFILELOACTION,
 		index:       meiliArchiveIndexStore{},
 		stats:       commonArchiveStatsStore{},
 		now:         time.Now,
@@ -122,7 +123,7 @@ func (s archiveConsistencyService) Check(ctx context.Context) (*ArchiveConsisten
 		return nil, err
 	}
 	if databaseStats == nil {
-		databaseStats = &common.ArchiveStatsSnapshot{}
+		databaseStats = &archive.ArchiveStatsSnapshot{}
 	}
 
 	report := &ArchiveConsistencyReport{
@@ -158,7 +159,7 @@ func (s archiveConsistencyService) Repair(ctx context.Context) (*ArchiveConsiste
 		return nil, err
 	}
 	if refreshedStats == nil {
-		refreshedStats = &common.ArchiveStatsSnapshot{}
+		refreshedStats = &archive.ArchiveStatsSnapshot{}
 	}
 
 	report, err := s.Check(ctx)
@@ -177,8 +178,8 @@ func (s archiveConsistencyService) Repair(ctx context.Context) (*ArchiveConsiste
 }
 
 func (meiliArchiveIndexStore) ListArchiveDocuments(ctx context.Context) ([]archiveIndexDocument, error) {
-	client := meilisearch.New(common.MEILIHOST, meilisearch.WithAPIKey(common.MEILIAPIKey))
-	index := client.Index(common.MEILIBlogsIndex)
+	client := meilisearch.New(config.MEILIHOST, meilisearch.WithAPIKey(config.MEILIAPIKey))
+	index := client.Index(config.MEILIBlogsIndex)
 	documents := make([]archiveIndexDocument, 0)
 
 	for offset := int64(0); ; {
@@ -219,15 +220,15 @@ func (meiliArchiveIndexStore) RebuildArchiveIndex(ctx context.Context) (int, []A
 	return result.Documents, issues, nil
 }
 
-func (commonArchiveStatsStore) GetArchiveStats() (*common.ArchiveStatsSnapshot, error) {
-	return common.GetArchiveStats()
+func (commonArchiveStatsStore) GetArchiveStats() (*archive.ArchiveStatsSnapshot, error) {
+	return archive.GetArchiveStats()
 }
 
-func (commonArchiveStatsStore) RefreshArchiveStats() (*common.ArchiveStatsSnapshot, error) {
-	return common.RefreshArchiveStatsFromDisk()
+func (commonArchiveStatsStore) RefreshArchiveStats() (*archive.ArchiveStatsSnapshot, error) {
+	return archive.RefreshArchiveStatsFromDisk()
 }
 
-func scanArchiveHTMLFiles(rootDir string) ([]archiveHTMLFile, []common.ArchiveStat, []ArchiveConsistencyIssue, error) {
+func scanArchiveHTMLFiles(rootDir string) ([]archiveHTMLFile, []archive.ArchiveStat, []ArchiveConsistencyIssue, error) {
 	rootDir = strings.TrimSpace(rootDir)
 	if rootDir == "" {
 		return nil, nil, nil, fmt.Errorf("archive location is empty")
@@ -236,7 +237,7 @@ func scanArchiveHTMLFiles(rootDir string) ([]archiveHTMLFile, []common.ArchiveSt
 	archiveRoot := filepath.Clean(rootDir)
 	if _, err := os.Stat(archiveRoot); err != nil {
 		if os.IsNotExist(err) {
-			return []archiveHTMLFile{}, []common.ArchiveStat{}, []ArchiveConsistencyIssue{}, nil
+			return []archiveHTMLFile{}, []archive.ArchiveStat{}, []ArchiveConsistencyIssue{}, nil
 		}
 		return nil, nil, nil, err
 	}
@@ -310,9 +311,9 @@ func scanArchiveHTMLFiles(rootDir string) ([]archiveHTMLFile, []common.ArchiveSt
 		return archiveIdentityKey(files[i].Domain, files[i].Filename) < archiveIdentityKey(files[j].Domain, files[j].Filename)
 	})
 
-	stats := make([]common.ArchiveStat, 0, len(countByDomain))
+	stats := make([]archive.ArchiveStat, 0, len(countByDomain))
 	for domain, count := range countByDomain {
-		stats = append(stats, common.ArchiveStat{Source: domain, FileCount: count})
+		stats = append(stats, archive.ArchiveStat{Source: domain, FileCount: count})
 	}
 	sort.Slice(stats, func(i, j int) bool {
 		return stats[i].Source < stats[j].Source
@@ -402,7 +403,7 @@ func compareArchiveFilesAndIndex(report *ArchiveConsistencyReport, files []archi
 	}
 }
 
-func compareArchiveStats(report *ArchiveConsistencyReport, diskStats []common.ArchiveStat, databaseStats *common.ArchiveStatsSnapshot) {
+func compareArchiveStats(report *ArchiveConsistencyReport, diskStats []archive.ArchiveStat, databaseStats *archive.ArchiveStatsSnapshot) {
 	diskBySource := make(map[string]int, len(diskStats))
 	databaseBySource := make(map[string]int, len(databaseStats.Sources))
 
@@ -479,10 +480,10 @@ func mergeArchiveConsistencyIssues(issueGroups ...[]ArchiveConsistencyIssue) []A
 	return merged
 }
 
-func archiveStatItems(stats []common.ArchiveStat) []common.ArchiveStatItem {
-	items := make([]common.ArchiveStatItem, 0, len(stats))
+func archiveStatItems(stats []archive.ArchiveStat) []archive.ArchiveStatItem {
+	items := make([]archive.ArchiveStatItem, 0, len(stats))
 	for _, stat := range stats {
-		items = append(items, common.ArchiveStatItem{
+		items = append(items, archive.ArchiveStatItem{
 			Source:    stat.Source,
 			FileCount: stat.FileCount,
 		})

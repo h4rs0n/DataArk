@@ -1,7 +1,7 @@
 package backup
 
 import (
-	"DataArk/common"
+	"DataArk/config"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,9 +64,9 @@ func TestDiscoverRestoreComponents(t *testing.T) {
 }
 
 func TestReplaceArchiveDirKeepsArchiveRoot(t *testing.T) {
-	oldArchiveLocation := common.ARCHIVEFILELOACTION
+	oldArchiveLocation := config.ARCHIVEFILELOACTION
 	t.Cleanup(func() {
-		common.ARCHIVEFILELOACTION = oldArchiveLocation
+		config.ARCHIVEFILELOACTION = oldArchiveLocation
 	})
 
 	root := t.TempDir()
@@ -74,7 +74,7 @@ func TestReplaceArchiveDirKeepsArchiveRoot(t *testing.T) {
 	sourceArchive := filepath.Join(root, "backup", "archive")
 	tempRoot := filepath.Join(root, "restore-temp")
 
-	common.ARCHIVEFILELOACTION = archiveRoot
+	config.ARCHIVEFILELOACTION = archiveRoot
 
 	if err := os.MkdirAll(filepath.Join(archiveRoot, "old.example"), 0o755); err != nil {
 		t.Fatal(err)

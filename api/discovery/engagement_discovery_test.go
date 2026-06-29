@@ -1,6 +1,8 @@
-package common
+package discovery
 
 import (
+	"DataArk/archive"
+	"DataArk/config"
 	"context"
 	"os"
 	"path/filepath"
@@ -10,10 +12,10 @@ import (
 func TestKeywordStatsAndArchiveRecommendations(t *testing.T) {
 	setupSQLiteDB(t)
 	rootDir := t.TempDir()
-	oldRoot := ARCHIVEFILELOACTION
-	ARCHIVEFILELOACTION = rootDir
+	oldRoot := config.ARCHIVEFILELOACTION
+	config.ARCHIVEFILELOACTION = rootDir
 	t.Cleanup(func() {
-		ARCHIVEFILELOACTION = oldRoot
+		config.ARCHIVEFILELOACTION = oldRoot
 	})
 
 	archiveDir := filepath.Join(rootDir, "example.com")
@@ -23,17 +25,17 @@ func TestKeywordStatsAndArchiveRecommendations(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(archiveDir, "article.html"), []byte("<html><title>Go Archive</title><body>searchable article</body></html>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveArchiveDocumentDetails("example.com", "article.html", "https://example.com/article", "Go Archive", "searchable article"); err != nil {
+	if err := archive.SaveArchiveDocumentDetails("example.com", "article.html", "https://example.com/article", "Go Archive", "searchable article"); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordSearchEvent("  Go   Archive ", 3); err != nil {
+	if err := archive.RecordSearchEvent("  Go   Archive ", 3); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordSearchEvent("Go Archive", 4); err != nil {
+	if err := archive.RecordSearchEvent("Go Archive", 4); err != nil {
 		t.Fatal(err)
 	}
 
-	keywords, err := GetKeywordStats("go", "7d", 10)
+	keywords, err := archive.GetKeywordStats("go", "7d", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,17 +43,17 @@ func TestKeywordStatsAndArchiveRecommendations(t *testing.T) {
 		t.Fatalf("keywords = %#v", keywords)
 	}
 
-	if _, err := RecordArchiveClick("/archive/example.com/article.html", "Go Archive"); err != nil {
+	if _, err := archive.RecordArchiveClick("/archive/example.com/article.html", "Go Archive"); err != nil {
 		t.Fatal(err)
 	}
-	rankings, err := GetArchiveRankings("7d", 10)
+	rankings, err := archive.GetArchiveRankings("7d", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rankings) != 1 || rankings[0].ClickCount != 1 || rankings[0].Title != "Go Archive" {
 		t.Fatalf("rankings = %#v", rankings)
 	}
-	recommendations, err := GetArchiveRecommendations("7d", 10)
+	recommendations, err := archive.GetArchiveRecommendations("7d", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,10 +65,10 @@ func TestKeywordStatsAndArchiveRecommendations(t *testing.T) {
 func TestArchiveRankingsTolerateMissingDocumentMetadata(t *testing.T) {
 	setupSQLiteDB(t)
 	rootDir := t.TempDir()
-	oldRoot := ARCHIVEFILELOACTION
-	ARCHIVEFILELOACTION = rootDir
+	oldRoot := config.ARCHIVEFILELOACTION
+	config.ARCHIVEFILELOACTION = rootDir
 	t.Cleanup(func() {
-		ARCHIVEFILELOACTION = oldRoot
+		config.ARCHIVEFILELOACTION = oldRoot
 	})
 
 	archiveDir := filepath.Join(rootDir, "legacy.example")
@@ -77,10 +79,10 @@ func TestArchiveRankingsTolerateMissingDocumentMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := RecordArchiveClick("/archive/legacy.example/legacy.html", "legacy"); err != nil {
+	if _, err := archive.RecordArchiveClick("/archive/legacy.example/legacy.html", "legacy"); err != nil {
 		t.Fatal(err)
 	}
-	rankings, err := GetArchiveRankings("7d", 10)
+	rankings, err := archive.GetArchiveRankings("7d", 10)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,19 +2,20 @@ package main
 
 import (
 	"DataArk/api"
-	"DataArk/common"
+	"DataArk/config"
+	dataarkflag "DataArk/flag"
 	"fmt"
 )
 
 var (
-	parseFlags = common.ParseFlag
+	parseFlags = dataarkflag.ParseFlag
 	startWeb   = api.WebStarter
 )
 
 func main() {
 	display_banner()
 	parseFlags()
-	startWeb(common.DEBUG)
+	startWeb(config.DEBUG)
 }
 
 func display_banner() {

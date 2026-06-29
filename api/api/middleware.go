@@ -1,15 +1,15 @@
 package api
 
 import (
-	"DataArk/common"
+	"DataArk/auth"
 	"github.com/gin-gonic/gin"
 	"net/http"
 )
 
 var (
-	extractTokenFromHeader = common.ExtractTokenFromHeader
-	validateToken          = common.ValidateToken
-	getUserByID            = common.GetUserByID
+	extractTokenFromHeader = auth.ExtractTokenFromHeader
+	validateToken          = auth.ValidateToken
+	getUserByID            = auth.GetUserByID
 )
 
 // AuthMiddleware JWT认证中间件
@@ -115,9 +115,9 @@ func OptionalAuthMiddleware() gin.HandlerFunc {
 }
 
 // GetCurrentUser 从上下文中获取当前用户
-func GetCurrentUser(c *gin.Context) (*common.User, bool) {
+func GetCurrentUser(c *gin.Context) (*auth.User, bool) {
 	if user, exists := c.Get("user"); exists {
-		if u, ok := user.(*common.User); ok {
+		if u, ok := user.(*auth.User); ok {
 			return u, true
 		}
 	}
@@ -151,7 +151,7 @@ func IsAuthenticated(c *gin.Context) bool {
 }
 
 // RequireAuth 检查用户是否已认证，未认证则返回错误
-func RequireAuth(c *gin.Context) (*common.User, bool) {
+func RequireAuth(c *gin.Context) (*auth.User, bool) {
 	user, exists := GetCurrentUser(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{

@@ -1,6 +1,7 @@
-package common
+package archive
 
 import (
+	"DataArk/config"
 	"errors"
 	"io/fs"
 	"os"
@@ -231,14 +232,14 @@ func BackfillArchiveDocumentMetadataFromDisk() error {
 }
 
 func scanArchiveDocumentsFromDisk() ([]ArchiveDocument, error) {
-	stats, err := ScanArchiveStats(ARCHIVEFILELOACTION)
+	stats, err := ScanArchiveStats(config.ARCHIVEFILELOACTION)
 	if err != nil {
 		return nil, err
 	}
 	documents := make([]ArchiveDocument, 0)
 	for _, stat := range stats {
 		sourceDir := stat.Source
-		root := strings.TrimRight(ARCHIVEFILELOACTION, string(os.PathSeparator)) + string(os.PathSeparator) + sourceDir
+		root := strings.TrimRight(config.ARCHIVEFILELOACTION, string(os.PathSeparator)) + string(os.PathSeparator) + sourceDir
 		err := filepathWalkHTML(root, func(absPath string, relativeName string) error {
 			content, err := GetHTMLFileContent(absPath)
 			if err != nil {

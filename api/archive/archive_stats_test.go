@@ -1,6 +1,7 @@
-package common
+package archive
 
 import (
+	"DataArk/config"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,13 +56,13 @@ func TestScanArchiveStatsMissingRootReturnsEmptyStats(t *testing.T) {
 
 func TestRefreshArchiveStatsFromDiskReplacesDatabaseSnapshot(t *testing.T) {
 	setupSQLiteDB(t)
-	oldRoot := ARCHIVEFILELOACTION
+	oldRoot := config.ARCHIVEFILELOACTION
 	t.Cleanup(func() {
-		ARCHIVEFILELOACTION = oldRoot
+		config.ARCHIVEFILELOACTION = oldRoot
 	})
 
 	rootDir := t.TempDir()
-	ARCHIVEFILELOACTION = rootDir
+	config.ARCHIVEFILELOACTION = rootDir
 	if err := os.MkdirAll(filepath.Join(rootDir, "example.com"), 0o755); err != nil {
 		t.Fatal(err)
 	}

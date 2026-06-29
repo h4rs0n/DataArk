@@ -1,7 +1,8 @@
 package search
 
 import (
-	"DataArk/common"
+	"DataArk/archive"
+	"DataArk/config"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,7 +32,7 @@ type DeleteDocResult struct {
 }
 
 func DeleteDocByHTMLPath(ctx context.Context, rawPath string) (*DeleteDocResult, error) {
-	archivePath, err := common.ResolveArchiveDocumentPath(rawPath)
+	archivePath, err := archive.ResolveArchiveDocumentPath(rawPath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArchivePath, err)
 	}
@@ -47,8 +48,8 @@ func DeleteDocByHTMLPath(ctx context.Context, rawPath string) (*DeleteDocResult,
 		return nil, fmt.Errorf("%w: %s", ErrInvalidArchivePath, archivePath.RequestPath)
 	}
 
-	client := meilisearch.New(common.MEILIHOST, meilisearch.WithAPIKey(common.MEILIAPIKey))
-	index := client.Index(common.MEILIBlogsIndex)
+	client := meilisearch.New(config.MEILIHOST, meilisearch.WithAPIKey(config.MEILIAPIKey))
+	index := client.Index(config.MEILIBlogsIndex)
 
 	documentIDs, err := findArchiveDocumentIDs(index, archivePath.Domain, archivePath.Filename)
 	if err != nil {
@@ -76,10 +77,10 @@ func DeleteDocByHTMLPath(ctx context.Context, rawPath string) (*DeleteDocResult,
 	if err := os.Remove(archivePath.AbsPath); err != nil {
 		return nil, err
 	}
-	if err := common.DeleteArchiveDocumentMetadata(archivePath.Domain, archivePath.Filename); err != nil {
+	if err := archive.DeleteArchiveDocumentMetadata(archivePath.Domain, archivePath.Filename); err != nil {
 		return nil, err
 	}
-	if err := common.DecrementArchiveStat(archivePath.Domain, 1); err != nil {
+	if err := archive.DecrementArchiveStat(archivePath.Domain, 1); err != nil {
 		return nil, err
 	}
 
@@ -92,8 +93,8 @@ func DeleteDocByHTMLPath(ctx context.Context, rawPath string) (*DeleteDocResult,
 	}, nil
 }
 
-func resolveArchiveDocumentPath(rawPath string) (*common.ArchiveDocumentPath, error) {
-	archivePath, err := common.ResolveArchiveDocumentPath(rawPath)
+func resolveArchiveDocumentPath(rawPath string) (*archive.ArchiveDocumentPath, error) {
+	archivePath, err := archive.ResolveArchiveDocumentPath(rawPath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArchivePath, err)
 	}

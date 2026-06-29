@@ -1,8 +1,8 @@
-package common
+package recommendation
 
 import (
+	"DataArk/config"
 	"DataArk/discovery"
-	"DataArk/recommendation"
 	"context"
 	"encoding/json"
 	"errors"
@@ -63,26 +63,26 @@ type recommendationCandidateScore struct {
 }
 
 func DefaultRecommendationSettings(userID uint) RecommendationSettings {
-	dailyLimit := RECOMMENDATIONDAILYLIMIT
+	dailyLimit := config.RECOMMENDATIONDAILYLIMIT
 	if dailyLimit <= 0 {
 		dailyLimit = 10
 	}
-	candidateWindowDays := RECOMMENDATIONCANDIDATEWINDOWDAYS
+	candidateWindowDays := config.RECOMMENDATIONCANDIDATEWINDOWDAYS
 	if candidateWindowDays <= 0 {
 		candidateWindowDays = 30
 	}
-	explorationRate := RECOMMENDATIONEXPLORATIONRATE
+	explorationRate := config.RECOMMENDATIONEXPLORATIONRATE
 	if explorationRate < 0 {
 		explorationRate = 0
 	}
 	if explorationRate > 1 {
 		explorationRate = 1
 	}
-	timezone := strings.TrimSpace(RECOMMENDATIONTIMEZONE)
+	timezone := strings.TrimSpace(config.RECOMMENDATIONTIMEZONE)
 	if timezone == "" {
 		timezone = "Asia/Shanghai"
 	}
-	generationTime := strings.TrimSpace(RECOMMENDATIONGENERATIONTIME)
+	generationTime := strings.TrimSpace(config.RECOMMENDATIONGENERATIONTIME)
 	if generationTime == "" {
 		generationTime = "07:00"
 	}
@@ -93,34 +93,34 @@ func DefaultRecommendationSettings(userID uint) RecommendationSettings {
 		GenerationTime:      generationTime,
 		CandidateWindowDays: candidateWindowDays,
 		ExplorationRate:     explorationRate,
-		Enabled:             RECOMMENDATIONENABLED,
+		Enabled:             config.RECOMMENDATIONENABLED,
 	}
 }
 
-func ConfiguredEnrichmentProvider() recommendation.EnrichmentProvider {
-	if strings.TrimSpace(LLMCHATMODEL) == "" {
-		return recommendation.RuleBasedEnrichmentProvider{}
+func ConfiguredEnrichmentProvider() EnrichmentProvider {
+	if strings.TrimSpace(config.LLMCHATMODEL) == "" {
+		return RuleBasedEnrichmentProvider{}
 	}
 	return configuredOpenAICompatibleProvider()
 }
 
-func ConfiguredRecommendationReranker() recommendation.RerankProvider {
-	if strings.TrimSpace(LLMCHATMODEL) == "" {
+func ConfiguredRecommendationReranker() RerankProvider {
+	if strings.TrimSpace(config.LLMCHATMODEL) == "" {
 		return nil
 	}
 	return configuredOpenAICompatibleProvider()
 }
 
-func configuredOpenAICompatibleProvider() recommendation.OpenAICompatibleProvider {
-	timeout, err := time.ParseDuration(strings.TrimSpace(LLMTIMEOUT))
+func configuredOpenAICompatibleProvider() OpenAICompatibleProvider {
+	timeout, err := time.ParseDuration(strings.TrimSpace(config.LLMTIMEOUT))
 	if err != nil || timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	return recommendation.OpenAICompatibleProvider{
-		BaseURL:        LLMBASEURL,
-		APIKey:         LLMAPIKEY,
-		ChatModel:      LLMCHATMODEL,
-		EmbeddingModel: LLMEMBEDDINGMODEL,
+	return OpenAICompatibleProvider{
+		BaseURL:        config.LLMBASEURL,
+		APIKey:         config.LLMAPIKEY,
+		ChatModel:      config.LLMCHATMODEL,
+		EmbeddingModel: config.LLMEMBEDDINGMODEL,
 		Timeout:        timeout,
 	}
 }
@@ -283,7 +283,7 @@ func GenerateDailyRecommendations(ctx context.Context, userID uint, date string)
 	return GenerateDailyRecommendationsWithReranker(ctx, userID, date, ConfiguredRecommendationReranker())
 }
 
-func GenerateDailyRecommendationsWithReranker(ctx context.Context, userID uint, date string, reranker recommendation.RerankProvider) (*RecommendationDaySnapshot, error) {
+func GenerateDailyRecommendationsWithReranker(ctx context.Context, userID uint, date string, reranker RerankProvider) (*RecommendationDaySnapshot, error) {
 	return generateDailyRecommendationsWithOptions(ctx, userID, date, reranker, false)
 }
 
@@ -291,7 +291,7 @@ func RegenerateDailyRecommendations(ctx context.Context, userID uint, date strin
 	return generateDailyRecommendationsWithOptions(ctx, userID, date, ConfiguredRecommendationReranker(), true)
 }
 
-func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, date string, reranker recommendation.RerankProvider, force bool) (*RecommendationDaySnapshot, error) {
+func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, date string, reranker RerankProvider, force bool) (*RecommendationDaySnapshot, error) {
 	if db == nil || userID == 0 {
 		return &RecommendationDaySnapshot{Day: missingRecommendationDay(userID, normalizeRecommendationDate(date)), Items: []RecommendationItem{}}, nil
 	}
@@ -302,7 +302,7 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 	if !force && !settings.Enabled {
 		return GetRecommendationDaySnapshot(userID, date)
 	}
-	_, _ = EnrichPendingDiscoveryCandidates(ctx, RECOMMENDATIONCANDIDATEPOOLSIZE, ConfiguredEnrichmentProvider())
+	_, _ = EnrichPendingDiscoveryCandidates(ctx, config.RECOMMENDATIONCANDIDATEPOOLSIZE, ConfiguredEnrichmentProvider())
 	if force {
 		if err := deleteRecommendationDay(userID, date); err != nil {
 			return nil, err
@@ -324,8 +324,8 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 		return nil, err
 	}
 	selectionLimit := settings.DailyLimit
-	if reranker != nil && RECOMMENDATIONRERANKLIMIT > selectionLimit {
-		selectionLimit = RECOMMENDATIONRERANKLIMIT
+	if reranker != nil && config.RECOMMENDATIONRERANKLIMIT > selectionLimit {
+		selectionLimit = config.RECOMMENDATIONRERANKLIMIT
 	}
 	selected, err := selectDailyRecommendationCandidates(ctx, userID, *settings, profile, selectionLimit)
 	if err != nil {
@@ -493,7 +493,7 @@ func DeleteUserBlockRule(userID uint, ruleID uint) error {
 	}).Error
 }
 
-func EnrichPendingDiscoveryCandidates(ctx context.Context, limit int, provider recommendation.EnrichmentProvider) (int, error) {
+func EnrichPendingDiscoveryCandidates(ctx context.Context, limit int, provider EnrichmentProvider) (int, error) {
 	if db == nil {
 		return 0, nil
 	}
@@ -518,7 +518,7 @@ func EnrichPendingDiscoveryCandidates(ctx context.Context, limit int, provider r
 		}
 		if _, err := EnrichDiscoveryCandidate(ctx, candidate.ID, provider); err != nil {
 			if !isRuleBasedEnrichmentProvider(provider) {
-				if _, fallbackErr := EnrichDiscoveryCandidate(ctx, candidate.ID, recommendation.RuleBasedEnrichmentProvider{}); fallbackErr == nil {
+				if _, fallbackErr := EnrichDiscoveryCandidate(ctx, candidate.ID, RuleBasedEnrichmentProvider{}); fallbackErr == nil {
 					enriched++
 					continue
 				}
@@ -640,7 +640,7 @@ func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, 
 	return &profile, nil
 }
 
-func EnrichDiscoveryCandidate(ctx context.Context, candidateID uint, provider recommendation.EnrichmentProvider) (*DiscoveryCandidate, error) {
+func EnrichDiscoveryCandidate(ctx context.Context, candidateID uint, provider EnrichmentProvider) (*DiscoveryCandidate, error) {
 	if provider == nil {
 		return nil, errors.New("missing enrichment provider")
 	}
@@ -651,7 +651,7 @@ func EnrichDiscoveryCandidate(ctx context.Context, candidateID uint, provider re
 	if err := db.First(&candidate, candidateID).Error; err != nil {
 		return nil, err
 	}
-	input := recommendation.EnrichmentInput{
+	input := EnrichmentInput{
 		CandidateID: candidate.ID,
 		URL:         candidate.URL,
 		Title:       candidate.Title,
@@ -733,7 +733,7 @@ func selectDailyRecommendationCandidates(ctx context.Context, userID uint, setti
 	if selectionLimit <= 0 {
 		selectionLimit = 10
 	}
-	poolSize := RECOMMENDATIONCANDIDATEPOOLSIZE
+	poolSize := config.RECOMMENDATIONCANDIDATEPOOLSIZE
 	if poolSize < selectionLimit {
 		poolSize = selectionLimit * 10
 	}
@@ -888,7 +888,7 @@ func diversifyRecommendationCandidates(candidates []recommendationCandidateScore
 	return selected
 }
 
-func applyRecommendationReranker(ctx context.Context, userID uint, requestedCount int, candidates []recommendationCandidateScore, profile *UserRecommendationProfile, reranker recommendation.RerankProvider) ([]recommendationCandidateScore, string, string) {
+func applyRecommendationReranker(ctx context.Context, userID uint, requestedCount int, candidates []recommendationCandidateScore, profile *UserRecommendationProfile, reranker RerankProvider) ([]recommendationCandidateScore, string, string) {
 	if requestedCount <= 0 {
 		requestedCount = 10
 	}
@@ -898,7 +898,7 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 	if reranker == nil {
 		return trimRecommendationCandidates(candidates, requestedCount), "", ""
 	}
-	input := recommendation.RerankInput{
+	input := RerankInput{
 		UserID:          userID,
 		RequestedCount:  requestedCount,
 		Candidates:      buildRerankCandidates(candidates),
@@ -954,10 +954,10 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 	return reranked, strings.TrimSpace(result.Model), strings.TrimSpace(result.PromptVersion)
 }
 
-func buildRerankCandidates(candidates []recommendationCandidateScore) []recommendation.RerankCandidate {
-	items := make([]recommendation.RerankCandidate, 0, len(candidates))
+func buildRerankCandidates(candidates []recommendationCandidateScore) []RerankCandidate {
+	items := make([]RerankCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
-		items = append(items, recommendation.RerankCandidate{
+		items = append(items, RerankCandidate{
 			CandidateID:  candidate.Candidate.ID,
 			Title:        candidate.Candidate.Title,
 			Summary:      candidate.Candidate.Summary,
@@ -1012,15 +1012,6 @@ func normalizeRecommendationSettings(settings RecommendationSettings) Recommenda
 	return settings
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
 func clampScore(value float64) float64 {
 	if value < 0 {
 		return 0
@@ -1031,9 +1022,9 @@ func clampScore(value float64) float64 {
 	return value
 }
 
-func isRuleBasedEnrichmentProvider(provider recommendation.EnrichmentProvider) bool {
+func isRuleBasedEnrichmentProvider(provider EnrichmentProvider) bool {
 	switch provider.(type) {
-	case recommendation.RuleBasedEnrichmentProvider, *recommendation.RuleBasedEnrichmentProvider:
+	case RuleBasedEnrichmentProvider, *RuleBasedEnrichmentProvider:
 		return true
 	default:
 		return false

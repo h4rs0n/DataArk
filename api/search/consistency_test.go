@@ -1,7 +1,7 @@
 package search
 
 import (
-	"DataArk/common"
+	"DataArk/archive"
 	"context"
 	"os"
 	"path/filepath"
@@ -32,19 +32,19 @@ func (f *fakeArchiveIndexStore) RebuildArchiveIndex(context.Context) (int, []Arc
 }
 
 type fakeArchiveStatsStore struct {
-	stats             *common.ArchiveStatsSnapshot
-	refreshedStats    *common.ArchiveStatsSnapshot
+	stats             *archive.ArchiveStatsSnapshot
+	refreshedStats    *archive.ArchiveStatsSnapshot
 	refreshWasInvoked bool
 }
 
-func (f *fakeArchiveStatsStore) GetArchiveStats() (*common.ArchiveStatsSnapshot, error) {
+func (f *fakeArchiveStatsStore) GetArchiveStats() (*archive.ArchiveStatsSnapshot, error) {
 	if f.refreshWasInvoked && f.refreshedStats != nil {
 		return f.refreshedStats, nil
 	}
 	return f.stats, nil
 }
 
-func (f *fakeArchiveStatsStore) RefreshArchiveStats() (*common.ArchiveStatsSnapshot, error) {
+func (f *fakeArchiveStatsStore) RefreshArchiveStats() (*archive.ArchiveStatsSnapshot, error) {
 	f.refreshWasInvoked = true
 	return f.refreshedStats, nil
 }
@@ -63,9 +63,9 @@ func TestArchiveConsistencyCheckFindsRecoverableAndUnrecoverableIssues(t *testin
 		},
 	}
 	stats := &fakeArchiveStatsStore{
-		stats: &common.ArchiveStatsSnapshot{
+		stats: &archive.ArchiveStatsSnapshot{
 			TotalFiles: 1,
-			Sources: []common.ArchiveStatItem{
+			Sources: []archive.ArchiveStatItem{
 				{Source: "example.com", FileCount: 1},
 				{Source: "old.example", FileCount: 4},
 			},
@@ -118,12 +118,12 @@ func TestArchiveConsistencyRepairCarriesUnrecoverableLossAndRefreshesDerivedStor
 		rebuildDocuments: 1,
 	}
 	stats := &fakeArchiveStatsStore{
-		stats: &common.ArchiveStatsSnapshot{
+		stats: &archive.ArchiveStatsSnapshot{
 			TotalFiles: 0,
 		},
-		refreshedStats: &common.ArchiveStatsSnapshot{
+		refreshedStats: &archive.ArchiveStatsSnapshot{
 			TotalFiles: 1,
-			Sources: []common.ArchiveStatItem{
+			Sources: []archive.ArchiveStatItem{
 				{Source: "example.com", FileCount: 1},
 			},
 		},
