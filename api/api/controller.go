@@ -53,6 +53,7 @@ var (
 	listRecommendationDays       = common.ListRecommendationDays
 	createRecommendationDay      = common.CreateRecommendationDay
 	generateDailyRecommendations = common.GenerateDailyRecommendations
+	regenerateRecommendations    = common.RegenerateDailyRecommendations
 	recordRecommendationFeedback = common.RecordRecommendationFeedback
 	revertRecommendationFeedback = common.RevertRecommendationFeedback
 	listUserBlockRules           = common.ListUserBlockRules
@@ -522,7 +523,7 @@ func GenerateRecommendationDay(c *gin.Context) {
 	if !ok {
 		return
 	}
-	snapshot, err := generateDailyRecommendations(c.Request.Context(), userID, c.Query("date"))
+	snapshot, err := regenerateRecommendations(c.Request.Context(), userID, c.Query("date"))
 	if err != nil {
 		c.JSON(500, gin.H{"Status": "0", "Message": "生成推荐日报失败", "Error": err.Error()})
 		return

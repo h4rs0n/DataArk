@@ -258,6 +258,64 @@ func TestGenerateDailyRecommendationsFiltersHistoryAndBlocks(t *testing.T) {
 	}
 }
 
+func TestRegenerateDailyRecommendationsDiscardsExistingDay(t *testing.T) {
+	setupSQLiteDB(t)
+	settings := DefaultRecommendationSettings(15)
+	settings.DailyLimit = 1
+	settings.Enabled = false
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	first := createReadyCandidate(t, "https://first.example/manual", "First Manual", []string{"Go"}, "manual-first", 0.7, 0.5)
+	initial, err := RegenerateDailyRecommendations(context.Background(), 15, "2026-06-28")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(initial.Items) != 1 || initial.Items[0].CandidateID != first.ID {
+		t.Fatalf("initial snapshot = %#v", initial)
+	}
+	if _, _, err := RecordRecommendationFeedback(15, initial.Items[0].ID, RecommendationFeedbackValuable, nil); err != nil {
+		t.Fatal(err)
+	}
+	second := createReadyCandidate(t, "https://second.example/manual", "Second Manual", []string{"Go"}, "manual-second", 0.95, 0.9)
+	idempotent, err := GenerateDailyRecommendations(context.Background(), 15, "2026-06-28")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idempotent.Items) != 1 || idempotent.Items[0].CandidateID != first.ID {
+		t.Fatalf("regular generation should keep existing day: %#v", idempotent.Items)
+	}
+
+	regenerated, err := RegenerateDailyRecommendations(context.Background(), 15, "2026-06-28")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(regenerated.Items) != 1 || regenerated.Items[0].CandidateID != second.ID {
+		t.Fatalf("regenerated snapshot = %#v, want candidate %d", regenerated.Items, second.ID)
+	}
+	var itemCount int64
+	if err := db.Model(&RecommendationItem{}).Where("user_id = ? AND day_id = ?", 15, regenerated.Day.ID).Count(&itemCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if itemCount != 1 {
+		t.Fatalf("item count = %d, want 1", itemCount)
+	}
+	var oldItemCount int64
+	if err := db.Model(&RecommendationItem{}).Where("id = ?", initial.Items[0].ID).Count(&oldItemCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if oldItemCount != 0 {
+		t.Fatalf("old item count = %d, want 0", oldItemCount)
+	}
+	var feedbackCount int64
+	if err := db.Model(&RecommendationFeedback{}).Where("recommendation_item_id = ?", initial.Items[0].ID).Count(&feedbackCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if feedbackCount != 0 {
+		t.Fatalf("old feedback count = %d, want 0", feedbackCount)
+	}
+}
+
 func TestGenerateDailyRecommendationsUsesFeedbackProfile(t *testing.T) {
 	setupSQLiteDB(t)
 	settings := DefaultRecommendationSettings(10)

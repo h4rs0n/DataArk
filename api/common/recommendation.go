@@ -284,6 +284,14 @@ func GenerateDailyRecommendations(ctx context.Context, userID uint, date string)
 }
 
 func GenerateDailyRecommendationsWithReranker(ctx context.Context, userID uint, date string, reranker recommendation.RerankProvider) (*RecommendationDaySnapshot, error) {
+	return generateDailyRecommendationsWithOptions(ctx, userID, date, reranker, false)
+}
+
+func RegenerateDailyRecommendations(ctx context.Context, userID uint, date string) (*RecommendationDaySnapshot, error) {
+	return generateDailyRecommendationsWithOptions(ctx, userID, date, ConfiguredRecommendationReranker(), true)
+}
+
+func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, date string, reranker recommendation.RerankProvider, force bool) (*RecommendationDaySnapshot, error) {
 	if db == nil || userID == 0 {
 		return &RecommendationDaySnapshot{Day: missingRecommendationDay(userID, normalizeRecommendationDate(date)), Items: []RecommendationItem{}}, nil
 	}
@@ -291,10 +299,15 @@ func GenerateDailyRecommendationsWithReranker(ctx context.Context, userID uint, 
 	if err != nil {
 		return nil, err
 	}
-	if !settings.Enabled {
+	if !force && !settings.Enabled {
 		return GetRecommendationDaySnapshot(userID, date)
 	}
 	_, _ = EnrichPendingDiscoveryCandidates(ctx, RECOMMENDATIONCANDIDATEPOOLSIZE, ConfiguredEnrichmentProvider())
+	if force {
+		if err := deleteRecommendationDay(userID, date); err != nil {
+			return nil, err
+		}
+	}
 	day, err := CreateRecommendationDay(userID, date, settings.DailyLimit)
 	if err != nil {
 		return nil, err
@@ -358,6 +371,36 @@ func GenerateDailyRecommendationsWithReranker(ctx context.Context, userID uint, 
 		return nil, err
 	}
 	return GetRecommendationDaySnapshot(userID, day.RecommendationDate)
+}
+
+func deleteRecommendationDay(userID uint, date string) error {
+	if db == nil || userID == 0 {
+		return nil
+	}
+	date = normalizeRecommendationDate(date)
+	return db.Transaction(func(tx *gorm.DB) error {
+		var day RecommendationDay
+		result := tx.Where("user_id = ? AND recommendation_date = ?", userID, date).Limit(1).Find(&day)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		var itemIDs []uint
+		if err := tx.Model(&RecommendationItem{}).Where("day_id = ? AND user_id = ?", day.ID, userID).Pluck("id", &itemIDs).Error; err != nil {
+			return err
+		}
+		if len(itemIDs) > 0 {
+			if err := tx.Where("recommendation_item_id IN ?", itemIDs).Delete(&RecommendationFeedback{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("day_id = ? AND user_id = ?", day.ID, userID).Delete(&RecommendationItem{}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Where("id = ? AND user_id = ?", day.ID, userID).Delete(&RecommendationDay{}).Error
+	})
 }
 
 func RecordRecommendationFeedback(userID uint, recommendationItemID uint, action string, targets []RecommendationBlockTarget) (*RecommendationFeedback, []UserBlockRule, error) {

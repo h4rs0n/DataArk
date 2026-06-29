@@ -5,7 +5,7 @@ COPY makefile /DataArk/makefile
 WORKDIR /DataArk
 RUN make web
 
-FROM golang:1.23 AS backend-builder
+FROM golang:1.26 AS backend-builder
 
 COPY api /DataArk/api
 COPY makefile /DataArk/makefile
