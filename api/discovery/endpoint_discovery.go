@@ -38,6 +38,7 @@ type EndpointDiscoveryResult struct {
 type endpointLinkSet struct {
 	feeds      []string
 	sitemaps   []string
+	historical []string
 	candidates []discoveredCandidate
 }
 
@@ -112,6 +113,20 @@ func (service EndpointDiscoveryService) DiscoverHomepage(ctx context.Context, si
 			enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueFetchSource(ctx, endpoint.ID))
 		}
 	}
+	backfillDue := false
+	if _, created, stateErr := ensureBackfillState(site.ID, BackfillStrategySitemap, sitemapURLs, clock.Now()); stateErr != nil {
+		return result, stateErr
+	} else {
+		backfillDue = backfillDue || created
+	}
+	if _, created, stateErr := ensureBackfillState(site.ID, BackfillStrategyArchive, links.historical, clock.Now()); stateErr != nil {
+		return result, stateErr
+	} else {
+		backfillDue = backfillDue || created
+	}
+	if backfillDue && service.Queue != nil {
+		enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueBackfillSite(ctx, site.ID))
+	}
 	return result, errors.Join(enqueueErrors...)
 }
 
@@ -133,6 +148,11 @@ func (service EndpointDiscoveryService) SaveNestedSitemaps(ctx context.Context, 
 			enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueFetchSource(ctx, endpoint.ID))
 		}
 	}
+	if _, scheduled, err := ensureBackfillState(site.ID, BackfillStrategySitemap, urls, clock.Now()); err != nil {
+		return err
+	} else if scheduled && service.Queue != nil {
+		enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueBackfillSite(ctx, site.ID))
+	}
 	return errors.Join(enqueueErrors...)
 }
 
@@ -151,6 +171,7 @@ func discoverHomepageEndpoints(body []byte, pageURL string, siteRootURL string) 
 	}
 	feeds := make(map[string]struct{})
 	sitemaps := make(map[string]struct{})
+	historical := make(map[string]struct{})
 	candidates := make(map[string]discoveredCandidate)
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {
@@ -169,6 +190,10 @@ func discoverHomepageEndpoints(body []byte, pageURL string, siteRootURL string) 
 					}
 				}
 			case "a":
+				if resolved, ok := resolveWebURL(attrValue(node, "href"), baseURL); ok && sameLogicalHost(resolved, rootURL) && isHistoricalNavigation(resolved.Path, compactNodeText(node, 160)) {
+					historical[resolved.String()] = struct{}{}
+					break
+				}
 				if articleURL, ok := sameHostArticleURL(attrValue(node, "href"), rootURL); ok {
 					if isNonArticleNavigation(articleURL, compactNodeText(node, 160)) {
 						break
@@ -186,7 +211,7 @@ func discoverHomepageEndpoints(body []byte, pageURL string, siteRootURL string) 
 		}
 	}
 	walk(document)
-	result := endpointLinkSet{feeds: sortedKeys(feeds), sitemaps: sortedKeys(sitemaps), candidates: make([]discoveredCandidate, 0, len(candidates))}
+	result := endpointLinkSet{feeds: sortedKeys(feeds), sitemaps: sortedKeys(sitemaps), historical: sortedKeys(historical), candidates: make([]discoveredCandidate, 0, len(candidates))}
 	for _, candidate := range candidates {
 		result.candidates = append(result.candidates, candidate)
 	}
@@ -242,7 +267,7 @@ func parseSitemapDocument(body []byte, siteRootURL string) ([]discoveredCandidat
 		}
 		candidates = append(candidates, discoveredCandidate{
 			URL: normalizedURL, PublishedAt: parseFeedTime(item.LastMod),
-			DiscoveryMethod: DiscoveryMethodSitemap, MetadataConfidence: metadataConfidenceForMethod(DiscoveryMethodSitemap),
+			DiscoveryMethod: DiscoveryMethodSitemap, MetadataConfidence: metadataConfidenceForMethod(DiscoveryMethodSitemap), PublishedConfidence: "sitemap_lastmod",
 		})
 	}
 	nested := make([]string, 0, len(sitemap.Sitemaps))

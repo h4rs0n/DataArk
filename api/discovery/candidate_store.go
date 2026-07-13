@@ -69,7 +69,8 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 				EnrichmentStatus:   DiscoveryCandidateEnrichmentStatusPending,
 				MetadataConfidence: confidence, DedupeKey: articleURL,
 				Score: scoreDiscoveredCandidate(candidate), PublishedAt: candidate.PublishedAt,
-				LastSeenAt: now, FirstSeenAt: &now, CreatedAt: now, UpdatedAt: now,
+				PublishedConfidence: candidate.PublishedConfidence,
+				LastSeenAt:          now, FirstSeenAt: &now, CreatedAt: now, UpdatedAt: now,
 			}
 			if err := tx.Create(&record).Error; err != nil {
 				return err
@@ -93,6 +94,10 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 			if candidate.PublishedAt != nil && (record.PublishedAt == nil || trusted) {
 				updates["published_at"] = candidate.PublishedAt
 				record.PublishedAt = candidate.PublishedAt
+				if candidate.PublishedConfidence != "" {
+					updates["published_confidence"] = candidate.PublishedConfidence
+					record.PublishedConfidence = candidate.PublishedConfidence
+				}
 			}
 			if confidence > record.MetadataConfidence {
 				updates["metadata_confidence"] = confidence

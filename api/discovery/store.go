@@ -48,13 +48,14 @@ type DiscoveryFetchResult struct {
 }
 
 type discoveredCandidate struct {
-	URL                string
-	Title              string
-	Summary            string
-	PublishedAt        *time.Time
-	DiscoveryMethod    string
-	SourcePageURL      string
-	MetadataConfidence int
+	URL                 string
+	Title               string
+	Summary             string
+	PublishedAt         *time.Time
+	PublishedConfidence string
+	DiscoveryMethod     string
+	SourcePageURL       string
+	MetadataConfidence  int
 }
 
 func ListDiscoverySources() ([]DiscoverySource, error) {
@@ -357,6 +358,7 @@ func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discove
 			candidates[index].DiscoveryMethod = DiscoveryMethodFeed
 			candidates[index].SourcePageURL = source.URL
 			candidates[index].MetadataConfidence = metadataConfidenceForMethod(DiscoveryMethodFeed)
+			candidates[index].PublishedConfidence = "feed"
 		}
 		return scoreAndLimitCandidates(candidates), 1, 0, &fetchResult, err
 	case DiscoverySourceTypeSite:

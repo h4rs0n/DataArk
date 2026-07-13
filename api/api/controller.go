@@ -51,6 +51,7 @@ var (
 	fetchDiscoverySourceByID     = discovery.FetchDiscoverySourceByID
 	listDiscoveryCandidates      = discovery.ListDiscoveryCandidates
 	getDiscoverySiteGraph        = discovery.GetSiteGraph
+	listBackfillCoverage         = discovery.ListBackfillCoverage
 	getDiscoveryCandidate        = discovery.GetDiscoveryCandidate
 	markCandidateRead            = discovery.MarkDiscoveryCandidateRead
 	markCandidateIgnored         = discovery.MarkDiscoveryCandidateIgnored
@@ -88,6 +89,7 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 			return err
 		},
 		ScanBlogroll:  discovery.RunScanBlogrollJob,
+		BackfillSite:  discovery.RunBackfillSiteJob,
 		GenerateDaily: recommendation.RunGenerateDailyRecommendationJob,
 	}
 	recover := func(ctx context.Context, queue jobqueue.JobEnqueuer) error {
@@ -463,6 +465,19 @@ func GetDiscoverySiteGraph(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询站点图谱成功", "Data": graph})
+}
+
+func GetDiscoveryBackfillCoverage(c *gin.Context) {
+	siteID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	coverage, err := listBackfillCoverage(siteID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "查询历史覆盖失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询历史覆盖成功", "Data": coverage})
 }
 
 func ListDiscoveryCandidates(c *gin.Context) {
@@ -1101,6 +1116,7 @@ func WebStarter(debugMode bool) {
 		protected.DELETE("/discovery/sources/:id", DeleteDiscoverySource)
 		protected.POST("/discovery/sources/:id/fetch", FetchDiscoverySource)
 		protected.GET("/discovery/sites/:id/graph", GetDiscoverySiteGraph)
+		protected.GET("/discovery/sites/:id/backfill", GetDiscoveryBackfillCoverage)
 		protected.GET("/discovery/candidates", ListDiscoveryCandidates)
 		protected.POST("/discovery/candidates/:id/read", MarkDiscoveryCandidateRead)
 		protected.POST("/discovery/candidates/:id/archive", ArchiveDiscoveryCandidate)

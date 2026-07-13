@@ -117,6 +117,7 @@ type DiscoveryBackfillState struct {
 	DuplicateCount   uint           `json:"duplicateCount" gorm:"not null;default:0"`
 	FailureCount     uint           `json:"failureCount" gorm:"not null;default:0"`
 	LastSuccessAt    *time.Time     `json:"lastSuccessAt"`
+	LastBatchAt      *time.Time     `json:"lastBatchAt"`
 	NextBatchAt      *time.Time     `json:"nextBatchAt" gorm:"index"`
 	CompletionReason string         `json:"completionReason" gorm:"size:128"`
 	CreatedAt        time.Time      `json:"createdAt"`

@@ -34,6 +34,8 @@ func ParseFlag() {
 	DiscoveryMaxGraphDepthFlag := stdflag.Int("discover-max-graph-depth", 3, "Assign maximum automatic blog graph depth")
 	DiscoveryMaxBlogrollTargetsFlag := stdflag.Int("discover-max-blogroll-targets", 50, "Assign maximum active blogroll targets per site scan")
 	DiscoveryDailyObservingLimitFlag := stdflag.Int("discover-daily-observing-limit", 100, "Assign maximum new observing sites activated per day")
+	DiscoveryBackfillBatchSizeFlag := stdflag.Int("discover-backfill-batch-size", 1, "Assign bounded pages processed per historical backfill job")
+	DiscoveryBackfillMaxIntervalFlag := stdflag.String("discover-backfill-max-interval", "168h", "Assign maximum wait between unfinished historical backfill batches")
 	RecommendationEnabledFlag := stdflag.Bool("recommend-enabled", false, "Enable LLM daily recommendations")
 	RecommendationDailyLimitFlag := stdflag.Int("recommend-daily-limit", 10, "Assign default daily recommendation count")
 	RecommendationTimezoneFlag := stdflag.String("recommend-timezone", "Asia/Shanghai", "Assign recommendation timezone")
@@ -77,6 +79,8 @@ func ParseFlag() {
 	config.DISCOVERYMAXGRAPHDEPTH = *DiscoveryMaxGraphDepthFlag
 	config.DISCOVERYMAXBLOGROLLTARGETS = *DiscoveryMaxBlogrollTargetsFlag
 	config.DISCOVERYDAILYOBSERVINGLIMIT = *DiscoveryDailyObservingLimitFlag
+	config.DISCOVERYBACKFILLBATCHSIZE = *DiscoveryBackfillBatchSizeFlag
+	config.DISCOVERYBACKFILLMAXINTERVAL = strings.TrimSpace(*DiscoveryBackfillMaxIntervalFlag)
 	config.RECOMMENDATIONENABLED = *RecommendationEnabledFlag
 	config.RECOMMENDATIONDAILYLIMIT = *RecommendationDailyLimitFlag
 	config.RECOMMENDATIONTIMEZONE = strings.TrimSpace(*RecommendationTimezoneFlag)

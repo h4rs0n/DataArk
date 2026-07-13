@@ -534,6 +534,28 @@ func TestGetDiscoverySiteGraphReturnsEvidenceAndNotFound(t *testing.T) {
 	}
 }
 
+func TestGetDiscoveryBackfillCoverageReturnsCursorAndStopReason(t *testing.T) {
+	oldList := listBackfillCoverage
+	t.Cleanup(func() { listBackfillCoverage = oldList })
+	listBackfillCoverage = func(siteID uint) ([]discovery.BackfillCoverage, error) {
+		if siteID != 2 {
+			return nil, errors.New("fixture failure")
+		}
+		return []discovery.BackfillCoverage{{
+			State:               discovery.DiscoveryBackfillState{SiteID: 2, Strategy: discovery.BackfillStrategyArchive, Cursor: `{"pending":["page-2"],"visited":["page-1"]}`, Status: discovery.BackfillStatusPending, CompletionReason: ""},
+			EstimatedCompletion: 0.5, PendingURLs: 1, VisitedURLs: 1,
+		}}, nil
+	}
+	response := performPathControllerRequest(http.MethodGet, "/backfill/:id", "/backfill/2", GetDiscoveryBackfillCoverage)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "page-2") || !strings.Contains(response.Body.String(), "estimatedCompletion") {
+		t.Fatalf("coverage response status=%d body=%s", response.Code, response.Body.String())
+	}
+	response = performPathControllerRequest(http.MethodGet, "/backfill/:id", "/backfill/3", GetDiscoveryBackfillCoverage)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("coverage error status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestWebStarterInitializesAndRunsRouter(t *testing.T) {
 	oldInitDB := initDatabase
 	oldCreateIndex := createSearchIndex

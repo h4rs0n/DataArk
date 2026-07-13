@@ -255,7 +255,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 6 || migrations[len(migrations)-1].Version != 6 {
+	if len(migrations) != 7 || migrations[len(migrations)-1].Version != 7 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -303,6 +303,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"metadata_confidence", "provenance remain useful"} {
 		if !strings.Contains(string(recentIngestion), required) {
 			t.Fatalf("recent ingestion migration missing %q", required)
+		}
+	}
+	historicalBackfill, err := appmigrations.FS.ReadFile("000007_historical_backfill_observability.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"published_confidence", "last_batch_at", "retained on rollback"} {
+		if !strings.Contains(string(historicalBackfill), required) {
+			t.Fatalf("historical backfill migration missing %q", required)
 		}
 	}
 }
