@@ -42,6 +42,8 @@ make build
 ```
 备份功能依赖 `pg_dump` 与 `psql` 命令；手动部署时请安装 PostgreSQL client，并确保 `-mdump` 指向 Meilisearch 的共享 dump 目录（对应 Meilisearch 的 `MEILI_DUMP_DIR` 或 `--dump-dir`）。
 
+内容发现可通过 `-discover-interval`、`-discover-timeout`、`-discover-max` 和 `-discover-ua` 配置；将 `-discover-interval` 设为 `0` 可关闭后台调度。安全抓取和逐端点调度还支持 `-discover-host-concurrency`、`-discover-min-request-interval`、`-discover-robots-ttl`、`-discover-max-redirects`、`-discover-active-feed-interval`、`-discover-observing-interval`、`-discover-dormant-interval`、`-discover-backoff-base` 和 `-discover-backoff-max`。默认活跃 Feed 最迟 24 小时、观察站点最迟 7 天、仍可访问的休眠站点最迟 30 天再次检查；历史低命中本身不会停抓。
+
 
 
 ## 反馈与贡献

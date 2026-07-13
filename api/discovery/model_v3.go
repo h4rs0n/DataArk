@@ -83,6 +83,11 @@ type DiscoveryFetchRun struct {
 	FinishedAt     *time.Time       `json:"finishedAt"`
 	Status         string           `json:"status" gorm:"index;not null;size:32"`
 	HTTPStatus     int              `json:"httpStatus"`
+	FinalURL       string           `json:"finalUrl" gorm:"size:2048"`
+	ContentType    string           `json:"contentType" gorm:"size:255"`
+	ETag           string           `json:"etag" gorm:"column:etag;size:1024"`
+	LastModified   string           `json:"lastModified" gorm:"size:1024"`
+	RobotsStatus   string           `json:"robotsStatus" gorm:"size:32"`
 	NotModified    bool             `json:"notModified" gorm:"not null;default:false"`
 	NewCount       int              `json:"newCount" gorm:"not null;default:0"`
 	DuplicateCount int              `json:"duplicateCount" gorm:"not null;default:0"`

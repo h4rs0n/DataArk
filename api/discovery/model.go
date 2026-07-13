@@ -17,7 +17,7 @@ type DiscoverySource struct {
 	EndpointType  string     `json:"endpointType" gorm:"index;not null;default:legacy;size:32"`
 	Priority      int        `json:"priority" gorm:"not null;default:0"`
 	Enabled       bool       `json:"enabled" gorm:"not null;default:true"`
-	ETag          string     `json:"etag" gorm:"size:1024"`
+	ETag          string     `json:"etag" gorm:"column:etag;size:1024"`
 	LastModified  string     `json:"lastModified" gorm:"size:1024"`
 	FailureCount  int        `json:"failureCount" gorm:"not null;default:0"`
 	NextFetchAt   *time.Time `json:"nextFetchAt"`

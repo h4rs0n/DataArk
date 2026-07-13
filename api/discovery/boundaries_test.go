@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +36,10 @@ type recordedJobs struct {
 
 type recordingJobEnqueuer struct {
 	store *recordedJobs
+}
+
+func allowTestURL(_ context.Context, rawURL string) (*neturl.URL, error) {
+	return neturl.Parse(rawURL)
 }
 
 func (queue recordingJobEnqueuer) enqueue(key string) error {
@@ -89,6 +94,7 @@ func TestHTTPClientFetcherSupportsValidatorsRedirectsAndBodyLimits(t *testing.T)
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests++
+		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		switch request.URL.Path {
 		case "/redirect":
 			http.Redirect(writer, request, "/etag", http.StatusFound)
@@ -109,8 +115,8 @@ func TestHTTPClientFetcherSupportsValidatorsRedirectsAndBodyLimits(t *testing.T)
 	t.Cleanup(server.Close)
 
 	clock := &advancingClock{now: time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)}
-	fetcher := HTTPClientFetcher{Client: server.Client(), Clock: clock}
-	first, err := fetcher.Fetch(context.Background(), FetchRequest{URL: server.URL + "/redirect", MaxBytes: 32})
+	fetcher := HTTPClientFetcher{Client: server.Client(), Clock: clock, Validator: allowTestURL}
+	first, err := fetcher.Fetch(context.Background(), FetchRequest{URL: server.URL + "/redirect", Kind: FetchKindHTML, MaxBytes: 32})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +130,7 @@ func TestHTTPClientFetcherSupportsValidatorsRedirectsAndBodyLimits(t *testing.T)
 	second, err := fetcher.Fetch(context.Background(), FetchRequest{
 		URL:      server.URL + "/etag",
 		ETag:     first.ETag,
+		Kind:     FetchKindHTML,
 		MaxBytes: 32,
 	})
 	if err != nil {
@@ -136,7 +143,7 @@ func TestHTTPClientFetcherSupportsValidatorsRedirectsAndBodyLimits(t *testing.T)
 		t.Fatalf("request count = %d, want redirect + two fetches", requests)
 	}
 
-	_, err = fetcher.Fetch(context.Background(), FetchRequest{URL: server.URL + "/large", MaxBytes: 4})
+	_, err = fetcher.Fetch(context.Background(), FetchRequest{URL: server.URL + "/large", Kind: FetchKindHTML, MaxBytes: 4})
 	if !errors.Is(err, ErrHTTPFetchBodyTooLarge) {
 		t.Fatalf("large response error = %v", err)
 	}

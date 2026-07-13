@@ -255,7 +255,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 3 || migrations[len(migrations)-1].Version != 3 {
+	if len(migrations) != 4 || migrations[len(migrations)-1].Version != 4 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -277,6 +277,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	down := strings.Split(sql, "-- +goose Down")
 	if len(down) != 2 || strings.Contains(strings.ToUpper(down[1]), "DROP TABLE") || strings.Contains(strings.ToUpper(down[1]), "DROP COLUMN") {
 		t.Fatal("v3 Down migration must preserve additive data")
+	}
+	observability, err := appmigrations.FS.ReadFile("000004_discovery_fetch_observability.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"final_url", "content_type", "robots_status", "retained on rollback"} {
+		if !strings.Contains(string(observability), required) {
+			t.Fatalf("fetch observability migration missing %q", required)
+		}
 	}
 }
 

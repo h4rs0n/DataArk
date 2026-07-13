@@ -37,7 +37,7 @@ func newDeterministicSiteWorld(t *testing.T) *deterministicSiteWorld {
 	world.A.Start()
 	world.B.Start()
 	world.C.Start()
-	world.Fetcher = HTTPClientFetcher{Client: world.A.Client(), Clock: SystemClock{}}
+	world.Fetcher = HTTPClientFetcher{Client: world.A.Client(), Clock: SystemClock{}, Validator: allowTestURL}
 	t.Cleanup(func() {
 		world.A.Close()
 		world.B.Close()
@@ -141,7 +141,16 @@ func TestDeterministicSiteWorldCoversDiscoveryScenarios(t *testing.T) {
 
 	fetch := func(rawURL string, etag string, lastModified string) FetchResult {
 		t.Helper()
-		response, err := world.Fetcher.Fetch(ctx, FetchRequest{URL: rawURL, ETag: etag, LastModified: lastModified, MaxBytes: 128 << 10})
+		kind := FetchKindHTML
+		switch {
+		case strings.Contains(rawURL, "robots.txt"):
+			kind = FetchKindRobots
+		case strings.Contains(rawURL, "sitemap.xml"):
+			kind = FetchKindSitemap
+		case strings.Contains(rawURL, "feed.xml"), strings.Contains(rawURL, "conditional.xml"):
+			kind = FetchKindFeed
+		}
+		response, err := world.Fetcher.Fetch(ctx, FetchRequest{URL: rawURL, ETag: etag, LastModified: lastModified, Kind: kind, MaxBytes: 128 << 10})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -96,13 +96,13 @@ func TestArchiveRankingsTolerateMissingDocumentMetadata(t *testing.T) {
 
 func TestDiscoverySourceFetchAndCandidateState(t *testing.T) {
 	setupSQLiteDB(t)
-	oldFetcher := fetchDiscoveryBody
-	fetchDiscoveryBody = func(_ context.Context, _ string) ([]byte, string, error) {
-		return []byte(`<?xml version="1.0"?>
-<rss version="2.0"><channel><item><title>First Post</title><link>https://example.com/posts/first</link><description>Useful summary</description><pubDate>Mon, 02 Jan 2006 15:04:05 -0700</pubDate></item></channel></rss>`), "application/rss+xml", nil
+	oldFetcher := fetchDiscoveryRequest
+	fetchDiscoveryRequest = func(_ context.Context, _ FetchRequest) (FetchResult, error) {
+		return FetchResult{StatusCode: 200, ContentType: "application/rss+xml", Body: []byte(`<?xml version="1.0"?>
+<rss version="2.0"><channel><item><title>First Post</title><link>https://example.com/posts/first</link><description>Useful summary</description><pubDate>Mon, 02 Jan 2006 15:04:05 -0700</pubDate></item></channel></rss>`)}, nil
 	}
 	t.Cleanup(func() {
-		fetchDiscoveryBody = oldFetcher
+		fetchDiscoveryRequest = oldFetcher
 	})
 
 	source, err := CreateDiscoverySource("Feed", "https://example.com/feed.xml", DiscoverySourceTypeFeed, true)

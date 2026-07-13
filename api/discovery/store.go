@@ -9,16 +9,13 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"math"
-	"net/http"
 	neturl "net/url"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/gocolly/colly/v2"
 	"github.com/mmcdole/gofeed"
 	"golang.org/x/net/html"
 	"gorm.io/gorm"
@@ -36,12 +33,11 @@ const (
 	DiscoveryCandidateStatusArchived = "archived"
 
 	DiscoveryCandidateEnrichmentStatusPending = "pending"
-
-	discoveryMaxBodyBytes = 4 << 20
 )
 
-var validateDiscoveryFetchURL = ValidateFetchURL
-var fetchDiscoveryBody = fetchDiscoveryURL
+var fetchDiscoveryRequest = func(ctx context.Context, request FetchRequest) (FetchResult, error) {
+	return ConfiguredHTTPFetcher().Fetch(ctx, request)
+}
 
 type DiscoveryFetchResult struct {
 	SourceID    uint   `json:"sourceId"`
@@ -78,10 +74,16 @@ func CreateDiscoverySource(name string, rawURL string, sourceType string, enable
 		name = hostLabel(normalizedURL)
 	}
 	source := &DiscoverySource{
-		Name:    strings.TrimSpace(name),
-		URL:     normalizedURL,
-		Type:    sourceType,
-		Enabled: enabled,
+		Name:         strings.TrimSpace(name),
+		URL:          normalizedURL,
+		Type:         sourceType,
+		EndpointType: legacyEndpointType(sourceType),
+		Enabled:      enabled,
+	}
+	if enabled {
+		now := discoveryClock.Now()
+		source.NextDueAt = &now
+		source.NextFetchAt = &now
 	}
 	if db == nil {
 		return source, nil
@@ -105,10 +107,11 @@ func UpdateDiscoverySource(id uint, name string, rawURL string, sourceType strin
 		return nil, err
 	}
 	updates := map[string]interface{}{
-		"name":    strings.TrimSpace(name),
-		"url":     normalizedURL,
-		"type":    normalizeDiscoverySourceType(sourceType),
-		"enabled": enabled,
+		"name":          strings.TrimSpace(name),
+		"url":           normalizedURL,
+		"type":          normalizeDiscoverySourceType(sourceType),
+		"endpoint_type": legacyEndpointType(sourceType),
+		"enabled":       enabled,
 	}
 	if strings.TrimSpace(name) == "" {
 		updates["name"] = hostLabel(normalizedURL)
@@ -179,36 +182,26 @@ func FetchDiscoverySource(ctx context.Context, source *DiscoverySource) (*Discov
 		return nil, errors.New("missing discovery source")
 	}
 	result := &DiscoveryFetchResult{SourceID: source.ID}
-	candidates, feedsFound, linksFound, err := discoverCandidates(ctx, source)
+	startedAt := discoveryClock.Now()
+	candidates, feedsFound, linksFound, fetchResult, err := discoverCandidates(ctx, source)
 	result.Discovered = len(candidates)
 	result.FeedsFound = feedsFound
 	result.LinksFound = linksFound
-	now := time.Now()
-
 	if err != nil {
 		result.SourceError = err.Error()
-		if db != nil {
-			_ = db.Model(source).Updates(map[string]interface{}{
-				"last_fetched_at": &now,
-				"last_error":      err.Error(),
-			}).Error
-		}
+		_ = finishDiscoveryFetch(source, result, fetchResult, startedAt, err)
 		return result, err
 	}
 
 	for _, candidate := range candidates {
 		if err := upsertDiscoveryCandidate(*source, candidate); err != nil {
+			_ = finishDiscoveryFetch(source, result, fetchResult, startedAt, err)
 			return result, err
 		}
 		result.Stored++
 	}
-	if db != nil {
-		if err := db.Model(source).Updates(map[string]interface{}{
-			"last_fetched_at": &now,
-			"last_error":      "",
-		}).Error; err != nil {
-			return result, err
-		}
+	if err := finishDiscoveryFetch(source, result, fetchResult, startedAt, nil); err != nil {
+		return result, err
 	}
 	return result, nil
 }
@@ -276,15 +269,29 @@ func NormalizeDiscoveryURL(rawURL string) (string, error) {
 	return parsedURL.String(), nil
 }
 
-func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discoveredCandidate, int, int, error) {
+func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discoveredCandidate, int, int, *FetchResult, error) {
 	switch normalizeDiscoverySourceType(source.Type) {
 	case DiscoverySourceTypeFeed, DiscoverySourceTypeRSSHub:
-		candidates, err := fetchFeedCandidates(ctx, source.URL)
-		return scoreAndLimitCandidates(candidates), 1, 0, err
+		fetchResult, err := fetchDiscoveryRequest(ctx, FetchRequest{
+			URL: source.URL, ETag: source.ETag, LastModified: source.LastModified,
+			Kind: FetchKindFeed,
+		})
+		if err != nil {
+			return nil, 0, 0, nil, err
+		}
+		if fetchResult.NotModified {
+			return nil, 1, 0, &fetchResult, nil
+		}
+		if fetchResult.StatusCode < 200 || fetchResult.StatusCode >= 300 {
+			return nil, 0, 0, &fetchResult, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, fetchResult.StatusCode)
+		}
+		candidates, err := parseFeedCandidates(fetchResult.Body)
+		return scoreAndLimitCandidates(candidates), 1, 0, &fetchResult, err
 	case DiscoverySourceTypeSite:
-		return fetchSiteCandidates(ctx, source.URL)
+		candidates, feeds, links, err := fetchSiteCandidates(ctx, source.URL)
+		return candidates, feeds, links, nil, err
 	default:
-		return nil, 0, 0, errors.New("unsupported discovery source type")
+		return nil, 0, 0, nil, errors.New("unsupported discovery source type")
 	}
 }
 
@@ -313,11 +320,14 @@ func fetchSiteCandidates(ctx context.Context, rawURL string) ([]discoveredCandid
 }
 
 func fetchFeedCandidates(ctx context.Context, rawURL string) ([]discoveredCandidate, error) {
-	body, _, err := fetchDiscoveryBody(ctx, rawURL)
+	result, err := fetchDiscoveryRequest(ctx, FetchRequest{URL: rawURL, Kind: FetchKindFeed})
 	if err != nil {
 		return nil, err
 	}
-	return parseFeedCandidates(body)
+	if result.StatusCode < 200 || result.StatusCode >= 300 {
+		return nil, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, result.StatusCode)
+	}
+	return parseFeedCandidates(result.Body)
 }
 
 func parseFeedCandidates(body []byte) ([]discoveredCandidate, error) {
@@ -355,9 +365,12 @@ func fetchSitemapCandidates(ctx context.Context, baseURL *neturl.URL) ([]discove
 	sitemapURL.Path = "/sitemap.xml"
 	sitemapURL.RawQuery = ""
 	sitemapURL.Fragment = ""
-	body, _, err := fetchDiscoveryURL(ctx, sitemapURL.String())
+	result, err := fetchDiscoveryRequest(ctx, FetchRequest{URL: sitemapURL.String(), Kind: FetchKindSitemap})
 	if err != nil {
 		return nil, err
+	}
+	if result.StatusCode < 200 || result.StatusCode >= 300 {
+		return nil, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, result.StatusCode)
 	}
 
 	var sitemap struct {
@@ -369,7 +382,7 @@ func fetchSitemapCandidates(ctx context.Context, baseURL *neturl.URL) ([]discove
 			Loc string `xml:"loc"`
 		} `xml:"sitemap"`
 	}
-	if err := xml.Unmarshal(body, &sitemap); err != nil {
+	if err := xml.Unmarshal(result.Body, &sitemap); err != nil {
 		return nil, err
 	}
 	candidates := make([]discoveredCandidate, 0)
@@ -387,129 +400,47 @@ func fetchSitemapCandidates(ctx context.Context, baseURL *neturl.URL) ([]discove
 	return candidates, nil
 }
 
-func fetchDiscoveryURL(ctx context.Context, rawURL string) ([]byte, string, error) {
-	timeout, err := time.ParseDuration(strings.TrimSpace(config.DISCOVERYREQUESTTIMEOUT))
-	if err != nil || timeout <= 0 {
-		timeout = 12 * time.Second
-	}
-	requestCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	validatedURL, err := validateDiscoveryFetchURL(requestCtx, rawURL)
-	if err != nil {
-		return nil, "", err
-	}
-
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, validatedURL.String(), nil)
-	if err != nil {
-		return nil, "", err
-	}
-	userAgent := strings.TrimSpace(config.DISCOVERYUSERAGENT)
-	if userAgent == "" {
-		userAgent = "DataArkDiscovery/1.0"
-	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.9, */*;q=0.1")
-
-	redirects := 0
-	client := &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			redirects++
-			if redirects > 5 {
-				return errors.New("too many discovery redirects")
-			}
-			_, err := validateDiscoveryFetchURL(requestCtx, req.URL.String())
-			return err
-		},
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, "", fmt.Errorf("discovery request returned status %d", resp.StatusCode)
-	}
-	contentType := resp.Header.Get("Content-Type")
-	body, err := io.ReadAll(io.LimitReader(resp.Body, discoveryMaxBodyBytes))
-	if err != nil {
-		return nil, "", err
-	}
-	return body, contentType, nil
-}
-
 func crawlSiteLinks(ctx context.Context, rawURL string) ([]string, []string, error) {
 	baseURL, err := neturl.Parse(rawURL)
 	if err != nil {
 		return nil, nil, err
 	}
-	if _, err := validateDiscoveryFetchURL(ctx, rawURL); err != nil {
-		return nil, nil, err
-	}
-
 	feedSet := make(map[string]struct{})
 	articleSet := make(map[string]struct{})
-	timeout, err := time.ParseDuration(strings.TrimSpace(config.DISCOVERYREQUESTTIMEOUT))
-	if err != nil || timeout <= 0 {
-		timeout = 12 * time.Second
-	}
-	userAgent := strings.TrimSpace(config.DISCOVERYUSERAGENT)
-	if userAgent == "" {
-		userAgent = "DataArkDiscovery/1.0"
-	}
 	maxPages := config.DISCOVERYMAXCANDIDATES
 	if maxPages <= 0 {
 		maxPages = 50
 	}
 
-	collector := colly.NewCollector(
-		colly.AllowedDomains(baseURL.Hostname()),
-		colly.MaxDepth(2),
-		colly.UserAgent(userAgent),
-	)
-	collector.SetRequestTimeout(timeout)
-	_ = collector.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: 2, Delay: time.Second})
-
-	visited := 0
-	var firstErr error
-	collector.OnRequest(func(request *colly.Request) {
-		if _, err := validateDiscoveryFetchURL(ctx, request.URL.String()); err != nil {
-			if firstErr == nil {
-				firstErr = err
+	queue := []string{rawURL}
+	seen := make(map[string]struct{})
+	for len(queue) > 0 && len(seen) < maxPages {
+		pageURL := queue[0]
+		queue = queue[1:]
+		if _, exists := seen[pageURL]; exists {
+			continue
+		}
+		seen[pageURL] = struct{}{}
+		result, fetchErr := fetchDiscoveryRequest(ctx, FetchRequest{URL: pageURL, Kind: FetchKindHTML})
+		if fetchErr != nil || result.StatusCode < 200 || result.StatusCode >= 300 {
+			if pageURL == rawURL {
+				if fetchErr != nil {
+					return nil, nil, fetchErr
+				}
+				return nil, nil, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, result.StatusCode)
 			}
-			request.Abort()
-			return
+			continue
 		}
-		visited++
-		if visited > maxPages {
-			request.Abort()
+		feeds, articles := discoverLinksFromHTML(result.Body, baseURL)
+		for _, feedURL := range feeds {
+			feedSet[feedURL] = struct{}{}
 		}
-	})
-	collector.OnHTML("link[href]", func(element *colly.HTMLElement) {
-		rel := strings.ToLower(element.Attr("rel"))
-		linkType := strings.ToLower(element.Attr("type"))
-		if strings.Contains(rel, "alternate") && (strings.Contains(linkType, "rss") || strings.Contains(linkType, "atom") || strings.Contains(linkType, "json") || strings.Contains(linkType, "xml")) {
-			if absoluteURL, ok := sameHostURL(element.Attr("href"), baseURL); ok {
-				feedSet[absoluteURL] = struct{}{}
+		for _, articleURL := range articles {
+			articleSet[articleURL] = struct{}{}
+			if len(seen)+len(queue) < maxPages {
+				queue = append(queue, articleURL)
 			}
 		}
-	})
-	collector.OnHTML("a[href]", func(element *colly.HTMLElement) {
-		href := element.Attr("href")
-		if absoluteURL, ok := sameHostArticleURL(href, baseURL); ok {
-			articleSet[absoluteURL] = struct{}{}
-		}
-		if visited < maxPages {
-			_ = element.Request.Visit(href)
-		}
-	})
-
-	if err := collector.Visit(rawURL); err != nil {
-		return nil, nil, err
-	}
-	collector.Wait()
-	if firstErr != nil && len(feedSet) == 0 && len(articleSet) == 0 {
-		return nil, nil, firstErr
 	}
 	return sortedKeys(feedSet), sortedKeys(articleSet), nil
 }
