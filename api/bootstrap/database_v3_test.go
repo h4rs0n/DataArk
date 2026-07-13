@@ -264,7 +264,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 11 || migrations[len(migrations)-1].Version != 11 {
+	if len(migrations) != 12 || migrations[len(migrations)-1].Version != 12 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -357,6 +357,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"discovery_legacy_candidate_state_reviews", "no reliable user identity", "status IN ('read', 'ignored', 'archived')", "Data-preserving rollback"} {
 		if !strings.Contains(string(userStatePermissions), required) {
 			t.Fatalf("user candidate state migration missing %q", required)
+		}
+	}
+	fairBudget, err := appmigrations.FS.ReadFile("000012_fair_crawl_budget_and_inventory.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"discovery_site_operational_stats", "discovery_source_schedule_decisions", "no source quality score", "Data-preserving rollback"} {
+		if !strings.Contains(string(fairBudget), required) {
+			t.Fatalf("fair crawl budget migration missing %q", required)
 		}
 	}
 }

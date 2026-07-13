@@ -54,6 +54,7 @@ var (
 	listBackfillCoverage         = discovery.ListBackfillCoverage
 	updateDiscoverySiteStatus    = discovery.UpdateDiscoverySiteOperationalStatus
 	requestDiscoverySiteBackfill = discovery.RequestDiscoverySiteBackfill
+	getDiscoverySiteOperations   = discovery.GetDiscoverySiteOperations
 	getDiscoveryCandidate        = discovery.GetDiscoveryCandidate
 	markCandidateRead            = discovery.MarkUserCandidateRead
 	markCandidateIgnored         = discovery.MarkUserCandidateIgnored
@@ -69,6 +70,7 @@ var (
 	revertRecommendationFeedback = recommendation.RevertRecommendationFeedback
 	listUserBlockRules           = recommendation.ListUserBlockRules
 	deleteUserBlockRule          = recommendation.DeleteUserBlockRule
+	getCandidateInventory        = recommendation.GetCandidateInventory
 	startDiscoveryScheduler      = discovery.StartDiscoveryScheduler
 	startRecommendationScheduler = recommendation.StartRecommendationScheduler
 	startSharedJobQueue          = startApplicationJobQueue
@@ -536,6 +538,22 @@ func RequestDiscoverySiteBackfill(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "历史回溯已排队"})
 }
 
+func GetDiscoverySiteOperations(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	siteID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	operations, err := getDiscoverySiteOperations(siteID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "查询站点运营状态失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询站点运营状态成功", "Data": operations})
+}
+
 func ListDiscoveryCandidates(c *gin.Context) {
 	userID, ok := requireCurrentUserID(c)
 	if !ok {
@@ -676,6 +694,19 @@ func GetRecommendationSettings(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"Status": "1", "Message": "查询推荐设置成功", "Data": settings})
+}
+
+func GetRecommendationInventory(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	inventory, err := getCandidateInventory(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "查询候选库存失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询候选库存成功", "Data": inventory})
 }
 
 func UpdateRecommendationSettings(c *gin.Context) {
@@ -1207,6 +1238,7 @@ func WebStarter(debugMode bool) {
 		protected.GET("/discovery/sites/:id/backfill", GetDiscoveryBackfillCoverage)
 		protected.PUT("/discovery/sites/:id/status", UpdateDiscoverySiteStatus)
 		protected.POST("/discovery/sites/:id/backfill", RequestDiscoverySiteBackfill)
+		protected.GET("/discovery/sites/:id/operations", GetDiscoverySiteOperations)
 		protected.GET("/discovery/candidates", ListDiscoveryCandidates)
 		protected.POST("/discovery/candidates/:id/read", MarkDiscoveryCandidateRead)
 		protected.POST("/discovery/candidates/:id/archive", ArchiveDiscoveryCandidate)
@@ -1216,6 +1248,7 @@ func WebStarter(debugMode bool) {
 		protected.GET("/recommendations/days/:date", GetRecommendationDay)
 		protected.POST("/admin/recommendations/generate", GenerateRecommendationDay)
 		protected.GET("/recommendations/settings", GetRecommendationSettings)
+		protected.GET("/recommendations/inventory", GetRecommendationInventory)
 		protected.PUT("/recommendations/settings", UpdateRecommendationSettings)
 		protected.POST("/recommendations/items/:itemId/feedback", RecordRecommendationItemFeedback)
 		protected.DELETE("/recommendations/items/:itemId/feedback", RevertRecommendationItemFeedback)

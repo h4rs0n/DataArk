@@ -39,6 +39,10 @@ func ParseFlag() {
 	DiscoveryArticleMinCharsFlag := stdflag.Int("discover-article-min-chars", 120, "Assign minimum extracted article text length")
 	DiscoveryProcessingMaxAttemptsFlag := stdflag.Int("discover-processing-max-attempts", 5, "Assign maximum transient article processing attempts")
 	DiscoveryArticleQualityThresholdFlag := stdflag.Float64("discover-article-quality-threshold", 0.45, "Assign minimum article-level quality required for eligibility")
+	DiscoveryScheduleMinIntervalFlag := stdflag.String("discover-schedule-min-interval", "1h", "Assign minimum interval after applying extra crawl budget")
+	DiscoveryInventoryFreshDaysFlag := stdflag.Int("discover-inventory-fresh-days", 30, "Assign recent article window used by candidate inventory")
+	DiscoveryInventoryWarningDaysFlag := stdflag.Float64("discover-inventory-warning-days", 7, "Assign candidate inventory warning threshold in days")
+	DiscoveryInventoryCriticalDaysFlag := stdflag.Float64("discover-inventory-critical-days", 3, "Assign candidate inventory critical threshold in days")
 	RecommendationEnabledFlag := stdflag.Bool("recommend-enabled", false, "Enable LLM daily recommendations")
 	RecommendationDailyLimitFlag := stdflag.Int("recommend-daily-limit", 10, "Assign default daily recommendation count")
 	RecommendationTimezoneFlag := stdflag.String("recommend-timezone", "Asia/Shanghai", "Assign recommendation timezone")
@@ -87,6 +91,10 @@ func ParseFlag() {
 	config.DISCOVERYARTICLEMINCHARS = *DiscoveryArticleMinCharsFlag
 	config.DISCOVERYPROCESSINGMAXATTEMPTS = *DiscoveryProcessingMaxAttemptsFlag
 	config.DISCOVERYARTICLEQUALITYTHRESHOLD = *DiscoveryArticleQualityThresholdFlag
+	config.DISCOVERYSCHEDULEMININTERVAL = strings.TrimSpace(*DiscoveryScheduleMinIntervalFlag)
+	config.DISCOVERYINVENTORYFRESHDAYS = *DiscoveryInventoryFreshDaysFlag
+	config.DISCOVERYINVENTORYWARNINGDAYS = *DiscoveryInventoryWarningDaysFlag
+	config.DISCOVERYINVENTORYCRITICALDAYS = *DiscoveryInventoryCriticalDaysFlag
 	config.RECOMMENDATIONENABLED = *RecommendationEnabledFlag
 	config.RECOMMENDATIONDAILYLIMIT = *RecommendationDailyLimitFlag
 	config.RECOMMENDATIONTIMEZONE = strings.TrimSpace(*RecommendationTimezoneFlag)

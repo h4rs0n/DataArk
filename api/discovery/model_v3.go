@@ -237,6 +237,44 @@ type DiscoveryLegacyCandidateStateReview struct {
 	Candidate    *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
 }
 
+// DiscoverySiteOperationalStats keeps named scheduling and capacity signals.
+// It intentionally has no aggregate source quality or reputation score.
+type DiscoverySiteOperationalStats struct {
+	ID                       uint           `json:"id" gorm:"primaryKey"`
+	SiteID                   uint           `json:"siteId" gorm:"uniqueIndex;not null"`
+	IndependentInboundSites  uint           `json:"independentInboundSites"`
+	FetchAttempts            uint           `json:"fetchAttempts"`
+	FetchSuccesses           uint           `json:"fetchSuccesses"`
+	NotModifiedFetches       uint           `json:"notModifiedFetches"`
+	ParseSuccesses           uint           `json:"parseSuccesses"`
+	CandidateCount           uint           `json:"candidateCount"`
+	EligibleCandidateCount   uint           `json:"eligibleCandidateCount"`
+	DuplicateCandidateCount  uint           `json:"duplicateCandidateCount"`
+	ExtractedCandidateCount  uint           `json:"extractedCandidateCount"`
+	PositiveFeedbackArticles uint           `json:"positiveFeedbackArticles"`
+	BackfillURLsSeen         uint           `json:"backfillUrlsSeen"`
+	BackfillArticlesFound    uint           `json:"backfillArticlesFound"`
+	LastComputedAt           time.Time      `json:"lastComputedAt" gorm:"index"`
+	CreatedAt                time.Time      `json:"createdAt"`
+	UpdatedAt                time.Time      `json:"updatedAt"`
+	Site                     *DiscoverySite `json:"-" gorm:"foreignKey:SiteID;constraint:OnDelete:CASCADE"`
+}
+
+type DiscoverySourceScheduleDecision struct {
+	ID                    uint             `json:"id" gorm:"primaryKey"`
+	SourceID              uint             `json:"sourceId" gorm:"uniqueIndex;not null"`
+	SiteID                *uint            `json:"siteId" gorm:"index"`
+	Basis                 string           `json:"basis" gorm:"index;not null;size:32"`
+	BaseIntervalSeconds   int64            `json:"baseIntervalSeconds"`
+	ChosenIntervalSeconds int64            `json:"chosenIntervalSeconds"`
+	Explanation           string           `json:"explanation" gorm:"type:text"`
+	NextDueAt             time.Time        `json:"nextDueAt" gorm:"index"`
+	ComputedAt            time.Time        `json:"computedAt" gorm:"index"`
+	CreatedAt             time.Time        `json:"createdAt"`
+	UpdatedAt             time.Time        `json:"updatedAt"`
+	Source                *DiscoverySource `json:"-" gorm:"foreignKey:SourceID;constraint:OnDelete:CASCADE"`
+}
+
 func V3Models() []interface{} {
 	return []interface{}{
 		&DiscoverySite{},
@@ -251,5 +289,7 @@ func V3Models() []interface{} {
 		&DiscoveryArticleAssessment{},
 		&UserCandidateState{},
 		&DiscoveryLegacyCandidateStateReview{},
+		&DiscoverySiteOperationalStats{},
+		&DiscoverySourceScheduleDecision{},
 	}
 }

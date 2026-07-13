@@ -112,6 +112,40 @@ func TestCandidateInteractionUsesAuthenticatedUserIdentity(t *testing.T) {
 	}
 }
 
+func TestOperationsRequireOwnerAndInventoryUsesCurrentUser(t *testing.T) {
+	oldOperations := getDiscoverySiteOperations
+	oldInventory := getCandidateInventory
+	t.Cleanup(func() {
+		getDiscoverySiteOperations = oldOperations
+		getCandidateInventory = oldInventory
+	})
+	operationsCalls := 0
+	getDiscoverySiteOperations = func(siteID uint) (*discovery.DiscoverySiteOperations, error) {
+		operationsCalls++
+		return &discovery.DiscoverySiteOperations{Site: discovery.DiscoverySite{ID: siteID}}, nil
+	}
+	var inventoryUserID uint
+	getCandidateInventory = func(userID uint) (*recommendation.CandidateInventory, error) {
+		inventoryUserID = userID
+		return &recommendation.CandidateInventory{UserID: userID, UserAvailableCandidates: 12}, nil
+	}
+	member := &auth.User{ID: 202, Username: "member", Role: auth.UserRoleMember}
+	owner := &auth.User{ID: 1, Username: "admin", Role: auth.UserRoleOwner}
+
+	memberOperations := performUserPathControllerRequest(http.MethodGet, "/discovery/sites/:id/operations", "/discovery/sites/9/operations", member, GetDiscoverySiteOperations)
+	if memberOperations.Code != http.StatusForbidden || operationsCalls != 0 {
+		t.Fatalf("member operations status=%d calls=%d", memberOperations.Code, operationsCalls)
+	}
+	ownerOperations := performUserPathControllerRequest(http.MethodGet, "/discovery/sites/:id/operations", "/discovery/sites/9/operations", owner, GetDiscoverySiteOperations)
+	if ownerOperations.Code != http.StatusOK || operationsCalls != 1 {
+		t.Fatalf("owner operations status=%d calls=%d", ownerOperations.Code, operationsCalls)
+	}
+	memberInventory := performUserPathControllerRequest(http.MethodGet, "/recommendations/inventory", "/recommendations/inventory", member, GetRecommendationInventory)
+	if memberInventory.Code != http.StatusOK || inventoryUserID != member.ID {
+		t.Fatalf("member inventory status=%d user=%d", memberInventory.Code, inventoryUserID)
+	}
+}
+
 // Keep the concrete return type coupled to the production function while making
 // the permission test independent from recommendation internals.
 type recommendationSnapshotAlias = recommendation.RecommendationDaySnapshot

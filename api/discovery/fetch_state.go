@@ -29,6 +29,7 @@ func finishDiscoveryFetch(source *DiscoverySource, result *DiscoveryFetchResult,
 		"last_attempt_at": &now,
 		"last_fetched_at": &now,
 	}
+	var scheduleDecision *SourceScheduleDecision
 	if fetched != nil {
 		notModified = fetched.NotModified
 		httpStatus = fetched.StatusCode
@@ -51,6 +52,7 @@ func finishDiscoveryFetch(source *DiscoverySource, result *DiscoveryFetchResult,
 		errorCategory = discoveryFetchErrorCategory(fetchErr)
 		errorSummary = fetchErr.Error()
 		next := policy.NextFailure(source.ID, failureCount)
+		scheduleDecision = &SourceScheduleDecision{Basis: "failure_backoff", Chosen: next.Sub(now), NextDueAt: next, Explanation: errorCategory}
 		updates["failure_count"] = failureCount
 		updates["next_fetch_at"] = &next
 		updates["next_due_at"] = &next
@@ -58,7 +60,9 @@ func finishDiscoveryFetch(source *DiscoverySource, result *DiscoveryFetchResult,
 		updates["backoff_reason"] = errorCategory
 		updates["last_error"] = errorSummary
 	} else {
-		next := policy.NextSuccess(*source, sourceSiteStatus(source.SiteID), result != nil && result.Stored > 0)
+		decision := policy.DecideNextSuccess(*source, sourceSiteStatus(source.SiteID), result != nil && result.Stored > 0, loadDiscoverySiteOperationalStats(source.SiteID))
+		next := decision.NextDueAt
+		scheduleDecision = &decision
 		updates["failure_count"] = 0
 		updates["next_fetch_at"] = &next
 		updates["next_due_at"] = &next
@@ -69,6 +73,11 @@ func finishDiscoveryFetch(source *DiscoverySource, result *DiscoveryFetchResult,
 	}
 	if err := db.Model(source).Updates(updates).Error; err != nil {
 		return err
+	}
+	if scheduleDecision != nil {
+		if err := SaveDiscoverySourceScheduleDecision(*source, *scheduleDecision); err != nil {
+			return err
+		}
 	}
 	if source.SiteID != nil {
 		siteUpdates := map[string]interface{}{"last_validated_at": &now}
@@ -99,7 +108,14 @@ func finishDiscoveryFetch(source *DiscoverySource, result *DiscoveryFetchResult,
 		NewCount: resultCount(result), DuplicateCount: duplicateResultCount(result), FailureCount: failureCount,
 		ErrorCategory: errorCategory, ErrorSummary: errorSummary,
 	}
-	return db.Create(&run).Error
+	if err := db.Create(&run).Error; err != nil {
+		return err
+	}
+	if source.SiteID != nil {
+		_, err := RefreshDiscoverySiteOperationalStats(*source.SiteID)
+		return err
+	}
+	return nil
 }
 
 func sourceSiteStatus(siteID *uint) string {

@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,15 @@ type SourceSchedulePolicy struct {
 	DormantInterval    time.Duration
 	BackoffBase        time.Duration
 	BackoffMax         time.Duration
+	MinimumInterval    time.Duration
+}
+
+type SourceScheduleDecision struct {
+	Basis       string
+	Base        time.Duration
+	Chosen      time.Duration
+	NextDueAt   time.Time
+	Explanation string
 }
 
 func ConfiguredSourceSchedulePolicy(clock Clock) SourceSchedulePolicy {
@@ -28,20 +38,27 @@ func ConfiguredSourceSchedulePolicy(clock Clock) SourceSchedulePolicy {
 		DormantInterval:    configuredDuration(config.DISCOVERYDORMANTINTERVAL, 30*24*time.Hour),
 		BackoffBase:        configuredDuration(config.DISCOVERYBACKOFFBASE, 5*time.Minute),
 		BackoffMax:         configuredDuration(config.DISCOVERYBACKOFFMAX, 24*time.Hour),
+		MinimumInterval:    configuredDuration(config.DISCOVERYSCHEDULEMININTERVAL, time.Hour),
 	}
 }
 
 func (policy SourceSchedulePolicy) NextSuccess(source DiscoverySource, siteStatus string, changed bool) time.Time {
-	interval := policy.ObservingInterval
+	return policy.DecideNextSuccess(source, siteStatus, changed, DiscoverySiteOperationalStats{}).NextDueAt
+}
+
+func (policy SourceSchedulePolicy) DecideNextSuccess(source DiscoverySource, siteStatus string, changed bool, stats DiscoverySiteOperationalStats) SourceScheduleDecision {
+	base := policy.ObservingInterval
 	if source.EndpointType == "feed" || source.EndpointType == "rsshub" || source.Type == DiscoverySourceTypeFeed || source.Type == DiscoverySourceTypeRSSHub {
-		interval = policy.ActiveFeedInterval
+		base = policy.ActiveFeedInterval
 	}
 	if siteStatus == "dormant" {
-		interval = policy.DormantInterval
+		base = policy.DormantInterval
 	}
-	if interval <= 0 {
-		interval = 24 * time.Hour
+	if base <= 0 {
+		base = 24 * time.Hour
 	}
+	interval := base
+	reasons := make([]string, 0, 4)
 	if changed && source.LastSuccessAt != nil {
 		observed := policy.Clock.Now().Sub(*source.LastSuccessAt)
 		if observed < 15*time.Minute {
@@ -49,9 +66,40 @@ func (policy SourceSchedulePolicy) NextSuccess(source DiscoverySource, siteStatu
 		}
 		if observed < interval {
 			interval = observed
+			reasons = append(reasons, "recent_update")
 		}
 	}
-	return policy.Clock.Now().Add(interval)
+	bonusFactor := 1.0
+	if stats.IndependentInboundSites >= 2 {
+		bonusFactor *= 0.8
+		reasons = append(reasons, "multiple_inbound_sites")
+	}
+	if stats.EligibleCandidateCount > 0 {
+		bonusFactor *= 0.75
+		reasons = append(reasons, "eligible_output")
+	}
+	if stats.PositiveFeedbackArticles > 0 {
+		bonusFactor *= 0.75
+		reasons = append(reasons, "explicit_positive_articles")
+	}
+	bonusInterval := time.Duration(float64(base) * bonusFactor)
+	if bonusInterval < interval {
+		interval = bonusInterval
+	}
+	minimum := policy.MinimumInterval
+	if minimum <= 0 {
+		minimum = time.Hour
+	}
+	if interval < minimum {
+		interval = minimum
+	}
+	basis := "base_floor"
+	explanation := "maximum_idle_floor"
+	if interval < base {
+		basis = "extra_budget"
+		explanation = strings.Join(reasons, ",")
+	}
+	return SourceScheduleDecision{Basis: basis, Base: base, Chosen: interval, NextDueAt: policy.Clock.Now().Add(interval), Explanation: explanation}
 }
 
 func (policy SourceSchedulePolicy) NextFailure(sourceID uint, failureCount int) time.Time {

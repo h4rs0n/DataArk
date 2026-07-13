@@ -474,6 +474,9 @@ func RecordRecommendationFeedback(userID uint, recommendationItemID uint, action
 	if err != nil {
 		return nil, nil, err
 	}
+	if action == RecommendationFeedbackValuable || action == RecommendationFeedbackDeepRead {
+		_ = discovery.RefreshCandidateSiteOperationalStats(item.CandidateID)
+	}
 	return &feedback, blockRules, nil
 }
 
