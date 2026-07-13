@@ -1,7 +1,9 @@
 package discovery
 
-import (	"DataArk/archive"
+import (
+	"DataArk/archive"
 	"DataArk/config"
+	"DataArk/jobqueue"
 	"bytes"
 	"context"
 	"encoding/xml"
@@ -223,8 +225,13 @@ func StartDiscoveryScheduler() func() {
 		for {
 			select {
 			case <-ticker.C:
-				if err := FetchEnabledDiscoverySources(context.Background()); err != nil {
-					log.Printf("discovery scheduler fetch failed: %v", err)
+				queue, available := jobqueue.Default()
+				if !available {
+					log.Printf("discovery scheduler skipped: shared job queue unavailable")
+					continue
+				}
+				if err := RecoverDueJobs(context.Background(), queue, time.Now()); err != nil {
+					log.Printf("discovery scheduler enqueue failed: %v", err)
 				}
 			case <-stop:
 				return

@@ -7,7 +7,9 @@ import (
 	"DataArk/backup"
 	"DataArk/bootstrap"
 	"DataArk/config"
+	"DataArk/database"
 	"DataArk/discovery"
+	"DataArk/jobqueue"
 	"DataArk/recommendation"
 	"DataArk/search"
 	"context"
@@ -65,7 +67,7 @@ var (
 	deleteUserBlockRule          = recommendation.DeleteUserBlockRule
 	startDiscoveryScheduler      = discovery.StartDiscoveryScheduler
 	startRecommendationScheduler = recommendation.StartRecommendationScheduler
-	startRecommendationJobQueue  = recommendation.StartRecommendationJobQueue
+	startSharedJobQueue          = startApplicationJobQueue
 	addDocFileToIndex            = search.AddDocFile
 	deleteDocByHTMLPath          = search.DeleteDocByHTMLPath
 	createBackupArchive          = backup.CreateBackup
@@ -77,6 +79,24 @@ var (
 		return router.Run(addr)
 	}
 )
+
+func startApplicationJobQueue(ctx context.Context) (func(), error) {
+	handlers := jobqueue.Handlers{
+		FetchSource: func(ctx context.Context, sourceID uint) error {
+			_, err := discovery.FetchDiscoverySourceByID(ctx, sourceID)
+			return err
+		},
+		GenerateDaily: recommendation.RunGenerateDailyRecommendationJob,
+	}
+	recover := func(ctx context.Context, queue jobqueue.JobEnqueuer) error {
+		now := time.Now()
+		return errors.Join(
+			discovery.RecoverDueJobs(ctx, queue, now),
+			recommendation.RecoverDueJobs(ctx, queue, now),
+		)
+	}
+	return jobqueue.Start(ctx, database.DB(), handlers, recover)
+}
 
 // AuthController 认证控制器
 type AuthController struct{}
@@ -1020,14 +1040,14 @@ func WebStarter(debugMode bool) {
 		fmt.Printf("failed to initialize archive task queue: %v\n", err)
 		return
 	}
+	stopSharedJobQueue, err := startSharedJobQueue(context.Background())
+	if err != nil {
+		fmt.Printf("failed to initialize shared job queue: %v\n", err)
+		stopSharedJobQueue = func() {}
+	}
+	defer stopSharedJobQueue()
 	stopDiscoveryScheduler := startDiscoveryScheduler()
 	defer stopDiscoveryScheduler()
-	stopRecommendationJobQueue, err := startRecommendationJobQueue(context.Background())
-	if err != nil {
-		fmt.Printf("failed to initialize recommendation job queue: %v\n", err)
-		stopRecommendationJobQueue = func() {}
-	}
-	defer stopRecommendationJobQueue()
 	stopRecommendationScheduler := startRecommendationScheduler()
 	defer stopRecommendationScheduler()
 	router := gin.Default()

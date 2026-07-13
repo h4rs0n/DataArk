@@ -1,89 +1,60 @@
 package recommendation
 
 import (
+	"DataArk/jobqueue"
 	"context"
-	"database/sql"
-	"log"
+	"errors"
 	"time"
-
-	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 )
 
-const RecommendationGenerateDailyJobKind = "recommendation_generate_daily"
+const RecommendationGenerateDailyJobKind = jobqueue.GenerateDailyJobKind
 
-var recommendationRiverClient *river.Client[*sql.Tx]
-
-type GenerateDailyRecommendationArgs struct {
-	UserID uint   `json:"user_id"`
-	Date   string `json:"date"`
-}
-
-func (GenerateDailyRecommendationArgs) Kind() string { return RecommendationGenerateDailyJobKind }
-
-func (args GenerateDailyRecommendationArgs) InsertOpts() river.InsertOpts {
-	return river.InsertOpts{
-		UniqueOpts: river.UniqueOpts{
-			ByArgs:   true,
-			ByPeriod: 24 * time.Hour,
-		},
-	}
-}
-
-type GenerateDailyRecommendationWorker struct {
-	river.WorkerDefaults[GenerateDailyRecommendationArgs]
-}
-
-func (worker *GenerateDailyRecommendationWorker) Work(ctx context.Context, job *river.Job[GenerateDailyRecommendationArgs]) error {
-	_, err := GenerateDailyRecommendationsWithReranker(ctx, job.Args.UserID, job.Args.Date, ConfiguredRecommendationReranker())
+func RunGenerateDailyRecommendationJob(ctx context.Context, userID uint, localDate string) error {
+	_, err := GenerateDailyRecommendationsWithReranker(ctx, userID, normalizeRecommendationDate(localDate), ConfiguredRecommendationReranker())
 	return err
 }
 
-func StartRecommendationJobQueue(ctx context.Context) (func(), error) {
-	if db == nil || db.Dialector.Name() != "postgres" {
-		return func() {}, nil
-	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		return func() {}, err
-	}
-	workers := river.NewWorkers()
-	river.AddWorker(workers, &GenerateDailyRecommendationWorker{})
-	client, err := river.NewClient(riverdatabasesql.New(sqlDB), &river.Config{
-		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 2},
-		},
-		Workers: workers,
-	})
-	if err != nil {
-		return func() {}, err
-	}
-	if err := client.Start(ctx); err != nil {
-		return func() {}, err
-	}
-	recommendationRiverClient = client
-	return func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := client.Stop(stopCtx); err != nil {
-			log.Printf("recommendation river queue stop failed: %v", err)
-		}
-		if recommendationRiverClient == client {
-			recommendationRiverClient = nil
-		}
-	}, nil
-}
-
+// EnqueueDailyRecommendation preserves the v2 scheduler contract while the
+// queue lifecycle is owned by the shared jobqueue package.
 func EnqueueDailyRecommendation(ctx context.Context, userID uint, date string) (bool, error) {
-	if recommendationRiverClient == nil {
+	queue, available := jobqueue.Default()
+	if !available {
 		return false, nil
 	}
-	_, err := recommendationRiverClient.Insert(ctx, GenerateDailyRecommendationArgs{
-		UserID: userID,
-		Date:   normalizeRecommendationDate(date),
-	}, nil)
-	if err != nil {
-		return false, err
+	if err := queue.EnqueueGenerateDaily(ctx, userID, normalizeRecommendationDate(date)); err != nil {
+		return true, err
 	}
 	return true, nil
+}
+
+// RecoverDueJobs enqueues local dates that should already have a daily digest.
+// Each user is considered independently so one enqueue failure does not starve
+// the remaining users.
+func RecoverDueJobs(ctx context.Context, queue jobqueue.JobEnqueuer, now time.Time) error {
+	if db == nil || queue == nil {
+		return nil
+	}
+	var settings []RecommendationSettings
+	if err := db.Where("enabled = ?", true).Order("user_id").Find(&settings).Error; err != nil {
+		return err
+	}
+	var recoveryErrors []error
+	for _, item := range settings {
+		if !recommendationGenerationDue(item, now) {
+			continue
+		}
+		date := recommendationDateForSettings(item, now)
+		var count int64
+		if err := db.Model(&RecommendationDay{}).Where("user_id = ? AND recommendation_date = ?", item.UserID, date).Count(&count).Error; err != nil {
+			recoveryErrors = append(recoveryErrors, err)
+			continue
+		}
+		if count > 0 {
+			continue
+		}
+		if err := queue.EnqueueGenerateDaily(ctx, item.UserID, date); err != nil {
+			recoveryErrors = append(recoveryErrors, err)
+		}
+	}
+	return errors.Join(recoveryErrors...)
 }

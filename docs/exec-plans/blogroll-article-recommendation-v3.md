@@ -35,7 +35,7 @@
 - [x] 2026-07-13T00:00:00-07:00 编写本执行计划的初始版本。
 - [x] 2026-07-13T21:08:04+08:00 M0：固定基线、建立确定性测试站点和可替换的时钟、抓取器、任务队列测试接口。基线为 `9602a91`、Go 1.26.4、Node 24.15.0、迁移 `000001`–`000002`；聚焦测试 `go test ./discovery ./recommendation -run 'Test(Deterministic|HTTPClientFetcher|DiscoverySourceFetchAndCandidateState|RecommendationDayAndItemDeduplication|RecommendationGenerationDueUsesSettingsTime|GenerateDailyRecommendationsRerankerValidationAndFallback)' -count=1` 通过，仓库验证 `go test ./...`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`979a17e`。
 - [x] 2026-07-13T21:28:44+08:00 M1：完成增量数据库模型和兼容迁移，保留现有数据并建立逻辑博客、来源端点、图谱边、文章溯源、处理状态、用户状态和日报快照结构。聚焦验证 `go test ./auth ./bootstrap ./discovery ./recommendation -count=1` 通过；`TestV3SQLiteMigrationPreservesAndBackfillsLegacyData` 验证重复迁移、计数、默认值、唯一键、外键、旧端点映射、溯源、角色、快照和跨日报历史，`TestV3GooseMigrationIsAdditiveAndParseable` 验证三份 Goose 迁移可解析。仓库验证 `go test ./...`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`494a27a`；当前环境缺少 `docker` 命令，真实 PostgreSQL 执行留待具备容器基础设施时补验。
-- [ ] M2：抽取共享持久任务运行时，支持发现抓取、图谱扫描、历史回溯、文章处理和日报生成的幂等作业。
+- [x] 2026-07-13T21:40:20+08:00 M2：抽取共享持久任务运行时，支持发现抓取、图谱扫描、历史回溯、文章处理和日报生成的幂等作业。聚焦测试 `go test ./jobqueue ./discovery ./recommendation ./api -count=1` 通过，race 验证 `go test -race ./discovery ./recommendation ./jobqueue/...` 通过；仓库验证 `go test ./...`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交哈希在提交后回填。
 - [ ] M3：完成安全 HTTP 抓取层、条件请求、robots、SSRF 防护、域名限流、失败退避和逐来源调度。
 - [ ] M4：完成友情链接识别、博客关系图谱、循环与深度控制、新来源观察状态和发现路径 API。
 - [ ] M5：完成站点端点发现和最新文章增量入池，并使一篇文章保留多个发现来源。
@@ -73,6 +73,9 @@
 - 2026-07-13：M1 检查 PostgreSQL 基础设施时，`docker compose ps` 返回 “docker: command not found”；这不是迁移代码失败。Goose 文件已通过解析测试，SQLite 已执行真实 DDL／回填／约束测试，但 PostgreSQL DDL 和回退演练必须在 M17 或更早获得 Docker／PostgreSQL 后补跑。
 - 2026-07-13：`api/assets/embed.go` 固定读取被忽略的 `api/assets/web/assets/` 子树，仓库仅跟踪占位 `index.html`、图标和图片；删除忽略的构建资源后 `TestLoadFileReturnsEmbeddedAssetSubtree` 会失败。证据是首次 M1 全量测试只有 `DataArk/assets` 失败并报告 `open .: file does not exist`，执行前端构建和 `make web2api` 后全量测试通过。因此验证后必须保留该忽略目录，不能把它当作普通临时文件清理。
 - 2026-07-13：启动顺序先让 GORM 扩展已有 `discovery_sources`／`discovery_candidates`，再运行 Goose 创建 v3 表；因此 `site_id` 和 `representative_id` 可能已存在，单纯的 `ADD COLUMN IF NOT EXISTS ... REFERENCES` 无法保证 PostgreSQL 外键。`000003_blog_discovery_v3.sql` 使用具名、条件式约束块独立建立这两个外键。
+- 2026-07-13：SQLite／开发运行时若每次启动都新建内存幂等集合，两个调度器启动恢复会各执行一次相同副作用。M2 将内存存储按同一个 `*gorm.DB` 共享，并保留到运行时重建后；`TestStartSQLiteDuplicateRecoveryRunsOnce` 证明两次启动只执行一次。
+- 2026-07-13：现有发现 ticker 的问题不是周期唤醒本身，而是在 ticker goroutine 中串行抓取所有来源。M2 保留轻量周期唤醒以兼容现有配置，但其回调现在只把到期工作交给共享队列；实际抓取不再由全局 ticker 串行执行。M3 将进一步按端点 `next_due_at`、退避和域名限制细化调度。
+- 2026-07-13：River 的 worker 注册若直接导入推荐／发现包会与调用方形成导入环。共享包因此只持有稳定 Args、River client 和函数式 `Handlers`，由 API 组合根注入业务 handler；推荐包不再拥有 River client 生命周期。
 
 ## Decision Log
 
@@ -103,6 +106,10 @@
 - 2026-07-13：数据库层移除跨日报的永久 `(user_id, candidate_id)` 和用户级 dedupe 唯一约束，但保留同日报 `(day_id, candidate_id)` 唯一。v2 的 `AddRecommendationItem` 暂时继续应用层永久去重，直到 M12 用冷却策略替换；这样 v3 能表达未来再推荐，同时 v2 开关关闭路径的行为不变。
 - 2026-07-13：旧 `admin` 用户幂等回填为 `owner`，新注册用户默认为 `member`；不根据创建顺序自动提升其他现有账号。理由是用户名 `admin` 是仓库现有明确部署所有者，猜测“第一个普通用户”可能造成越权，后续权限 API 以显式角色为准。
 - 2026-07-13：迁移已有推荐项时只填充空的快照字段，后续重复启动不从当前候选覆盖历史标题、URL、摘要、作者、来源或发布时间。理由是从 M1 开始就要避免回填破坏历史展示，即使不可变发布逻辑要到 M14 才正式切流。
+- 2026-07-13：共享 `jobqueue` 定义五种只含稳定 ID、日期或内容版本的参数，River 使用 `ByArgs` 唯一键，日报额外使用 24 小时窗口；不把网页正文或候选对象放入队列。理由是作业重试必须从数据库读取当前持久状态，并避免队列膨胀或敏感正文泄露。
+- 2026-07-13：SQLite／测试采用同步内存队列，记录 pending/running/completed/failed、attempts 和错误；completed/running 重复入队幂等，failed 或进程中断状态可在重建后重试。拒绝用简单 channel 作为降级，因为 channel 无法模拟重启恢复和稳定唯一键。
+- 2026-07-13：启动恢复分别由发现和推荐模块查询自己的表，再通过共享 `JobEnqueuer` 入队；共享包不查询领域表。理由是避免共享基础设施反向依赖领域模型，并使恢复逻辑可以用 SQLite 和固定时钟独立测试。
+- 2026-07-13：M2 只为已存在的来源抓取和日报生成注入可执行 handler；Blogroll、回溯和文章处理 worker 类型已注册，但 handler 在对应 M4、M6、M7 才接入。缺失 handler 返回明确错误而不是把作业伪装为成功，避免静默丢失待处理工作。
 
 ## Outcomes & Retrospective
 
@@ -113,6 +120,10 @@
 2026-07-13，M1 已完成。`000003_blog_discovery_v3.sql` 和对应 GORM 模型新增逻辑站点、端点关联、图谱边、候选溯源、抓取运行、历史回溯状态、版本化文章评估、用户候选状态、候选处理／资格字段、角色以及日报／推荐项快照字段。启动回填把旧来源按主机映射为种子站点，把旧候选映射为多溯源结构，冻结既有日报展示数据，并可安全重复运行。SQLite 迁移测试证明旧用户、来源、候选、日报、项目和反馈数量不减少；旧 UI／v2 服务测试继续通过。
 
 M1 与计划的差异是当前机器无法执行 PostgreSQL 容器集成；迁移文件的 Goose 解析、约束设计和 SQLite 行为已有自动测试，真实 PostgreSQL 升降级仍是明确遗留。M2 的主要风险是 River 当前由推荐包持有全局客户端，抽取共享运行时必须避免导入环并保持 SQLite 同步实现与 v2 调度行为。
+
+2026-07-13，M2 已完成。`api/jobqueue/` 现在统一拥有 River 客户端、worker 注册、关闭和默认队列生命周期，并定义来源抓取、Blogroll 扫描、历史回溯、候选处理和用户本地日期日报五类幂等作业。SQLite／测试使用可跨运行时实例共享状态的同步内存实现；失败作业可重试，运行中断作业在重建时转为可重试，单个来源失败不阻塞其他恢复项。启动会补入到期来源、未完成回溯、处理中候选和已过生成时间但缺日报的用户日期。
+
+推荐 v2 已通过共享 `GenerateDaily` handler 继续工作，推荐包不再持有 River client；发现 ticker 只负责入队到期工作，不再串行执行网络抓取。PostgreSQL River 的真实重启恢复仍受当前 Docker 缺失限制，但 River 参数／worker、SQLite 重启语义、并发幂等和 race 检测均有自动证据。M3 的主要风险是把已有 `fetchDiscoveryURL` 切到统一抓取器时必须同时处理 SSRF、重定向、robots、验证器、响应类型、域名节流和现有测试替身，且不能访问外网。
 
 每完成一个里程碑，在本节追加实际结果、与计划差异、遗留问题和下一里程碑风险。最终必须回答：
 
@@ -1273,6 +1284,8 @@ Go 基线：
 
 M1 迁移证据：`api/migrations/000003_blog_discovery_v3.sql` 只增加结构并移除跨日报永久唯一约束，Down 保留数据；`api/bootstrap/database_v3_test.go` 在 SQLite 旧式表和数据上执行两次迁移，期望 2 个旧来源合并为 1 个逻辑站点、2 个候选得到 2 条溯源、1 个旧日报／项目／反馈计数不变，并验证同一候选可出现在不同日报但不能在同一日报重复。
 
+M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候选版本并发入队 100 次只执行 1 次；`TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures` 证明失败来源和模拟进程中断可恢复且不阻塞其他来源；`TestStartSQLiteDuplicateRecoveryRunsOnce` 证明两个运行时恢复同一端点只执行一次；`TestRecoverDueJobsContinuesAfterIndependentSourceFailure` 与 `TestRecoverDueJobsEnqueuesOnlyMissingLocalDay` 固定发现和日报启动补偿边界。
+
 ## Plan Revision Note
 
 2026-07-13：创建初始版本。相较于早期“来源质量优先”的可能解释，本计划明确采用“友情链接受控扩展、来源级信号只调度资源、文章级独立质量判断、低命中来源保留非零预算”的产品约束，并把它贯穿数据模型、抓取、历史回溯、推荐、反馈、日报、UI、指标和端到端验收。
@@ -1280,3 +1293,5 @@ M1 迁移证据：`api/migrations/000003_blog_discovery_v3.sql` 只增加结构�
 2026-07-13：完成 M0 并把计划移动到恢复协议规定的正式路径。此次修订记录基线版本和验证结果，增加确定性多站点夹具及可替换时钟、HTTP、任务边界，并说明受限环境中 `make all` 的安全替代验证；这些变化为后续数据库和任务里程碑提供无外网、无 LLM 密钥的稳定测试基础。
 
 2026-07-13：完成 M1。此次修订记录增量 v3 模型、数据保留回填、角色和日报快照语义、唯一约束转换、SQLite 迁移证据及 PostgreSQL 基础设施缺口；选择数据保留 Down 和启动幂等回填，是为了让后续里程碑可逐步切流并在任何检查点安全恢复。
+
+2026-07-13：完成 M2。此次修订记录共享 River／内存运行时、五类稳定作业参数、启动恢复、并发幂等、失败隔离、发现 ticker 切换及 v2 兼容证据；函数式 handler 注入保持基础设施与领域包无环，为后续抓取、图谱、回溯和文章处理逐项接入留下明确边界。

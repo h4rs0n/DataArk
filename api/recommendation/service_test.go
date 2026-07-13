@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/riverqueue/river"
 )
 
 type failingEnrichmentProvider struct{}
@@ -501,7 +499,7 @@ func TestEmbedDiscoveryCandidateStoresModelWithoutPostgresVector(t *testing.T) {
 	}
 }
 
-func TestGenerateDailyRecommendationWorker(t *testing.T) {
+func TestRunGenerateDailyRecommendationJob(t *testing.T) {
 	setupSQLiteDB(t)
 	settings := DefaultRecommendationSettings(14)
 	settings.DailyLimit = 1
@@ -510,10 +508,7 @@ func TestGenerateDailyRecommendationWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate := createReadyCandidate(t, "https://worker.example/post", "Worker Post", []string{"Go"}, "worker", 0.8, 0.7)
-	worker := GenerateDailyRecommendationWorker{}
-	if err := worker.Work(context.Background(), &river.Job[GenerateDailyRecommendationArgs]{
-		Args: GenerateDailyRecommendationArgs{UserID: 14, Date: "2026-06-28"},
-	}); err != nil {
+	if err := RunGenerateDailyRecommendationJob(context.Background(), 14, "2026-06-28"); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := GetRecommendationDaySnapshot(14, "2026-06-28")
@@ -522,14 +517,6 @@ func TestGenerateDailyRecommendationWorker(t *testing.T) {
 	}
 	if len(snapshot.Items) != 1 || snapshot.Items[0].CandidateID != candidate.ID {
 		t.Fatalf("snapshot = %#v", snapshot)
-	}
-	emptyArgs := GenerateDailyRecommendationArgs{}
-	if emptyArgs.Kind() != RecommendationGenerateDailyJobKind {
-		t.Fatalf("job kind = %q", emptyArgs.Kind())
-	}
-	opts := (GenerateDailyRecommendationArgs{UserID: 14, Date: "2026-06-28"}).InsertOpts()
-	if !opts.UniqueOpts.ByArgs {
-		t.Fatal("expected job to be unique by args")
 	}
 }
 
