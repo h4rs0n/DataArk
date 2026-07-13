@@ -116,6 +116,9 @@ func TestDiscoverySourceFetchAndCandidateState(t *testing.T) {
 	if result.Stored != 1 {
 		t.Fatalf("fetch result = %#v", result)
 	}
+	if _, err := FetchDiscoverySource(context.Background(), source); err != nil {
+		t.Fatal(err)
+	}
 	candidates, err := ListDiscoveryCandidates(DiscoveryCandidateStatusNew, 10)
 	if err != nil {
 		t.Fatal(err)

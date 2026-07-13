@@ -1,0 +1,4 @@
+[
+  {"id": 101, "timezone": "Asia/Shanghai", "feedback": "valuable", "blocked_sites": []},
+  {"id": 202, "timezone": "America/Los_Angeles", "feedback": "not_interested", "blocked_sites": ["{{B}}"]}
+]

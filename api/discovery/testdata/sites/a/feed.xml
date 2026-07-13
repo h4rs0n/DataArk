@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>Seed A</title>
+  <link>{{A}}/</link>
+  <item><guid>{{A}}/articles/shared.html</guid><title>One article, many paths</title><link>{{A}}/articles/shared.html</link><description>A shared logical article.</description><pubDate>Sun, 12 Jul 2026 08:00:00 GMT</pubDate></item>
+  <item><guid>{{A}}/articles/ordinary.html</guid><title>An ordinary seed post</title><link>{{A}}/articles/ordinary.html</link><description>A short ordinary update.</description><pubDate>Sat, 11 Jul 2026 08:00:00 GMT</pubDate></item>
+</channel></rss>

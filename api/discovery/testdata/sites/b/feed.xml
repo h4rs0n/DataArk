@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Thoughtful B</title><id>{{B}}/</id><updated>2026-07-12T08:00:00Z</updated>
+  <entry><id>{{B}}/articles/high-feed.html</id><title>A careful field guide</title><link href="{{B}}/articles/high-feed.html"/><summary>Detailed original evidence and practical examples.</summary><updated>2026-07-12T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-01.html</id><title>Routine note 01</title><link href="{{B}}/articles/normal-01.html"/><summary>Routine update.</summary><updated>2026-07-11T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-02.html</id><title>Routine note 02</title><link href="{{B}}/articles/normal-02.html"/><summary>Routine update.</summary><updated>2026-07-10T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-03.html</id><title>Routine note 03</title><link href="{{B}}/articles/normal-03.html"/><summary>Routine update.</summary><updated>2026-07-09T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-04.html</id><title>Routine note 04</title><link href="{{B}}/articles/normal-04.html"/><summary>Routine update.</summary><updated>2026-07-08T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-05.html</id><title>Routine note 05</title><link href="{{B}}/articles/normal-05.html"/><summary>Routine update.</summary><updated>2026-07-07T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-06.html</id><title>Routine note 06</title><link href="{{B}}/articles/normal-06.html"/><summary>Routine update.</summary><updated>2026-07-06T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-07.html</id><title>Routine note 07</title><link href="{{B}}/articles/normal-07.html"/><summary>Routine update.</summary><updated>2026-07-05T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-08.html</id><title>Routine note 08</title><link href="{{B}}/articles/normal-08.html"/><summary>Routine update.</summary><updated>2026-07-04T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-09.html</id><title>Routine note 09</title><link href="{{B}}/articles/normal-09.html"/><summary>Routine update.</summary><updated>2026-07-03T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-10.html</id><title>Routine note 10</title><link href="{{B}}/articles/normal-10.html"/><summary>Routine update.</summary><updated>2026-07-02T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-11.html</id><title>Routine note 11</title><link href="{{B}}/articles/normal-11.html"/><summary>Routine update.</summary><updated>2026-07-01T08:00:00Z</updated></entry>
+  <entry><id>{{B}}/articles/normal-12.html</id><title>Routine note 12</title><link href="{{B}}/articles/normal-12.html"/><summary>Routine update.</summary><updated>2026-06-30T08:00:00Z</updated></entry>
+</feed>
