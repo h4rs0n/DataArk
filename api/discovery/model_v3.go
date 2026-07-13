@@ -10,8 +10,16 @@ const (
 	DiscoverySiteStatusBlocked   = "blocked"
 	DiscoverySiteStatusNonBlog   = "non_blog"
 
-	DiscoveryProcessingDiscovered = "discovered"
-	DiscoveryEligibilityUnknown   = "unknown"
+	DiscoveryProcessingDiscovered  = "discovered"
+	DiscoveryProcessingFetching    = "fetching"
+	DiscoveryProcessingReady       = "ready"
+	DiscoveryProcessingReview      = "review"
+	DiscoveryProcessingFailed      = "failed"
+	DiscoveryProcessingIneligible  = "ineligible"
+	DiscoveryEligibilityUnknown    = "unknown"
+	DiscoveryEligibilityEligible   = "eligible"
+	DiscoveryEligibilityReview     = "review"
+	DiscoveryEligibilityIneligible = "ineligible"
 )
 
 type DiscoverySite struct {
@@ -146,6 +154,25 @@ type DiscoveryArticleAssessment struct {
 	Candidate          *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
 }
 
+type DiscoveryArticleContentVersion struct {
+	ID             uint                `json:"id" gorm:"primaryKey"`
+	CandidateID    uint                `json:"candidateId" gorm:"uniqueIndex:idx_candidate_content_version;not null"`
+	ContentVersion uint                `json:"contentVersion" gorm:"uniqueIndex:idx_candidate_content_version;not null"`
+	ContentHash    string              `json:"contentHash" gorm:"index;not null;size:128"`
+	FinalURL       string              `json:"finalUrl" gorm:"size:2048"`
+	CanonicalURL   string              `json:"canonicalUrl" gorm:"size:2048"`
+	Title          string              `json:"title" gorm:"size:1024"`
+	Summary        string              `json:"summary" gorm:"type:text"`
+	Author         string              `json:"author" gorm:"size:255"`
+	BodyText       string              `json:"bodyText" gorm:"type:text"`
+	Language       string              `json:"language" gorm:"size:32"`
+	WordCount      int                 `json:"wordCount" gorm:"not null;default:0"`
+	PublishedAt    *time.Time          `json:"publishedAt"`
+	FetchedAt      time.Time           `json:"fetchedAt" gorm:"not null"`
+	CreatedAt      time.Time           `json:"createdAt"`
+	Candidate      *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
+}
+
 type UserCandidateState struct {
 	ID              uint                `json:"id" gorm:"primaryKey"`
 	UserID          uint                `json:"userId" gorm:"uniqueIndex:idx_user_candidate_state;not null"`
@@ -173,6 +200,7 @@ func V3Models() []interface{} {
 		&DiscoveryCandidateProvenance{},
 		&DiscoveryFetchRun{},
 		&DiscoveryBackfillState{},
+		&DiscoveryArticleContentVersion{},
 		&DiscoveryArticleAssessment{},
 		&UserCandidateState{},
 	}

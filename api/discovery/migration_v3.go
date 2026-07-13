@@ -82,8 +82,8 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 			if candidate.FirstSeenAt == nil {
 				updates["first_seen_at"] = firstSeen
 			}
-			if strings.TrimSpace(candidate.ProcessingState) == "" {
-				updates["processing_state"] = DiscoveryProcessingDiscovered
+			if state := strings.TrimSpace(candidate.ProcessingState); state == "" || state == DiscoveryProcessingDiscovered {
+				updates["processing_state"] = DiscoveryProcessingFetchPending
 			}
 			if strings.TrimSpace(candidate.EligibilityState) == "" {
 				updates["eligibility_state"] = DiscoveryEligibilityUnknown

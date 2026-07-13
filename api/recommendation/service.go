@@ -505,6 +505,7 @@ func EnrichPendingDiscoveryCandidates(ctx context.Context, limit int, provider E
 	}
 	var candidates []DiscoveryCandidate
 	if err := db.Where("enrichment_status = ? OR enrichment_status = '' OR enrichment_status IS NULL", RecommendationEnrichmentStatusPending).
+		Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
 		Order("last_seen_at desc").
 		Limit(limit).
 		Find(&candidates).Error; err != nil {
@@ -740,6 +741,7 @@ func selectDailyRecommendationCandidates(ctx context.Context, userID uint, setti
 	cutoff := time.Now().AddDate(0, 0, -settings.CandidateWindowDays)
 	var candidates []DiscoveryCandidate
 	query := db.Where("enrichment_status = ?", RecommendationEnrichmentStatusReady).
+		Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
 		Where("status <> ?", DiscoveryCandidateStatusIgnored).
 		Where("(published_at IS NULL OR published_at >= ?)", cutoff).
 		Order("quality_score desc, depth_score desc, score desc, last_seen_at desc").
@@ -766,7 +768,9 @@ func selectDailyRecommendationCandidates(ctx context.Context, userID uint, setti
 		}
 		if len(missingIDs) > 0 {
 			var vectorCandidates []DiscoveryCandidate
-			if err := db.Where("id IN ?", missingIDs).Find(&vectorCandidates).Error; err != nil {
+			if err := db.Where("id IN ?", missingIDs).
+				Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
+				Find(&vectorCandidates).Error; err != nil {
 				return nil, err
 			}
 			candidates = append(candidates, vectorCandidates...)

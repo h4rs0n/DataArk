@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/discovery"
 	"context"
 	"encoding/json"
 	"errors"
@@ -160,6 +161,8 @@ func TestEnrichDiscoveryCandidateUpdatesStructuredFields(t *testing.T) {
 		BodyText:         strings.Repeat("This PostgreSQL pgvector tutorial explains embedding search. ", 40),
 		Status:           DiscoveryCandidateStatusNew,
 		EnrichmentStatus: RecommendationEnrichmentStatusPending,
+		ProcessingState:  discovery.DiscoveryProcessingReady,
+		EligibilityState: discovery.DiscoveryEligibilityEligible,
 	}
 	if err := db.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
@@ -192,6 +195,8 @@ func TestEnrichDiscoveryCandidateRecordsFailure(t *testing.T) {
 		Title:            "Post",
 		Status:           DiscoveryCandidateStatusNew,
 		EnrichmentStatus: RecommendationEnrichmentStatusPending,
+		ProcessingState:  discovery.DiscoveryProcessingReady,
+		EligibilityState: discovery.DiscoveryEligibilityEligible,
 	}
 	if err := db.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
@@ -365,10 +370,23 @@ func TestGenerateDailyRecommendationsEnrichesPendingCandidates(t *testing.T) {
 		Summary:          "A Go RSS tutorial from a feed",
 		Status:           DiscoveryCandidateStatusNew,
 		EnrichmentStatus: RecommendationEnrichmentStatusPending,
+		ProcessingState:  discovery.DiscoveryProcessingReady,
+		EligibilityState: discovery.DiscoveryEligibilityEligible,
+		BodyText:         strings.Repeat("A complete locally extracted article body with enough information for deterministic enrichment. ", 4),
 		LastSeenAt:       now,
 		PublishedAt:      &now,
 	}
 	if err := db.Create(&candidate).Error; err != nil {
+		t.Fatal(err)
+	}
+	summaryOnly := DiscoveryCandidate{
+		SourceID: 2, SourceName: "summary.example", URL: "https://summary.example/post",
+		Title: "Summary only", Summary: "A feed summary without an extracted body",
+		Status: DiscoveryCandidateStatusNew, EnrichmentStatus: RecommendationEnrichmentStatusPending,
+		ProcessingState: discovery.DiscoveryProcessingFetchPending, EligibilityState: discovery.DiscoveryEligibilityUnknown,
+		LastSeenAt: now, PublishedAt: &now,
+	}
+	if err := db.Create(&summaryOnly).Error; err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := GenerateDailyRecommendations(context.Background(), 13, "2026-06-28")
@@ -384,6 +402,12 @@ func TestGenerateDailyRecommendationsEnrichesPendingCandidates(t *testing.T) {
 	}
 	if enriched.EnrichmentStatus != RecommendationEnrichmentStatusReady || enriched.DedupeKey == "" {
 		t.Fatalf("enriched candidate = %#v", enriched)
+	}
+	if err := db.First(&summaryOnly, summaryOnly.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if summaryOnly.EnrichmentStatus != RecommendationEnrichmentStatusPending {
+		t.Fatalf("summary-only candidate was enriched: %#v", summaryOnly)
 	}
 }
 
@@ -538,6 +562,8 @@ func createReadyCandidate(t *testing.T, rawURL string, title string, topics []st
 		QualityScore:     quality,
 		DepthScore:       depth,
 		EnrichmentStatus: RecommendationEnrichmentStatusReady,
+		ProcessingState:  discovery.DiscoveryProcessingReady,
+		EligibilityState: discovery.DiscoveryEligibilityEligible,
 		Status:           DiscoveryCandidateStatusNew,
 		DedupeKey:        dedupeKey,
 		PublishedAt:      &now,

@@ -206,7 +206,7 @@ func TestV3SQLiteMigrationPreservesAndBackfillsLegacyData(t *testing.T) {
 	if err := database.First(&migratedCandidate, 20).Error; err != nil {
 		t.Fatal(err)
 	}
-	if migratedCandidate.FirstSeenAt == nil || migratedCandidate.ProcessingState != discovery.DiscoveryProcessingDiscovered || migratedCandidate.EligibilityState != discovery.DiscoveryEligibilityUnknown {
+	if migratedCandidate.FirstSeenAt == nil || migratedCandidate.ProcessingState != discovery.DiscoveryProcessingFetchPending || migratedCandidate.EligibilityState != discovery.DiscoveryEligibilityUnknown {
 		t.Fatalf("candidate compatibility fields = %#v", migratedCandidate)
 	}
 
@@ -255,7 +255,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 7 || migrations[len(migrations)-1].Version != 7 {
+	if len(migrations) != 8 || migrations[len(migrations)-1].Version != 8 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -312,6 +312,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"published_confidence", "last_batch_at", "retained on rollback"} {
 		if !strings.Contains(string(historicalBackfill), required) {
 			t.Fatalf("historical backfill migration missing %q", required)
+		}
+	}
+	articleProcessing, err := appmigrations.FS.ReadFile("000008_article_processing_pipeline.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"processing_attempts", "next_processing_at", "dedupe_state", "assessment_state", "discovery_article_content_versions", "content_hash", "Data-preserving rollback"} {
+		if !strings.Contains(string(articleProcessing), required) {
+			t.Fatalf("article processing migration missing %q", required)
 		}
 	}
 }

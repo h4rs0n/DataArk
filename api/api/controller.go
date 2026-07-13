@@ -88,9 +88,10 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 			_, err := discovery.FetchDiscoverySourceByID(ctx, sourceID)
 			return err
 		},
-		ScanBlogroll:  discovery.RunScanBlogrollJob,
-		BackfillSite:  discovery.RunBackfillSiteJob,
-		GenerateDaily: recommendation.RunGenerateDailyRecommendationJob,
+		ScanBlogroll:     discovery.RunScanBlogrollJob,
+		BackfillSite:     discovery.RunBackfillSiteJob,
+		ProcessCandidate: discovery.RunProcessCandidateJob,
+		GenerateDaily:    recommendation.RunGenerateDailyRecommendationJob,
 	}
 	recover := func(ctx context.Context, queue jobqueue.JobEnqueuer) error {
 		now := time.Now()

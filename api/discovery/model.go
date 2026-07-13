@@ -68,6 +68,14 @@ type DiscoveryCandidate struct {
 	EnrichedAt          *time.Time `json:"enrichedAt"`
 	Status              string     `json:"status" gorm:"index;not null;size:32"`
 	ProcessingState     string     `json:"processingState" gorm:"index;not null;default:discovered;size:32"`
+	ProcessingAttempts  uint       `json:"processingAttempts" gorm:"not null;default:0"`
+	ProcessingError     string     `json:"processingError" gorm:"type:text"`
+	ProcessingErrorType string     `json:"processingErrorType" gorm:"index;size:64"`
+	NextProcessingAt    *time.Time `json:"nextProcessingAt" gorm:"index"`
+	FetchedAt           *time.Time `json:"fetchedAt"`
+	ExtractedAt         *time.Time `json:"extractedAt"`
+	DedupeState         string     `json:"dedupeState" gorm:"index;not null;default:pending;size:32"`
+	AssessmentState     string     `json:"assessmentState" gorm:"index;not null;default:pending;size:32"`
 	EligibilityState    string     `json:"eligibilityState" gorm:"index;not null;default:unknown;size:32"`
 	EligibilityReasons  string     `json:"eligibilityReasons" gorm:"type:text"`
 	Score               float64    `json:"score" gorm:"not null;default:0"`

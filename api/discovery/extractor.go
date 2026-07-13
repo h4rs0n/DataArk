@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"net/url"
 	"strings"
+	"time"
+	"unicode"
 
 	distiller "github.com/markusmobius/go-domdistiller"
 	"golang.org/x/net/html"
@@ -15,6 +17,10 @@ type ExtractedArticle struct {
 	WordCount    int
 	Description  string
 	CanonicalURL string
+	Author       string
+	PublishedAt  *time.Time
+	Language     string
+	IsArticle    bool
 }
 
 func ExtractArticle(rawURL string, body []byte) (*ExtractedArticle, error) {
@@ -31,9 +37,13 @@ func ExtractArticle(rawURL string, body []byte) (*ExtractedArticle, error) {
 		return nil, err
 	}
 	article := &ExtractedArticle{
-		Title:     strings.TrimSpace(result.Title),
-		Text:      strings.Join(strings.Fields(result.Text), " "),
-		WordCount: result.WordCount,
+		Title:       strings.TrimSpace(result.Title),
+		Text:        strings.Join(strings.Fields(result.Text), " "),
+		WordCount:   result.WordCount,
+		Author:      strings.TrimSpace(result.MarkupInfo.Author),
+		Language:    metadata.language,
+		IsArticle:   metadata.hasArticleElement || strings.EqualFold(result.MarkupInfo.Type, "article"),
+		PublishedAt: parseArticleTime(result.MarkupInfo.Article.PublishedTime),
 	}
 	if article.Title == "" {
 		article.Title = metadata.title
@@ -48,13 +58,26 @@ func ExtractArticle(rawURL string, body []byte) (*ExtractedArticle, error) {
 	} else {
 		article.CanonicalURL = metadata.canonicalURL
 	}
+	if article.Author == "" {
+		article.Author = metadata.author
+	}
+	if article.PublishedAt == nil {
+		article.PublishedAt = parseArticleTime(metadata.publishedAt)
+	}
+	if article.Language == "" {
+		article.Language = detectTextLanguage(article.Text)
+	}
 	return article, nil
 }
 
 type htmlMetadata struct {
-	title        string
-	description  string
-	canonicalURL string
+	title             string
+	description       string
+	canonicalURL      string
+	author            string
+	publishedAt       string
+	language          string
+	hasArticleElement bool
 }
 
 func extractHTMLMetadata(body []byte) htmlMetadata {
@@ -67,6 +90,12 @@ func extractHTMLMetadata(body []byte) htmlMetadata {
 	walk = func(node *html.Node) {
 		if node.Type == html.ElementNode {
 			switch node.Data {
+			case "html":
+				if metadata.language == "" {
+					metadata.language = normalizeLanguage(attr(node, "lang"))
+				}
+			case "article":
+				metadata.hasArticleElement = true
 			case "title":
 				if metadata.title == "" && node.FirstChild != nil && node.FirstChild.Type == html.TextNode {
 					metadata.title = strings.TrimSpace(node.FirstChild.Data)
@@ -87,6 +116,18 @@ func extractHTMLMetadata(body []byte) htmlMetadata {
 					if metadata.canonicalURL == "" {
 						metadata.canonicalURL = content
 					}
+				case "author", "article:author":
+					if metadata.author == "" {
+						metadata.author = content
+					}
+				case "article:published_time", "date", "datepublished", "publishdate", "pubdate":
+					if metadata.publishedAt == "" {
+						metadata.publishedAt = content
+					}
+				}
+			case "time":
+				if metadata.publishedAt == "" {
+					metadata.publishedAt = strings.TrimSpace(attr(node, "datetime"))
 				}
 			case "link":
 				if metadata.canonicalURL == "" && strings.Contains(strings.ToLower(attr(node, "rel")), "canonical") {
@@ -100,6 +141,46 @@ func extractHTMLMetadata(body []byte) htmlMetadata {
 	}
 	walk(doc)
 	return metadata
+}
+
+func parseArticleTime(value string) *time.Time {
+	value = strings.TrimSpace(value)
+	for _, layout := range []string{time.RFC3339, time.RFC3339Nano, "2006-01-02", time.RFC1123Z, time.RFC1123} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return &parsed
+		}
+	}
+	return nil
+}
+
+func normalizeLanguage(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if separator := strings.IndexAny(value, "-_"); separator >= 0 {
+		value = value[:separator]
+	}
+	if len(value) >= 2 && len(value) <= 3 {
+		return value
+	}
+	return ""
+}
+
+func detectTextLanguage(value string) string {
+	var latin, han int
+	for _, character := range value {
+		switch {
+		case unicode.In(character, unicode.Han):
+			han++
+		case unicode.In(character, unicode.Latin):
+			latin++
+		}
+	}
+	if han >= 4 && han >= latin/4 {
+		return "zh"
+	}
+	if latin >= 8 {
+		return "en"
+	}
+	return ""
 }
 
 func firstAttr(node *html.Node, keys ...string) string {

@@ -70,6 +70,10 @@ func TestRecoverDueJobsContinuesAfterIndependentSourceFailure(t *testing.T) {
 	if err := db.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
 	}
+	futureCandidate := DiscoveryCandidate{SourceID: due.ID, SourceName: due.Name, URL: "https://recovery.example/article-later", Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingFetchPending, EligibilityState: DiscoveryEligibilityUnknown, NextProcessingAt: &future, LastSeenAt: now}
+	if err := db.Create(&futureCandidate).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	queue := &recoveryRecordingQueue{failSource: due.ID}
 	if err := RecoverDueJobs(context.Background(), queue, now); err == nil {
