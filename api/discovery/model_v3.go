@@ -28,6 +28,7 @@ type DiscoverySite struct {
 	LastReferencedAt   *time.Time `json:"lastReferencedAt" gorm:"index"`
 	LastArticleAt      *time.Time `json:"lastArticleAt"`
 	LastValidatedAt    *time.Time `json:"lastValidatedAt"`
+	ActivatedAt        *time.Time `json:"activatedAt" gorm:"index"`
 	NextGraphScanAt    *time.Time `json:"nextGraphScanAt" gorm:"index"`
 	OperationalPause   string     `json:"operationalPause" gorm:"size:64"`
 	OperationalDetails string     `json:"operationalDetails" gorm:"type:text"`
@@ -43,6 +44,8 @@ type DiscoverySiteEdge struct {
 	SourcePageURL   string         `json:"sourcePageUrl" gorm:"not null;size:2048"`
 	AnchorText      string         `json:"anchorText" gorm:"size:1024"`
 	RelationType    string         `json:"relationType" gorm:"index;not null;size:64"`
+	DetectionRule   string         `json:"detectionRule" gorm:"index;size:64"`
+	ContextSummary  string         `json:"contextSummary" gorm:"type:text"`
 	EvidenceSummary string         `json:"evidenceSummary" gorm:"type:text"`
 	Confidence      float64        `json:"confidence" gorm:"not null;default:0"`
 	FirstSeenAt     time.Time      `json:"firstSeenAt" gorm:"not null"`

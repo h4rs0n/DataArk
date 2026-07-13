@@ -29,6 +29,18 @@ next_due_at <= ? OR
 		}
 	}
 
+	var sites []DiscoverySite
+	graphStatuses := []string{DiscoverySiteStatusSeed, DiscoverySiteStatusObserving, DiscoverySiteStatusActive}
+	if err := db.Where("status IN ? AND crawl_allowed = ? AND operational_pause = ? AND (next_graph_scan_at IS NULL OR next_graph_scan_at <= ?)", graphStatuses, true, "", now).Order("id").Find(&sites).Error; err != nil {
+		recoveryErrors = append(recoveryErrors, err)
+	} else {
+		for _, site := range sites {
+			if err := queue.EnqueueScanBlogroll(ctx, site.ID); err != nil {
+				recoveryErrors = append(recoveryErrors, err)
+			}
+		}
+	}
+
 	var backfills []DiscoveryBackfillState
 	if err := db.Where("status NOT IN ? AND (next_batch_at IS NULL OR next_batch_at <= ?)", []string{"completed", "paused"}, now).Order("id").Find(&backfills).Error; err != nil {
 		recoveryErrors = append(recoveryErrors, err)

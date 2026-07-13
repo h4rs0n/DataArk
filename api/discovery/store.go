@@ -88,8 +88,36 @@ func CreateDiscoverySource(name string, rawURL string, sourceType string, enable
 	if db == nil {
 		return source, nil
 	}
-	if err := db.Create(source).Error; err != nil {
+	now := discoveryClock.Now()
+	var site DiscoverySite
+	var homepage DiscoverySource
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		site, err = ensureManualSeedSite(tx, source, now)
+		if err != nil {
+			return err
+		}
+		source.SiteID = &site.ID
+		if err := tx.Create(source).Error; err != nil {
+			return err
+		}
+		homepage, err = ensureHomepageEndpoint(tx, site, now)
+		return err
+	}); err != nil {
 		return nil, err
+	}
+	if queue, available := jobqueue.Default(); available {
+		if err := queue.EnqueueFetchSource(context.Background(), source.ID); err != nil {
+			log.Printf("new discovery seed source %d fetch enqueue failed: %v", source.ID, err)
+		}
+		if homepage.ID != source.ID {
+			if err := queue.EnqueueFetchSource(context.Background(), homepage.ID); err != nil {
+				log.Printf("new discovery seed homepage %d fetch enqueue failed: %v", homepage.ID, err)
+			}
+		}
+		if err := queue.EnqueueScanBlogroll(context.Background(), site.ID); err != nil {
+			log.Printf("new discovery seed site %d blogroll enqueue failed: %v", site.ID, err)
+		}
 	}
 	return source, nil
 }

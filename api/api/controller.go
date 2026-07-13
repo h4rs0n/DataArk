@@ -50,6 +50,7 @@ var (
 	deleteDiscoverySource        = discovery.DeleteDiscoverySource
 	fetchDiscoverySourceByID     = discovery.FetchDiscoverySourceByID
 	listDiscoveryCandidates      = discovery.ListDiscoveryCandidates
+	getDiscoverySiteGraph        = discovery.GetSiteGraph
 	getDiscoveryCandidate        = discovery.GetDiscoveryCandidate
 	markCandidateRead            = discovery.MarkDiscoveryCandidateRead
 	markCandidateIgnored         = discovery.MarkDiscoveryCandidateIgnored
@@ -86,6 +87,7 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 			_, err := discovery.FetchDiscoverySourceByID(ctx, sourceID)
 			return err
 		},
+		ScanBlogroll:  discovery.RunScanBlogrollJob,
 		GenerateDaily: recommendation.RunGenerateDailyRecommendationJob,
 	}
 	recover := func(ctx context.Context, queue jobqueue.JobEnqueuer) error {
@@ -444,6 +446,23 @@ func FetchDiscoverySource(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"Status": "1", "Message": "刷新内容源成功", "Data": result})
+}
+
+func GetDiscoverySiteGraph(c *gin.Context) {
+	siteID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	graph, err := getDiscoverySiteGraph(siteID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if discovery.IsSiteGraphNotFound(err) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"Status": "0", "Message": "查询站点图谱失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询站点图谱成功", "Data": graph})
 }
 
 func ListDiscoveryCandidates(c *gin.Context) {
@@ -1081,6 +1100,7 @@ func WebStarter(debugMode bool) {
 		protected.PUT("/discovery/sources/:id", UpdateDiscoverySource)
 		protected.DELETE("/discovery/sources/:id", DeleteDiscoverySource)
 		protected.POST("/discovery/sources/:id/fetch", FetchDiscoverySource)
+		protected.GET("/discovery/sites/:id/graph", GetDiscoverySiteGraph)
 		protected.GET("/discovery/candidates", ListDiscoveryCandidates)
 		protected.POST("/discovery/candidates/:id/read", MarkDiscoveryCandidateRead)
 		protected.POST("/discovery/candidates/:id/archive", ArchiveDiscoveryCandidate)

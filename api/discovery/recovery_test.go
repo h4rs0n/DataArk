@@ -9,6 +9,7 @@ import (
 
 type recoveryRecordingQueue struct {
 	fetches    []uint
+	scans      []uint
 	backfills  []uint
 	candidates []uint
 	failSource uint
@@ -22,7 +23,10 @@ func (queue *recoveryRecordingQueue) EnqueueFetchSource(_ context.Context, sourc
 	return nil
 }
 
-func (*recoveryRecordingQueue) EnqueueScanBlogroll(context.Context, uint) error { return nil }
+func (queue *recoveryRecordingQueue) EnqueueScanBlogroll(_ context.Context, siteID uint) error {
+	queue.scans = append(queue.scans, siteID)
+	return nil
+}
 
 func (queue *recoveryRecordingQueue) EnqueueBackfillSite(_ context.Context, siteID uint) error {
 	queue.backfills = append(queue.backfills, siteID)
@@ -73,6 +77,9 @@ func TestRecoverDueJobsContinuesAfterIndependentSourceFailure(t *testing.T) {
 	}
 	if len(queue.fetches) != 1 || queue.fetches[0] != due.ID {
 		t.Fatalf("fetch recoveries = %#v", queue.fetches)
+	}
+	if len(queue.scans) != 1 || queue.scans[0] != site.ID {
+		t.Fatalf("graph scan recoveries = %#v", queue.scans)
 	}
 	if len(queue.backfills) != 1 || queue.backfills[0] != site.ID {
 		t.Fatalf("backfill recoveries = %#v", queue.backfills)

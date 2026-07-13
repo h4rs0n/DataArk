@@ -5,6 +5,7 @@ import (
 	"DataArk/auth"
 	"DataArk/backup"
 	"DataArk/config"
+	"DataArk/discovery"
 	"DataArk/search"
 	"bytes"
 	"context"
@@ -503,6 +504,33 @@ func TestCORSMiddleware(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	if response.Header().Get("Access-Control-Allow-Origin") != "*" || response.Body.String() != "ok" {
 		t.Fatalf("unexpected cors response headers=%v body=%q", response.Header(), response.Body.String())
+	}
+}
+
+func TestGetDiscoverySiteGraphReturnsEvidenceAndNotFound(t *testing.T) {
+	oldGet := getDiscoverySiteGraph
+	t.Cleanup(func() { getDiscoverySiteGraph = oldGet })
+	getDiscoverySiteGraph = func(siteID uint) (*discovery.SiteGraphView, error) {
+		if siteID != 2 {
+			return nil, gorm.ErrRecordNotFound
+		}
+		return &discovery.SiteGraphView{
+			Site: discovery.DiscoverySite{ID: 2, DisplayName: "B", Status: discovery.DiscoverySiteStatusObserving, GraphDepth: 1},
+			ShortestSeedPath: discovery.SiteGraphPath{
+				Sites: []discovery.DiscoverySite{{ID: 1, DisplayName: "A", Status: discovery.DiscoverySiteStatusSeed}, {ID: 2, DisplayName: "B", Status: discovery.DiscoverySiteStatusObserving}},
+				Edges: []discovery.DiscoverySiteEdge{{FromSiteID: 1, ToSiteID: 2, SourcePageURL: "https://a.example/links", DetectionRule: "explicit_rel", ContextSummary: "People I read"}},
+			},
+			IndependentInboundSites: 1,
+		}, nil
+	}
+
+	response := performPathControllerRequest(http.MethodGet, "/graph/:id", "/graph/2", GetDiscoverySiteGraph)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "explicit_rel") || !strings.Contains(response.Body.String(), "People I read") {
+		t.Fatalf("graph response status=%d body=%s", response.Code, response.Body.String())
+	}
+	response = performPathControllerRequest(http.MethodGet, "/graph/:id", "/graph/99", GetDiscoverySiteGraph)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("missing graph status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

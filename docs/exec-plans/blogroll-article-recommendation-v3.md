@@ -37,7 +37,7 @@
 - [x] 2026-07-13T21:28:44+08:00 M1：完成增量数据库模型和兼容迁移，保留现有数据并建立逻辑博客、来源端点、图谱边、文章溯源、处理状态、用户状态和日报快照结构。聚焦验证 `go test ./auth ./bootstrap ./discovery ./recommendation -count=1` 通过；`TestV3SQLiteMigrationPreservesAndBackfillsLegacyData` 验证重复迁移、计数、默认值、唯一键、外键、旧端点映射、溯源、角色、快照和跨日报历史，`TestV3GooseMigrationIsAdditiveAndParseable` 验证三份 Goose 迁移可解析。仓库验证 `go test ./...`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`494a27a`；当前环境缺少 `docker` 命令，真实 PostgreSQL 执行留待具备容器基础设施时补验。
 - [x] 2026-07-13T21:40:20+08:00 M2：抽取共享持久任务运行时，支持发现抓取、图谱扫描、历史回溯、文章处理和日报生成的幂等作业。聚焦测试 `go test ./jobqueue ./discovery ./recommendation ./api -count=1` 通过，race 验证 `go test -race ./discovery ./recommendation ./jobqueue/...` 通过；仓库验证 `go test ./...`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`929f032`。
 - [x] 2026-07-13T22:56:00+08:00 M3：完成统一安全 HTTP 抓取层、条件请求、robots、SSRF／重定向复验、逐域并发与速率限制、有限指数退避和逐来源调度。聚焦验证 `go test ./discovery ./bootstrap -count=1` 通过，race 验证 `go test -race ./discovery -count=1` 通过；本地验收覆盖 `200 + ETag → 304` 零新增、robots 禁止零正文请求、私网重定向拒绝、超大／错误类型拒绝、失败后恢复、低命中有限下次时间和确定性域名限制。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`f499077`。
-- [ ] M4：完成友情链接识别、博客关系图谱、循环与深度控制、新来源观察状态和发现路径 API。
+- [x] 2026-07-13T23:17:21+08:00 M4：完成多证据 Blogroll 识别、保留证据的博客关系图谱、有界循环／深度／单站／每日激活、新来源观察状态、恢复调度和只读发现路径 API。聚焦验证 `go test ./discovery ./api ./bootstrap -count=1` 通过，race 验证 `go test -race ./discovery ./api -count=1` 通过；本地 A→B→C→A 验收只生成 3 个规范站点和 5 条预期边，普通正文／广告／社交外链不入图，B 自动创建 observing 节点与立即到期主页端点，API 返回从 A 的 Links 页发现 B 的最短路径和结构化证据，深度／单站／每日剩余目标均以 pending 保留并可恢复。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`PENDING_M4_CHECKPOINT`。
 - [ ] M5：完成站点端点发现和最新文章增量入池，并使一篇文章保留多个发现来源。
 - [ ] M6：完成 Sitemap、归档页、分页和站内文章链接驱动的持久化历史回溯。
 - [ ] M7：把正文抓取与 `ExtractArticle` 串入常规文章处理流水线，明确文章有效性、重试和可推荐状态。
@@ -77,6 +77,8 @@
 - 2026-07-13：现有发现 ticker 的问题不是周期唤醒本身，而是在 ticker goroutine 中串行抓取所有来源。M2 保留轻量周期唤醒以兼容现有配置，但其回调现在只把到期工作交给共享队列；实际抓取不再由全局 ticker 串行执行。M3 将进一步按端点 `next_due_at`、退避和域名限制细化调度。
 - 2026-07-13：GORM 默认把字段名 `ETag` 映射为 `e_tag`，但 M1 PostgreSQL 迁移和既有列名是 `etag`；M3 首次条件请求持久化测试暴露了 SQLite 的同类错配。`DiscoverySource` 和 fetch-run 模型现在显式声明 `column:etag`，自动迁移和 PostgreSQL DDL 因而使用同一列名。
 - 2026-07-13：原站点抓取依赖 Colly 的独立 HTTP 栈，无法共享新抓取器的验证器、robots 缓存、响应类型和域名节流。M3 用有页数上限的同域 BFS 和现有 HTML 解析器替换该路径；`go mod tidy` 随之移除 Colly 及其仅由此路径引入的间接依赖。
+- 2026-07-13：M0 的 C 首页故意包含文本“is not a blogroll”及普通新闻链接；M4 初版若只做关键词包含，会把否定语境和同一 `<main>` 下的异构外链误判为友链。解析器现在识别中英文否定短语，并只在最近的稳定区块内统计外链列表；该夹具继续保留普通 A 文章引用，同时新增独立 Friends 页形成真正的 C→A 图谱边。
+- 2026-07-13：仅用 `created_at` 无法可靠执行“每日新激活 100 个观察站点”，因为前一天 pending 的节点在今天恢复时不会计入当天创建数。`DiscoverySite.ActivatedAt` 和第五份增量迁移现在记录实际激活日，跨扫描和重启都能执行同一每日上限。
 - 2026-07-13：River 的 worker 注册若直接导入推荐／发现包会与调用方形成导入环。共享包因此只持有稳定 Args、River client 和函数式 `Handlers`，由 API 组合根注入业务 handler；推荐包不再拥有 River client 生命周期。
 
 ## Decision Log
@@ -115,6 +117,10 @@
 - 2026-07-13：M3 的所有发现网络访问统一通过 `HTTPClientFetcher`，并对 Feed、Sitemap、HTML／正文和 robots 使用独立默认大小上限；robots 获取失败采用保守的 fail-closed，并以 `robots_unavailable` 区别于明确的 `robots_disallowed`。理由是无法确认站点规则时继续抓正文风险更高，且两类状态必须支持不同的运维判断和后续重试。
 - 2026-07-13：端点成功调度以类型上限为安全基线：活跃 Feed 24 小时、观察站点 7 天、休眠站点 30 天；观察到实际更新时可在 15 分钟下限和类型上限之间缩短间隔。失败采用以来源 ID 和连续失败次数生成的稳定抖动指数退避，成功清零；低历史命中从不产生 `NULL` 或无限远时间。
 - 2026-07-13：新增 `000004_discovery_fetch_observability.sql`，为抓取运行保存最终 URL、Content-Type、ETag、Last-Modified 和 robots 状态；Down 保留审计数据。拒绝把这些信息塞入错误文本或覆盖端点原 URL，因为结构化运行记录更易对账，且重定向不应悄然改变管理员配置的入口。
+- 2026-07-13：M4 只把显式 `rel=friend/me/blogroll`、明确中英文标题／区块、常见 Links/Friends/Blogroll 路径或至少三个同区块外站组成的稳定列表作为图谱证据；普通正文外链本身永远不够。边只保存来源页、锚文本、最多 240 字符上下文、检测规则和置信度，不保存正文全文。
+- 2026-07-13：达到深度、单站或每日上限时，仍创建规范站点和边，但在节点 `operational_pause` 与边 `pending_reason` 中记录原因、暂不创建可抓端点；后续扫描有预算时清除 pause、写 `activated_at` 并安排主页抓取和 Blogroll 扫描。理由是静默截断不可恢复，而把 pending 节点当作已激活又会绕过预算。
+- 2026-07-13：站点分类采取保守策略：只把已知社交平台和明确登录／购物流程判为 `non_blog`，其他由友链证据发现但尚未验证的目标进入 `observing`。历史文章质量、平均分和命中率不进入分类、建边、深度或任务优先级；独立入链数只提高抓取端点优先级。
+- 2026-07-13：人工新增来源在同一数据库事务中升级／创建 `seed` 站点并确保主页端点，事务提交后安排来源抓取与图谱扫描；队列临时失败不回滚已保存种子，到期端点和 `next_graph_scan_at` 由启动／周期恢复补入。这样 API 不会因可恢复的队列瞬断留下“返回失败但数据已创建”的歧义。
 
 ## Outcomes & Retrospective
 
@@ -133,6 +139,10 @@ M1 与计划的差异是当前机器无法执行 PostgreSQL 容器集成；迁�
 2026-07-13，M3 已完成。Feed、Sitemap、站点 HTML 和后续文章请求现在共享一个无 Cookie／认证信息的安全抓取器：初始 URL 与每次重定向都执行 SSRF 检查，按内容类型使用大小上限，并在读取前遵守缓存的 robots 规则和逐域并发／最小间隔。Feed 端点持久化 ETag／Last-Modified；`304` 作为未变化成功写入 fetch run，不再解析 Feed 或增加候选。每次尝试都记录结构化 HTTP、最终 URL、验证器、robots 和错误类别，来源成功会清零失败，失败会设置有限退避，新来源立即到期，启动恢复继续只入队已到期端点。
 
 M3 的验证完全使用内存 SQLite、固定时钟、测试抓取替身和本机 `httptest`，没有真实互联网、用户数据或 LLM 密钥。PostgreSQL 迁移的真实容器执行仍因本机缺少 Docker 未补验；新增迁移是纯增量、Goose 可解析且 Down 保留审计数据。M4 的主要风险是友情链接识别必须复用同一安全抓取层，同时区分站内普通链接、广告／导航和真正跨站 Blogroll 证据，并严格控制循环、深度与扇出。
+
+2026-07-13，M4 已完成。`BlogrollDiscoverer` 从首页和有界的常见 Friends/Links/Blogroll 页面提取显式关系、上下文标题和稳定外链列表，`SiteClassifier` 只做保守结构分类，`SiteGraphService` 规范化 `www`／根主机、幂等写边、维护最小深度和独立入链优先级，并为新观察站点创建立即到期的主页端点。扫描 worker 已接入共享 River／内存运行时和启动恢复；`GET /api/discovery/sites/:id/graph` 返回直接入／出边、证据、从最近种子的最短路径、深度、独立入链数及停止原因。
+
+循环和预算行为由固定三站夹具证明：重复扫描 A、B、C 不增加站点或边，C 首页的普通新闻、广告、社交和文章引用均不被误判，只有独立 Friends 页产生 C→A。超出深度、每次激活和每日激活的目标不会丢失，后两类在下一次有预算的扫描恢复。测试仍不访问互联网、用户数据或 LLM；PostgreSQL 容器执行继续受本机缺少 Docker 限制，第五份 Goose 迁移仅增加证据和激活时间且 Down 保留数据。M5 的主要风险是把主页、Feed、Sitemap 端点发现和多溯源文章入池接到现有双路径时，不能覆盖首次来源或让缺正文链接提前变成 ready。
 
 每完成一个里程碑，在本节追加实际结果、与计划差异、遗留问题和下一里程碑风险。最终必须回答：
 
@@ -1295,6 +1305,8 @@ M1 迁移证据：`api/migrations/000003_blog_discovery_v3.sql` 只增加结构�
 
 M3 抓取证据：`api/discovery/fetch_m3_test.go` 在本地服务器和固定时钟上验证条件请求、robots、重定向复验、类型限制、退避恢复、有限低命中调度和域名限制；`api/migrations/000004_discovery_fetch_observability.sql` 以结构化列保留每次抓取的最终 URL、响应类型、验证器和 robots 状态。
 
+M4 图谱证据：`api/discovery/blogroll_m4_test.go` 验证显式／上下文／稳定列表规则、否定语境、A→B→C→A 幂等循环、质量独立、自动 observing／端点任务、最短路径和三类 pending 恢复；`api/migrations/000005_blogroll_graph_evidence.sql` 增加检测规则、上下文摘要和持久激活时间。
+
 M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候选版本并发入队 100 次只执行 1 次；`TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures` 证明失败来源和模拟进程中断可恢复且不阻塞其他来源；`TestStartSQLiteDuplicateRecoveryRunsOnce` 证明两个运行时恢复同一端点只执行一次；`TestRecoverDueJobsContinuesAfterIndependentSourceFailure` 与 `TestRecoverDueJobsEnqueuesOnlyMissingLocalDay` 固定发现和日报启动补偿边界。
 
 ## Plan Revision Note
@@ -1304,6 +1316,8 @@ M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候�
 2026-07-13：完成 M0 并把计划移动到恢复协议规定的正式路径。此次修订记录基线版本和验证结果，增加确定性多站点夹具及可替换时钟、HTTP、任务边界，并说明受限环境中 `make all` 的安全替代验证；这些变化为后续数据库和任务里程碑提供无外网、无 LLM 密钥的稳定测试基础。
 
 2026-07-13：完成 M3 后补充统一抓取边界、结构化抓取审计、逐端点有限调度和本地安全验收结果；新增的第四份 Goose 迁移只扩展 fetch-run 可观测字段，保留 M1 的增量／数据保留回滚策略。
+
+2026-07-13：完成 M4 后补充 Blogroll 证据规则、有界 BFS 图谱、pending 恢复、种子即时调度和只读最短路径 API 的实际结果；第五份 Goose 迁移继续采用增量且数据保留的回滚策略。
 
 2026-07-13：完成 M1。此次修订记录增量 v3 模型、数据保留回填、角色和日报快照语义、唯一约束转换、SQLite 迁移证据及 PostgreSQL 基础设施缺口；选择数据保留 Down 和启动幂等回填，是为了让后续里程碑可逐步切流并在任何检查点安全恢复。
 
