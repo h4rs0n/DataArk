@@ -13,11 +13,19 @@ type DiscoverySource struct {
 	Name          string     `json:"name" gorm:"not null;size:255"`
 	URL           string     `json:"url" gorm:"uniqueIndex;not null;size:2048"`
 	Type          string     `json:"type" gorm:"not null;size:32"`
+	SiteID        *uint      `json:"siteId" gorm:"index"`
+	EndpointType  string     `json:"endpointType" gorm:"index;not null;default:legacy;size:32"`
+	Priority      int        `json:"priority" gorm:"not null;default:0"`
 	Enabled       bool       `json:"enabled" gorm:"not null;default:true"`
 	ETag          string     `json:"etag" gorm:"size:1024"`
 	LastModified  string     `json:"lastModified" gorm:"size:1024"`
 	FailureCount  int        `json:"failureCount" gorm:"not null;default:0"`
 	NextFetchAt   *time.Time `json:"nextFetchAt"`
+	LastAttemptAt *time.Time `json:"lastAttemptAt"`
+	LastSuccessAt *time.Time `json:"lastSuccessAt"`
+	NextDueAt     *time.Time `json:"nextDueAt" gorm:"index"`
+	BackoffUntil  *time.Time `json:"backoffUntil"`
+	BackoffReason string     `json:"backoffReason" gorm:"size:64"`
 	CrawlConfig   string     `json:"crawlConfig" gorm:"type:text"`
 	LastFetchedAt *time.Time `json:"lastFetchedAt"`
 	LastError     string     `json:"lastError" gorm:"type:text"`
@@ -32,6 +40,7 @@ type DiscoveryCandidate struct {
 	URL                string     `json:"url" gorm:"uniqueIndex;not null;size:2048"`
 	CanonicalURL       string     `json:"canonicalUrl" gorm:"size:2048"`
 	NormalizedURL      string     `json:"normalizedUrl" gorm:"index;size:2048"`
+	FinalURL           string     `json:"finalUrl" gorm:"size:2048"`
 	Title              string     `json:"title" gorm:"size:1024"`
 	Summary            string     `json:"summary" gorm:"type:text"`
 	Author             string     `json:"author" gorm:"size:255"`
@@ -39,8 +48,11 @@ type DiscoveryCandidate struct {
 	Language           string     `json:"language" gorm:"size:32"`
 	WordCount          int        `json:"wordCount" gorm:"not null;default:0"`
 	ContentHash        string     `json:"contentHash" gorm:"index;size:128"`
+	ContentVersion     uint       `json:"contentVersion" gorm:"not null;default:0"`
+	BodyChangedAt      *time.Time `json:"bodyChangedAt"`
 	DedupeKey          string     `json:"dedupeKey" gorm:"index;size:128"`
 	DuplicateClusterID string     `json:"duplicateClusterId" gorm:"index;size:128"`
+	RepresentativeID   *uint      `json:"representativeId" gorm:"index"`
 	Topics             string     `json:"topics" gorm:"type:text"`
 	Entities           string     `json:"entities" gorm:"type:text"`
 	ContentType        string     `json:"contentType" gorm:"index;size:64"`
@@ -54,10 +66,14 @@ type DiscoveryCandidate struct {
 	PromptVersion      string     `json:"promptVersion" gorm:"size:64"`
 	EnrichedAt         *time.Time `json:"enrichedAt"`
 	Status             string     `json:"status" gorm:"index;not null;size:32"`
+	ProcessingState    string     `json:"processingState" gorm:"index;not null;default:discovered;size:32"`
+	EligibilityState   string     `json:"eligibilityState" gorm:"index;not null;default:unknown;size:32"`
+	EligibilityReasons string     `json:"eligibilityReasons" gorm:"type:text"`
 	Score              float64    `json:"score" gorm:"not null;default:0"`
 	PublishedAt        *time.Time `json:"publishedAt"`
 	ArchivedTaskID     string     `json:"archivedTaskId" gorm:"size:36"`
 	LastSeenAt         time.Time  `json:"lastSeenAt" gorm:"index"`
+	FirstSeenAt        *time.Time `json:"firstSeenAt" gorm:"index"`
 	CreatedAt          time.Time  `json:"createdAt"`
 	UpdatedAt          time.Time  `json:"updatedAt"`
 }

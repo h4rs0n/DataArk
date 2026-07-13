@@ -28,6 +28,9 @@ func TestUserDatabaseOperations(t *testing.T) {
 	if user.ID == 0 || user.Password == "secret123" {
 		t.Fatalf("unexpected user: %#v", user)
 	}
+	if user.Role != UserRoleMember {
+		t.Fatalf("member role = %q", user.Role)
+	}
 	if _, err := CreateUser("bob", "secret123"); err == nil {
 		t.Fatal("duplicate user should return error")
 	}
@@ -35,6 +38,9 @@ func TestUserDatabaseOperations(t *testing.T) {
 	admin, err := CreateUser("admin", "secret123")
 	if err != nil || admin == nil {
 		t.Fatalf("initial admin create = %#v err=%v", admin, err)
+	}
+	if admin.Role != UserRoleOwner {
+		t.Fatalf("admin role = %q", admin.Role)
 	}
 	admin, err = CreateUser("admin", "secret123")
 	if err != nil || admin != nil {

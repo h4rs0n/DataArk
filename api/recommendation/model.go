@@ -35,32 +35,50 @@ type RecommendationDay struct {
 	RecommendationDate string               `json:"date" gorm:"uniqueIndex:idx_recommendation_days_user_date;not null;size:10"`
 	Timezone           string               `json:"timezone" gorm:"not null;size:64"`
 	Status             string               `json:"status" gorm:"index;not null;size:32"`
+	PolicyVersion      string               `json:"policyVersion" gorm:"index;not null;default:v2;size:64"`
+	ShortageReasons    string               `json:"shortageReasons" gorm:"type:text"`
 	RequestedCount     int                  `json:"requestedCount" gorm:"not null;default:10"`
 	ActualCount        int                  `json:"actualCount" gorm:"not null;default:0"`
 	ProfileVersion     uint                 `json:"profileVersion"`
 	LLMModel           string               `json:"llmModel" gorm:"size:255"`
 	PromptVersion      string               `json:"promptVersion" gorm:"size:64"`
 	GeneratedAt        *time.Time           `json:"generatedAt"`
+	PublishedAt        *time.Time           `json:"publishedAt" gorm:"index"`
+	AuditVersion       uint                 `json:"auditVersion" gorm:"not null;default:1"`
 	Items              []RecommendationItem `json:"items" gorm:"foreignKey:DayID"`
 	CreatedAt          time.Time            `json:"createdAt"`
 	UpdatedAt          time.Time            `json:"updatedAt"`
 }
 
 type RecommendationItem struct {
-	ID             uint                         `json:"id" gorm:"primaryKey"`
-	DayID          uint                         `json:"dayId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;index;not null"`
-	UserID         uint                         `json:"userId" gorm:"uniqueIndex:idx_recommendation_items_user_candidate;index;not null"`
-	CandidateID    uint                         `json:"candidateId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;uniqueIndex:idx_recommendation_items_user_candidate;index;not null"`
-	Candidate      discovery.DiscoveryCandidate `json:"candidate" gorm:"-"`
-	DedupeKey      string                       `json:"dedupeKey" gorm:"index;size:128"`
-	Rank           int                          `json:"rank" gorm:"not null"`
-	RetrievalScore float64                      `json:"retrievalScore"`
-	RerankScore    float64                      `json:"rerankScore"`
-	FinalScore     float64                      `json:"finalScore"`
-	Reason         string                       `json:"reason" gorm:"type:text"`
-	ReasonMetadata string                       `json:"reasonMetadata" gorm:"type:text"`
-	CreatedAt      time.Time                    `json:"createdAt"`
-	UpdatedAt      time.Time                    `json:"updatedAt"`
+	ID                  uint                         `json:"id" gorm:"primaryKey"`
+	DayID               uint                         `json:"dayId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;index;not null"`
+	UserID              uint                         `json:"userId" gorm:"index;not null"`
+	CandidateID         uint                         `json:"candidateId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;index;not null"`
+	Candidate           discovery.DiscoveryCandidate `json:"candidate" gorm:"-"`
+	DedupeKey           string                       `json:"dedupeKey" gorm:"index;size:128"`
+	Rank                int                          `json:"rank" gorm:"not null"`
+	RetrievalScore      float64                      `json:"retrievalScore"`
+	RerankScore         float64                      `json:"rerankScore"`
+	FinalScore          float64                      `json:"finalScore"`
+	Reason              string                       `json:"reason" gorm:"type:text"`
+	ReasonMetadata      string                       `json:"reasonMetadata" gorm:"type:text"`
+	SnapshotTitle       string                       `json:"snapshotTitle" gorm:"size:1024"`
+	SnapshotURL         string                       `json:"snapshotUrl" gorm:"size:2048"`
+	SnapshotSummary     string                       `json:"snapshotSummary" gorm:"type:text"`
+	SnapshotAuthor      string                       `json:"snapshotAuthor" gorm:"size:255"`
+	SnapshotSource      string                       `json:"snapshotSource" gorm:"size:255"`
+	SnapshotPublishedAt *time.Time                   `json:"snapshotPublishedAt"`
+	PoolType            string                       `json:"poolType" gorm:"index;size:32"`
+	ExplorationReason   string                       `json:"explorationReason" gorm:"type:text"`
+	AssessmentID        *uint                        `json:"assessmentId" gorm:"index"`
+	ProfileVersion      uint                         `json:"profileVersion"`
+	ModelVersion        string                       `json:"modelVersion" gorm:"size:255"`
+	Supplemental        bool                         `json:"supplemental" gorm:"index;not null;default:false"`
+	SupplementedAt      *time.Time                   `json:"supplementedAt"`
+	AuditVersion        uint                         `json:"auditVersion" gorm:"not null;default:1"`
+	CreatedAt           time.Time                    `json:"createdAt"`
+	UpdatedAt           time.Time                    `json:"updatedAt"`
 }
 
 type RecommendationFeedback struct {

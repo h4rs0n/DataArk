@@ -13,11 +13,17 @@ import (
 
 var db *gorm.DB
 
+const (
+	UserRoleOwner  = "owner"
+	UserRoleMember = "member"
+)
+
 // User 用户模型
 type User struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
 	Username  string    `json:"username" gorm:"unique;not null"`
 	Password  string    `json:"-" gorm:"not null"`
+	Role      string    `json:"role" gorm:"index;not null;default:member;size:32"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -80,6 +86,10 @@ func CreateUser(username, password string) (*User, error) {
 	user := User{
 		Username: username,
 		Password: hashedPassword,
+		Role:     UserRoleMember,
+	}
+	if username == "admin" {
+		user.Role = UserRoleOwner
 	}
 
 	if err := db.Create(&user).Error; err != nil {
@@ -87,6 +97,17 @@ func CreateUser(username, password string) (*User, error) {
 	}
 
 	return &user, nil
+}
+
+// BackfillOwnerRole is idempotent and keeps the historical admin account as
+// the deployment owner after the additive role migration.
+func BackfillOwnerRole(database *gorm.DB) error {
+	if database == nil {
+		return nil
+	}
+	return database.Model(&User{}).
+		Where("username = ? AND role <> ?", "admin", UserRoleOwner).
+		Update("role", UserRoleOwner).Error
 }
 
 // LoginUser 用户登录

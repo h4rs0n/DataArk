@@ -34,7 +34,7 @@
 - [x] 2026-07-13T00:00:00-07:00 确认产品不变量：友情链接扩展、文章级质量、来源非零探索预算、共享候选与用户状态分离、不可变日报。
 - [x] 2026-07-13T00:00:00-07:00 编写本执行计划的初始版本。
 - [x] 2026-07-13T21:08:04+08:00 M0：固定基线、建立确定性测试站点和可替换的时钟、抓取器、任务队列测试接口。基线为 `9602a91`、Go 1.26.4、Node 24.15.0、迁移 `000001`–`000002`；聚焦测试 `go test ./discovery ./recommendation -run 'Test(Deterministic|HTTPClientFetcher|DiscoverySourceFetchAndCandidateState|RecommendationDayAndItemDeduplication|RecommendationGenerationDueUsesSettingsTime|GenerateDailyRecommendationsRerankerValidationAndFallback)' -count=1` 通过，仓库验证 `go test ./...`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`979a17e`。
-- [ ] M1：完成增量数据库模型和兼容迁移，保留现有数据并建立逻辑博客、来源端点、图谱边、文章溯源、处理状态、用户状态和日报快照结构。
+- [x] 2026-07-13T21:28:44+08:00 M1：完成增量数据库模型和兼容迁移，保留现有数据并建立逻辑博客、来源端点、图谱边、文章溯源、处理状态、用户状态和日报快照结构。聚焦验证 `go test ./auth ./bootstrap ./discovery ./recommendation -count=1` 通过；`TestV3SQLiteMigrationPreservesAndBackfillsLegacyData` 验证重复迁移、计数、默认值、唯一键、外键、旧端点映射、溯源、角色、快照和跨日报历史，`TestV3GooseMigrationIsAdditiveAndParseable` 验证三份 Goose 迁移可解析。仓库验证 `go test ./...`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交哈希在提交后回填；当前环境缺少 `docker` 命令，真实 PostgreSQL 执行留待具备容器基础设施时补验。
 - [ ] M2：抽取共享持久任务运行时，支持发现抓取、图谱扫描、历史回溯、文章处理和日报生成的幂等作业。
 - [ ] M3：完成安全 HTTP 抓取层、条件请求、robots、SSRF 防护、域名限流、失败退避和逐来源调度。
 - [ ] M4：完成友情链接识别、博客关系图谱、循环与深度控制、新来源观察状态和发现路径 API。
@@ -70,6 +70,9 @@
 - 2026-07-13：用户指定的 `docs/exec-plans/blogroll-article-recommendation-v3.md` 最初以未跟踪文件 `docs/exec-plans/dataark-blogroll-article-recommendation-v3-execplan.md` 存在。为使恢复命令和用户给出的路径一致，M0 将其移动到计划规定的正式路径。
 - 2026-07-13：基线测试无既有失败；`go test ./...` 与 `npm run build` 均通过。当前受限执行环境默认禁止 `httptest.Server` 绑定本机临时端口，因此包含确定性站点的 Go 测试需要显式本机端口权限，但不访问真实互联网。
 - 2026-07-13：工作区中的未提交 `makefile` 会在 `make all` 中永久修改用户级 `~/.npmrc` 并执行 `npm i`，该全局副作用被安全策略拒绝。等价的仓库级验证拆为已通过的 `npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api`；生成的二进制和嵌入资源在验证后清理／恢复，未混入提交。
+- 2026-07-13：M1 检查 PostgreSQL 基础设施时，`docker compose ps` 返回 “docker: command not found”；这不是迁移代码失败。Goose 文件已通过解析测试，SQLite 已执行真实 DDL／回填／约束测试，但 PostgreSQL DDL 和回退演练必须在 M17 或更早获得 Docker／PostgreSQL 后补跑。
+- 2026-07-13：`api/assets/embed.go` 固定读取被忽略的 `api/assets/web/assets/` 子树，仓库仅跟踪占位 `index.html`、图标和图片；删除忽略的构建资源后 `TestLoadFileReturnsEmbeddedAssetSubtree` 会失败。证据是首次 M1 全量测试只有 `DataArk/assets` 失败并报告 `open .: file does not exist`，执行前端构建和 `make web2api` 后全量测试通过。因此验证后必须保留该忽略目录，不能把它当作普通临时文件清理。
+- 2026-07-13：启动顺序先让 GORM 扩展已有 `discovery_sources`／`discovery_candidates`，再运行 Goose 创建 v3 表；因此 `site_id` 和 `representative_id` 可能已存在，单纯的 `ADD COLUMN IF NOT EXISTS ... REFERENCES` 无法保证 PostgreSQL 外键。`000003_blog_discovery_v3.sql` 使用具名、条件式约束块独立建立这两个外键。
 
 ## Decision Log
 
@@ -95,12 +98,21 @@
 - 2026-07-13：M0 只新增边界和测试，不把现有生产抓取或推荐路径提前切到新接口。理由是 M0 的明确约束是不改变生产行为；M2 和 M3 将分别接管任务和 HTTP 路径。拒绝在夹具尚未固定时重写 `api/discovery/store.go`，因为会把后续里程碑风险混入基线。
 - 2026-07-13：抓取和任务接口采用本文档 `Interfaces and Dependencies` 中规定的稳定方法签名；测试替身在内部用唯一键去重，并让多个替身实例共享存储来模拟进程重启。理由是后续 River／同步实现可以替换边界而无需改变业务调用方。
 - 2026-07-13：确定性站点使用三个相互引用的 `httptest.Server` 和磁盘夹具模板，而不是 DNS、外网域名或容器。理由是它能真实覆盖跨站重定向和图谱循环，同时完全不依赖互联网；拒绝硬编码随机端口，因为测试重跑不可复现。
+- 2026-07-13：M1 使用“增量 DDL + 启动时幂等回填”，而不是在 SQL 中用脆弱的 URL 正则推导站点。Go 代码按规范主机键合并同一主机和常见 `www` 变体，并为每个旧候选建立稳定哈希溯源键；拒绝在迁移中自动跨独立域名合并，因为误合并难以安全回滚。
+- 2026-07-13：`000003_blog_discovery_v3.sql` 的 Down 是数据保留 no-op；回滚方式是先关闭后续 v3 开关并继续保留新增图谱、溯源、评估、用户状态和快照。理由是自动 Drop 会不可逆删除实施期间采集的数据；真正清理必须在对账后用单独审核迁移完成。
+- 2026-07-13：数据库层移除跨日报的永久 `(user_id, candidate_id)` 和用户级 dedupe 唯一约束，但保留同日报 `(day_id, candidate_id)` 唯一。v2 的 `AddRecommendationItem` 暂时继续应用层永久去重，直到 M12 用冷却策略替换；这样 v3 能表达未来再推荐，同时 v2 开关关闭路径的行为不变。
+- 2026-07-13：旧 `admin` 用户幂等回填为 `owner`，新注册用户默认为 `member`；不根据创建顺序自动提升其他现有账号。理由是用户名 `admin` 是仓库现有明确部署所有者，猜测“第一个普通用户”可能造成越权，后续权限 API 以显式角色为准。
+- 2026-07-13：迁移已有推荐项时只填充空的快照字段，后续重复启动不从当前候选覆盖历史标题、URL、摘要、作者、来源或发布时间。理由是从 M1 开始就要避免回填破坏历史展示，即使不可变发布逻辑要到 M14 才正式切流。
 
 ## Outcomes & Retrospective
 
 2026-07-13，M0 已完成。仓库现在拥有可推进的时钟边界、带条件验证器和响应大小限制的 HTTP 获取边界、仅接受稳定标识的幂等任务边界，以及覆盖 A→B→C 循环、误识别外链、Feed/Sitemap/归档多重溯源、历史精品、robots、500、超时、同域／跨域重定向、非文章页和双用户隔离数据的本地夹具世界。现有发现重复抓取和推荐日期／日报去重行为被回归测试固定，生产路径没有切流。
 
 与计划的唯一验证差异是未直接运行用户工作区版本的 `make all`：它会持久修改全局 npm 配置，安全审查拒绝该副作用。前端生产构建、嵌入资源步骤和后端最终二进制构建已分别通过，因此 M0 的构建证明完整；后续应在清理或改为仓库级 npm 配置后恢复单命令验证。M1 的主要风险是新增表和约束必须同时适配 PostgreSQL Goose 与 SQLite GORM，并且不能减少旧记录数量。
+
+2026-07-13，M1 已完成。`000003_blog_discovery_v3.sql` 和对应 GORM 模型新增逻辑站点、端点关联、图谱边、候选溯源、抓取运行、历史回溯状态、版本化文章评估、用户候选状态、候选处理／资格字段、角色以及日报／推荐项快照字段。启动回填把旧来源按主机映射为种子站点，把旧候选映射为多溯源结构，冻结既有日报展示数据，并可安全重复运行。SQLite 迁移测试证明旧用户、来源、候选、日报、项目和反馈数量不减少；旧 UI／v2 服务测试继续通过。
+
+M1 与计划的差异是当前机器无法执行 PostgreSQL 容器集成；迁移文件的 Goose 解析、约束设计和 SQLite 行为已有自动测试，真实 PostgreSQL 升降级仍是明确遗留。M2 的主要风险是 River 当前由推荐包持有全局客户端，抽取共享运行时必须避免导入环并保持 SQLite 同步实现与 v2 调度行为。
 
 每完成一个里程碑，在本节追加实际结果、与计划差异、遗留问题和下一里程碑风险。最终必须回答：
 
@@ -1259,8 +1271,12 @@ Go 基线：
 
 不要把用户真实正文、真实私有 Feed、Cookie、Token 或生产错误全文写入本文档。
 
+M1 迁移证据：`api/migrations/000003_blog_discovery_v3.sql` 只增加结构并移除跨日报永久唯一约束，Down 保留数据；`api/bootstrap/database_v3_test.go` 在 SQLite 旧式表和数据上执行两次迁移，期望 2 个旧来源合并为 1 个逻辑站点、2 个候选得到 2 条溯源、1 个旧日报／项目／反馈计数不变，并验证同一候选可出现在不同日报但不能在同一日报重复。
+
 ## Plan Revision Note
 
 2026-07-13：创建初始版本。相较于早期“来源质量优先”的可能解释，本计划明确采用“友情链接受控扩展、来源级信号只调度资源、文章级独立质量判断、低命中来源保留非零预算”的产品约束，并把它贯穿数据模型、抓取、历史回溯、推荐、反馈、日报、UI、指标和端到端验收。
 
 2026-07-13：完成 M0 并把计划移动到恢复协议规定的正式路径。此次修订记录基线版本和验证结果，增加确定性多站点夹具及可替换时钟、HTTP、任务边界，并说明受限环境中 `make all` 的安全替代验证；这些变化为后续数据库和任务里程碑提供无外网、无 LLM 密钥的稳定测试基础。
+
+2026-07-13：完成 M1。此次修订记录增量 v3 模型、数据保留回填、角色和日报快照语义、唯一约束转换、SQLite 迁移证据及 PostgreSQL 基础设施缺口；选择数据保留 Down 和启动幂等回填，是为了让后续里程碑可逐步切流并在任何检查点安全恢复。
