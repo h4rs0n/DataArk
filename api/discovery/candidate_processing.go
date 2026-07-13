@@ -36,6 +36,10 @@ func RunProcessCandidateJob(ctx context.Context, candidateID uint, contentVersio
 // argument is an optimistic guard: stale queued work becomes a no-op after a
 // newer body has already been committed.
 func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion string) error {
+	return ProcessCandidateWithAssessor(ctx, candidateID, expectedVersion, nil)
+}
+
+func ProcessCandidateWithAssessor(ctx context.Context, candidateID uint, expectedVersion string, enhanced ArticleAssessor) error {
 	if db == nil || candidateID == 0 {
 		return gorm.ErrRecordNotFound
 	}
@@ -51,7 +55,13 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 		return nil
 	}
 	if candidate.ProcessingState == DiscoveryProcessingReady && candidate.DedupeState == DiscoveryDedupePending && candidate.ContentHash != "" {
-		return ResolveCandidateDuplicates(ctx, candidate.ID)
+		if err := ResolveCandidateDuplicates(ctx, candidate.ID); err != nil {
+			return err
+		}
+		return AssessCandidate(ctx, candidate.ID, enhanced)
+	}
+	if candidate.ProcessingState == DiscoveryProcessingReady && candidate.DedupeState == DiscoveryDedupeReady && candidate.AssessmentState == DiscoveryAssessmentPending {
+		return AssessCandidate(ctx, candidate.ID, enhanced)
 	}
 
 	now := discoveryClock.Now()
@@ -95,7 +105,10 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 	if err := commitExtractedArticle(candidate.ID, expected, finalURL, response.FetchedAt, article, now); err != nil {
 		return err
 	}
-	return ResolveCandidateDuplicates(ctx, candidate.ID)
+	if err := ResolveCandidateDuplicates(ctx, candidate.ID); err != nil {
+		return err
+	}
+	return AssessCandidate(ctx, candidate.ID, enhanced)
 }
 
 func parseExpectedContentVersion(value string) (uint, error) {

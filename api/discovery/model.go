@@ -76,6 +76,8 @@ type DiscoveryCandidate struct {
 	ExtractedAt         *time.Time `json:"extractedAt"`
 	DedupeState         string     `json:"dedupeState" gorm:"index;not null;default:pending;size:32"`
 	AssessmentState     string     `json:"assessmentState" gorm:"index;not null;default:pending;size:32"`
+	CurrentAssessmentID *uint      `json:"currentAssessmentId" gorm:"index"`
+	AssessmentError     string     `json:"assessmentError" gorm:"type:text"`
 	EligibilityState    string     `json:"eligibilityState" gorm:"index;not null;default:unknown;size:32"`
 	EligibilityReasons  string     `json:"eligibilityReasons" gorm:"type:text"`
 	Score               float64    `json:"score" gorm:"not null;default:0"`

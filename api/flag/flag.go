@@ -38,6 +38,7 @@ func ParseFlag() {
 	DiscoveryBackfillMaxIntervalFlag := stdflag.String("discover-backfill-max-interval", "168h", "Assign maximum wait between unfinished historical backfill batches")
 	DiscoveryArticleMinCharsFlag := stdflag.Int("discover-article-min-chars", 120, "Assign minimum extracted article text length")
 	DiscoveryProcessingMaxAttemptsFlag := stdflag.Int("discover-processing-max-attempts", 5, "Assign maximum transient article processing attempts")
+	DiscoveryArticleQualityThresholdFlag := stdflag.Float64("discover-article-quality-threshold", 0.45, "Assign minimum article-level quality required for eligibility")
 	RecommendationEnabledFlag := stdflag.Bool("recommend-enabled", false, "Enable LLM daily recommendations")
 	RecommendationDailyLimitFlag := stdflag.Int("recommend-daily-limit", 10, "Assign default daily recommendation count")
 	RecommendationTimezoneFlag := stdflag.String("recommend-timezone", "Asia/Shanghai", "Assign recommendation timezone")
@@ -85,6 +86,7 @@ func ParseFlag() {
 	config.DISCOVERYBACKFILLMAXINTERVAL = strings.TrimSpace(*DiscoveryBackfillMaxIntervalFlag)
 	config.DISCOVERYARTICLEMINCHARS = *DiscoveryArticleMinCharsFlag
 	config.DISCOVERYPROCESSINGMAXATTEMPTS = *DiscoveryProcessingMaxAttemptsFlag
+	config.DISCOVERYARTICLEQUALITYTHRESHOLD = *DiscoveryArticleQualityThresholdFlag
 	config.RECOMMENDATIONENABLED = *RecommendationEnabledFlag
 	config.RECOMMENDATIONDAILYLIMIT = *RecommendationDailyLimitFlag
 	config.RECOMMENDATIONTIMEZONE = strings.TrimSpace(*RecommendationTimezoneFlag)

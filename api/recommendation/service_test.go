@@ -164,6 +164,8 @@ func TestEnrichDiscoveryCandidateUpdatesStructuredFields(t *testing.T) {
 		ProcessingState:  discovery.DiscoveryProcessingReady,
 		EligibilityState: discovery.DiscoveryEligibilityEligible,
 		DedupeState:      discovery.DiscoveryDedupeReady,
+		QualityScore:     0.61,
+		DepthScore:       0.62,
 	}
 	if err := db.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
@@ -182,7 +184,7 @@ func TestEnrichDiscoveryCandidateUpdatesStructuredFields(t *testing.T) {
 	if !strings.Contains(enriched.Topics, "PostgreSQL") || !strings.Contains(enriched.Entities, "pgvector") {
 		t.Fatalf("topics/entities not updated: topics=%q entities=%q", enriched.Topics, enriched.Entities)
 	}
-	if enriched.QualityScore <= 0 || enriched.DepthScore <= 0 || enriched.LLMModel != RuleBasedProviderModel {
+	if enriched.QualityScore != 0.61 || enriched.DepthScore != 0.62 || enriched.LLMModel != RuleBasedProviderModel {
 		t.Fatalf("scores/model not updated: %#v", enriched)
 	}
 }

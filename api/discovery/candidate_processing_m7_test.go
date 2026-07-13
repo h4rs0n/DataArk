@@ -23,7 +23,7 @@ func TestProcessCandidateExtractsVersionsAndBecomesEligible(t *testing.T) {
 		config.DISCOVERYARTICLEMINCHARS = oldMinimum
 	})
 
-	bodyText := strings.Repeat("This independently verifiable article explains evidence, alternatives, and practical conclusions. ", 8)
+	bodyText := strings.Repeat("This independently verifiable article presents evidence, data, measurements, experiments, examples, alternatives, counterexamples, a durable method, the underlying mechanism, and a practical conclusion. ", 10)
 	body := articleHTML("First durable version", bodyText)
 	fetchDiscoveryRequest = func(_ context.Context, request FetchRequest) (FetchResult, error) {
 		if request.Kind != FetchKindArticle {
@@ -48,7 +48,7 @@ func TestProcessCandidateExtractsVersionsAndBecomesEligible(t *testing.T) {
 	if err := db.First(&candidate, write.Candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if candidate.ProcessingState != DiscoveryProcessingReady || candidate.EligibilityState != DiscoveryEligibilityUnknown {
+	if candidate.ProcessingState != DiscoveryProcessingReady || candidate.EligibilityState != DiscoveryEligibilityEligible {
 		t.Fatalf("states = %q/%q", candidate.ProcessingState, candidate.EligibilityState)
 	}
 	if candidate.ContentVersion != 1 || candidate.ContentHash == "" || !strings.Contains(candidate.BodyText, "independently verifiable") {
@@ -60,10 +60,10 @@ func TestProcessCandidateExtractsVersionsAndBecomesEligible(t *testing.T) {
 	if candidate.CanonicalURL != "https://example.com/posts/1" || candidate.PublishedAt == nil || candidate.PublishedConfidence != "article_metadata" {
 		t.Fatalf("canonical/published metadata = %#v", candidate)
 	}
-	if candidate.DedupeState != DiscoveryDedupeReady || candidate.AssessmentState != DiscoveryAssessmentPending {
+	if candidate.DedupeState != DiscoveryDedupeReady || candidate.AssessmentState != DiscoveryAssessmentReady || candidate.CurrentAssessmentID == nil {
 		t.Fatalf("downstream states = %q/%q", candidate.DedupeState, candidate.AssessmentState)
 	}
-	if candidate.EligibilityReasons != "assessment_pending" {
+	if candidate.EligibilityReasons != "article_quality_passed" {
 		t.Fatalf("eligibility reasons = %q", candidate.EligibilityReasons)
 	}
 	assertContentVersionCount(t, candidate.ID, 1)
