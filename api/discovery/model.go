@@ -57,6 +57,7 @@ type DiscoveryCandidate struct {
 	Entities           string     `json:"entities" gorm:"type:text"`
 	ContentType        string     `json:"contentType" gorm:"index;size:64"`
 	ContentStyle       string     `json:"contentStyle" gorm:"index;size:64"`
+	MetadataConfidence int        `json:"metadataConfidence" gorm:"not null;default:0"`
 	QualityScore       float64    `json:"qualityScore" gorm:"not null;default:0"`
 	DepthScore         float64    `json:"depthScore" gorm:"not null;default:0"`
 	EnrichmentStatus   string     `json:"enrichmentStatus" gorm:"index;size:32"`

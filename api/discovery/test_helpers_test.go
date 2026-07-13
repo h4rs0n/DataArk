@@ -25,6 +25,7 @@ func setupSQLiteDB(t *testing.T) {
 		&DiscoveryCandidateFeedback{},
 		&DiscoverySite{},
 		&DiscoverySiteEdge{},
+		&DiscoveryCandidateProvenance{},
 		&DiscoveryFetchRun{},
 	); err != nil {
 		t.Fatalf("failed to migrate sqlite db: %v", err)

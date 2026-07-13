@@ -255,7 +255,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 5 || migrations[len(migrations)-1].Version != 5 {
+	if len(migrations) != 6 || migrations[len(migrations)-1].Version != 6 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -294,6 +294,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"detection_rule", "context_summary", "activated_at", "retained on rollback"} {
 		if !strings.Contains(string(graphEvidence), required) {
 			t.Fatalf("graph evidence migration missing %q", required)
+		}
+	}
+	recentIngestion, err := appmigrations.FS.ReadFile("000006_recent_ingestion_metadata.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"metadata_confidence", "provenance remain useful"} {
+		if !strings.Contains(string(recentIngestion), required) {
+			t.Fatalf("recent ingestion migration missing %q", required)
 		}
 	}
 }

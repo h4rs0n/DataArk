@@ -19,7 +19,6 @@ import (
 	"github.com/mmcdole/gofeed"
 	"golang.org/x/net/html"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const (
@@ -49,10 +48,13 @@ type DiscoveryFetchResult struct {
 }
 
 type discoveredCandidate struct {
-	URL         string
-	Title       string
-	Summary     string
-	PublishedAt *time.Time
+	URL                string
+	Title              string
+	Summary            string
+	PublishedAt        *time.Time
+	DiscoveryMethod    string
+	SourcePageURL      string
+	MetadataConfidence int
 }
 
 func ListDiscoverySources() ([]DiscoverySource, error) {
@@ -222,11 +224,17 @@ func FetchDiscoverySource(ctx context.Context, source *DiscoverySource) (*Discov
 	}
 
 	for _, candidate := range candidates {
-		if err := upsertDiscoveryCandidate(*source, candidate); err != nil {
+		writeResult, err := upsertDiscoveryCandidate(*source, candidate)
+		if err != nil {
 			_ = finishDiscoveryFetch(source, result, fetchResult, startedAt, err)
 			return result, err
 		}
-		result.Stored++
+		if writeResult.Created {
+			result.Stored++
+			if err := enqueueCandidateForProcessing(ctx, writeResult.Candidate); err != nil {
+				log.Printf("candidate %d processing enqueue failed: %v", writeResult.Candidate.ID, err)
+			}
+		}
 	}
 	if err := finishDiscoveryFetch(source, result, fetchResult, startedAt, nil); err != nil {
 		return result, err
@@ -298,6 +306,37 @@ func NormalizeDiscoveryURL(rawURL string) (string, error) {
 }
 
 func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discoveredCandidate, int, int, *FetchResult, error) {
+	if source.EndpointType == DiscoveryEndpointSitemap || normalizeDiscoverySourceType(source.Type) == DiscoverySourceTypeSitemap {
+		fetchResult, err := fetchDiscoveryRequest(ctx, FetchRequest{
+			URL: source.URL, ETag: source.ETag, LastModified: source.LastModified, Kind: FetchKindSitemap,
+		})
+		if err != nil {
+			return nil, 0, 0, nil, err
+		}
+		if fetchResult.NotModified {
+			return nil, 0, 0, &fetchResult, nil
+		}
+		if fetchResult.StatusCode < 200 || fetchResult.StatusCode >= 300 {
+			return nil, 0, 0, &fetchResult, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, fetchResult.StatusCode)
+		}
+		site, err := siteForDiscoverySource(*source)
+		if err != nil {
+			return nil, 0, 0, &fetchResult, err
+		}
+		candidates, nested, err := parseSitemapDocument(fetchResult.Body, site.RootURL)
+		if err != nil {
+			return nil, 0, 0, &fetchResult, err
+		}
+		for index := range candidates {
+			candidates[index].SourcePageURL = source.URL
+		}
+		queue, _ := jobqueue.Default()
+		service := EndpointDiscoveryService{Clock: discoveryClock, Queue: queue}
+		if err := service.SaveNestedSitemaps(ctx, site, nested); err != nil {
+			return nil, 0, 0, &fetchResult, err
+		}
+		return scoreAndLimitCandidates(candidates), len(nested), 0, &fetchResult, nil
+	}
 	switch normalizeDiscoverySourceType(source.Type) {
 	case DiscoverySourceTypeFeed, DiscoverySourceTypeRSSHub:
 		fetchResult, err := fetchDiscoveryRequest(ctx, FetchRequest{
@@ -314,10 +353,36 @@ func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discove
 			return nil, 0, 0, &fetchResult, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, fetchResult.StatusCode)
 		}
 		candidates, err := parseFeedCandidates(fetchResult.Body)
+		for index := range candidates {
+			candidates[index].DiscoveryMethod = DiscoveryMethodFeed
+			candidates[index].SourcePageURL = source.URL
+			candidates[index].MetadataConfidence = metadataConfidenceForMethod(DiscoveryMethodFeed)
+		}
 		return scoreAndLimitCandidates(candidates), 1, 0, &fetchResult, err
 	case DiscoverySourceTypeSite:
-		candidates, feeds, links, err := fetchSiteCandidates(ctx, source.URL)
-		return candidates, feeds, links, nil, err
+		fetchResult, err := fetchDiscoveryRequest(ctx, FetchRequest{
+			URL: source.URL, ETag: source.ETag, LastModified: source.LastModified, Kind: FetchKindHTML,
+		})
+		if err != nil {
+			return nil, 0, 0, nil, err
+		}
+		if fetchResult.NotModified {
+			return nil, 0, 0, &fetchResult, nil
+		}
+		if fetchResult.StatusCode < 200 || fetchResult.StatusCode >= 300 {
+			return nil, 0, 0, &fetchResult, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, fetchResult.StatusCode)
+		}
+		site, err := siteForDiscoverySource(*source)
+		if err != nil {
+			return nil, 0, 0, &fetchResult, err
+		}
+		queue, _ := jobqueue.Default()
+		service := EndpointDiscoveryService{Clock: discoveryClock, Queue: queue}
+		discovered, err := service.DiscoverHomepage(ctx, site, *source, fetchResult.Body, fetchResult.FinalURLOr(source.URL))
+		if err != nil {
+			return nil, 0, 0, &fetchResult, err
+		}
+		return scoreAndLimitCandidates(discovered.Candidates), discovered.FeedsFound + discovered.SitemapsFound, discovered.LinksFound, &fetchResult, nil
 	default:
 		return nil, 0, 0, nil, errors.New("unsupported discovery source type")
 	}
@@ -573,57 +638,6 @@ func discoverLinksFromHTML(body []byte, baseURL *neturl.URL) ([]string, []string
 	return sortedKeys(feedSet), sortedKeys(articleSet)
 }
 
-func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandidate) error {
-	normalizedURL, err := NormalizeDiscoveryURL(candidate.URL)
-	if err != nil {
-		return nil
-	}
-	articleURL, err := NormalizeArticleURL(normalizedURL)
-	if err != nil {
-		articleURL = normalizedURL
-	}
-	title := strings.TrimSpace(candidate.Title)
-	if title == "" {
-		title = normalizedURL
-	}
-	now := time.Now()
-	record := DiscoveryCandidate{
-		SourceID:         source.ID,
-		SourceName:       source.Name,
-		URL:              normalizedURL,
-		NormalizedURL:    articleURL,
-		CanonicalURL:     articleURL,
-		Title:            title,
-		Summary:          archive.BuildSummary(candidate.Summary, 260),
-		Status:           DiscoveryCandidateStatusNew,
-		EnrichmentStatus: DiscoveryCandidateEnrichmentStatusPending,
-		DedupeKey:        articleURL,
-		Score:            scoreDiscoveredCandidate(candidate),
-		PublishedAt:      candidate.PublishedAt,
-		LastSeenAt:       now,
-	}
-	if db == nil {
-		return nil
-	}
-	return db.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "url"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"source_id":         source.ID,
-			"source_name":       source.Name,
-			"normalized_url":    record.NormalizedURL,
-			"canonical_url":     record.CanonicalURL,
-			"title":             record.Title,
-			"summary":           record.Summary,
-			"score":             record.Score,
-			"published_at":      record.PublishedAt,
-			"enrichment_status": record.EnrichmentStatus,
-			"dedupe_key":        record.DedupeKey,
-			"last_seen_at":      now,
-			"updated_at":        now,
-		}),
-	}).Create(&record).Error
-}
-
 func updateCandidateStatus(id uint, status string, taskID string, action string) (*DiscoveryCandidate, error) {
 	if db == nil {
 		return nil, gorm.ErrRecordNotFound
@@ -769,9 +783,22 @@ func normalizeDiscoverySourceType(sourceType string) string {
 		return DiscoverySourceTypeRSSHub
 	case DiscoverySourceTypeSite, "crawler":
 		return DiscoverySourceTypeSite
+	case DiscoverySourceTypeSitemap:
+		return DiscoverySourceTypeSitemap
 	default:
 		return DiscoverySourceTypeFeed
 	}
+}
+
+func siteForDiscoverySource(source DiscoverySource) (DiscoverySite, error) {
+	if db == nil || source.SiteID == nil {
+		return DiscoverySite{}, errors.New("discovery endpoint is not attached to a site")
+	}
+	var site DiscoverySite
+	if err := db.First(&site, *source.SiteID).Error; err != nil {
+		return site, err
+	}
+	return site, nil
 }
 
 func firstFeedTime(values ...*time.Time) *time.Time {

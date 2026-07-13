@@ -96,7 +96,7 @@ func finishDiscoveryFetch(source *DiscoverySource, result *DiscoveryFetchResult,
 		SiteID: source.SiteID, SourceID: source.ID, StartedAt: startedAt, FinishedAt: &finishedAt,
 		Status: status, HTTPStatus: httpStatus, FinalURL: finalURL, ContentType: contentType,
 		ETag: etag, LastModified: lastModified, RobotsStatus: robotsStatus, NotModified: notModified,
-		NewCount: resultCount(result), FailureCount: failureCount,
+		NewCount: resultCount(result), DuplicateCount: duplicateResultCount(result), FailureCount: failureCount,
 		ErrorCategory: errorCategory, ErrorSummary: errorSummary,
 	}
 	return db.Create(&run).Error
@@ -118,6 +118,13 @@ func resultCount(result *DiscoveryFetchResult) int {
 		return 0
 	}
 	return result.Stored
+}
+
+func duplicateResultCount(result *DiscoveryFetchResult) int {
+	if result == nil || result.Discovered <= result.Stored {
+		return 0
+	}
+	return result.Discovered - result.Stored
 }
 
 func discoveryFetchErrorCategory(err error) string {

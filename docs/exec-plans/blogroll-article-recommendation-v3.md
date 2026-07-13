@@ -38,7 +38,7 @@
 - [x] 2026-07-13T21:40:20+08:00 M2：抽取共享持久任务运行时，支持发现抓取、图谱扫描、历史回溯、文章处理和日报生成的幂等作业。聚焦测试 `go test ./jobqueue ./discovery ./recommendation ./api -count=1` 通过，race 验证 `go test -race ./discovery ./recommendation ./jobqueue/...` 通过；仓库验证 `go test ./...`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`929f032`。
 - [x] 2026-07-13T22:56:00+08:00 M3：完成统一安全 HTTP 抓取层、条件请求、robots、SSRF／重定向复验、逐域并发与速率限制、有限指数退避和逐来源调度。聚焦验证 `go test ./discovery ./bootstrap -count=1` 通过，race 验证 `go test -race ./discovery -count=1` 通过；本地验收覆盖 `200 + ETag → 304` 零新增、robots 禁止零正文请求、私网重定向拒绝、超大／错误类型拒绝、失败后恢复、低命中有限下次时间和确定性域名限制。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`f499077`。
 - [x] 2026-07-13T23:17:21+08:00 M4：完成多证据 Blogroll 识别、保留证据的博客关系图谱、有界循环／深度／单站／每日激活、新来源观察状态、恢复调度和只读发现路径 API。聚焦验证 `go test ./discovery ./api ./bootstrap -count=1` 通过，race 验证 `go test -race ./discovery ./api -count=1` 通过；本地 A→B→C→A 验收只生成 3 个规范站点和 5 条预期边，普通正文／广告／社交外链不入图，B 自动创建 observing 节点与立即到期主页端点，API 返回从 A 的 Links 页发现 B 的最短路径和结构化证据，深度／单站／每日剩余目标均以 pending 保留并可恢复。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`dc2fb59`。
-- [ ] M5：完成站点端点发现和最新文章增量入池，并使一篇文章保留多个发现来源。
+- [x] 2026-07-13T23:32:41+08:00 M5：完成主页 Feed／JSON Feed／Sitemap／RSSHub 配置端点发现、常见路径安全探测、Sitemap index 子端点和最新文章增量入池，并保留多来源 provenance。聚焦验证 `go test ./discovery ./bootstrap ./api ./recommendation -count=1` 通过，race 验证 `go test -race ./discovery ./api -count=1` 通过；本地验收证明同一站点同时拥有立即到期的主页、Feed、Sitemap，一个 Feed+Sitemap URL 只产生 1 个候选和 2 条溯源，首次来源／高可信标题不被低可信空元数据覆盖，标题-only 候选为 `fetch_pending`，重复 200 和 304 均不重复安排处理或评估。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`PENDING_M5_CHECKPOINT`。
 - [ ] M6：完成 Sitemap、归档页、分页和站内文章链接驱动的持久化历史回溯。
 - [ ] M7：把正文抓取与 `ExtractArticle` 串入常规文章处理流水线，明确文章有效性、重试和可推荐状态。
 - [ ] M8：完成 URL、canonical、内容哈希和近似重复聚类，选出代表文章并保留全部溯源。
@@ -79,6 +79,8 @@
 - 2026-07-13：原站点抓取依赖 Colly 的独立 HTTP 栈，无法共享新抓取器的验证器、robots 缓存、响应类型和域名节流。M3 用有页数上限的同域 BFS 和现有 HTML 解析器替换该路径；`go mod tidy` 随之移除 Colly 及其仅由此路径引入的间接依赖。
 - 2026-07-13：M0 的 C 首页故意包含文本“is not a blogroll”及普通新闻链接；M4 初版若只做关键词包含，会把否定语境和同一 `<main>` 下的异构外链误判为友链。解析器现在识别中英文否定短语，并只在最近的稳定区块内统计外链列表；该夹具继续保留普通 A 文章引用，同时新增独立 Friends 页形成真正的 C→A 图谱边。
 - 2026-07-13：仅用 `created_at` 无法可靠执行“每日新激活 100 个观察站点”，因为前一天 pending 的节点在今天恢复时不会计入当天创建数。`DiscoverySite.ActivatedAt` 和第五份增量迁移现在记录实际激活日，跨扫描和重启都能执行同一每日上限。
+- 2026-07-13：旧 `fetchSiteCandidates` 会在一次站点抓取中递归页面、直接抓 Feed／Sitemap，并把站点导航 URL 当作永久标题；它无法表达端点独立验证器、调度和 provenance。M5 生产分支改为主页单次条件抓取→保存独立端点→由共享队列立即抓取，每个端点因此拥有自己的 ETag、退避和 fetch run；旧私有辅助函数暂留给 M6 回溯重构，但不再位于来源主路径。
+- 2026-07-13：B 首页的 `/blogroll.html` 和 `/archive/page-2.html` 会被旧“路径含 blog 或两层斜杠”启发式误当文章。M5 在最新文章链接入口增加导航／归档／标签／分页／Feed／Sitemap 排除规则；Blogroll 由 M4 图谱处理，归档和分页由 M6 有界回溯处理，避免用 URL 充当标题提前进入推荐候选。
 - 2026-07-13：River 的 worker 注册若直接导入推荐／发现包会与调用方形成导入环。共享包因此只持有稳定 Args、River client 和函数式 `Handlers`，由 API 组合根注入业务 handler；推荐包不再拥有 River client 生命周期。
 
 ## Decision Log
@@ -121,6 +123,9 @@
 - 2026-07-13：达到深度、单站或每日上限时，仍创建规范站点和边，但在节点 `operational_pause` 与边 `pending_reason` 中记录原因、暂不创建可抓端点；后续扫描有预算时清除 pause、写 `activated_at` 并安排主页抓取和 Blogroll 扫描。理由是静默截断不可恢复，而把 pending 节点当作已激活又会绕过预算。
 - 2026-07-13：站点分类采取保守策略：只把已知社交平台和明确登录／购物流程判为 `non_blog`，其他由友链证据发现但尚未验证的目标进入 `observing`。历史文章质量、平均分和命中率不进入分类、建边、深度或任务优先级；独立入链数只提高抓取端点优先级。
 - 2026-07-13：人工新增来源在同一数据库事务中升级／创建 `seed` 站点并确保主页端点，事务提交后安排来源抓取与图谱扫描；队列临时失败不回滚已保存种子，到期端点和 `next_graph_scan_at` 由启动／周期恢复补入。这样 API 不会因可恢复的队列瞬断留下“返回失败但数据已创建”的歧义。
+- 2026-07-13：M5 继续复用 `discovery_sources` 表表达主页、Feed、RSSHub、Sitemap 和 Sitemap-index 端点；显式页面端点直接保存，常见 Feed／Sitemap 路径只有通过统一安全抓取器且能被对应解析器接受后才保存。新端点 `next_due_at` 立即到期并入共享队列，避免把猜测路径永久写成健康端点。
+- 2026-07-13：候选保留第一次发现的 `SourceID`／`SourceName`，后续发现只更新 `last_seen_at` 并幂等写 `DiscoveryCandidateProvenance`；Feed、主页链接和 Sitemap 的元数据可信度分别为 80、40、20，空标题／摘要永不清空已有值，低可信数据不能覆盖高可信展示字段。新增 `metadata_confidence` 由第六份增量迁移持久化，不参与文章质量评分。
+- 2026-07-13：新候选统一进入 `fetch_pending`，不再用 URL 补标题；只在逻辑候选首次创建时安排 `ProcessCandidate(candidate_id, content_version=0)`。重复 Feed item、另一端点的相同 URL 和 304 仍更新端点运行／provenance 所需状态，但不再次安排正文处理或评估；正文版本变化后的重新处理由 M7/M8 明确递增版本后触发。
 
 ## Outcomes & Retrospective
 
@@ -143,6 +148,10 @@ M3 的验证完全使用内存 SQLite、固定时钟、测试抓取替身和本�
 2026-07-13，M4 已完成。`BlogrollDiscoverer` 从首页和有界的常见 Friends/Links/Blogroll 页面提取显式关系、上下文标题和稳定外链列表，`SiteClassifier` 只做保守结构分类，`SiteGraphService` 规范化 `www`／根主机、幂等写边、维护最小深度和独立入链优先级，并为新观察站点创建立即到期的主页端点。扫描 worker 已接入共享 River／内存运行时和启动恢复；`GET /api/discovery/sites/:id/graph` 返回直接入／出边、证据、从最近种子的最短路径、深度、独立入链数及停止原因。
 
 循环和预算行为由固定三站夹具证明：重复扫描 A、B、C 不增加站点或边，C 首页的普通新闻、广告、社交和文章引用均不被误判，只有独立 Friends 页产生 C→A。超出深度、每次激活和每日激活的目标不会丢失，后两类在下一次有预算的扫描恢复。测试仍不访问互联网、用户数据或 LLM；PostgreSQL 容器执行继续受本机缺少 Docker 限制，第五份 Goose 迁移仅增加证据和激活时间且 Down 保留数据。M5 的主要风险是把主页、Feed、Sitemap 端点发现和多溯源文章入池接到现有双路径时，不能覆盖首次来源或让缺正文链接提前变成 ready。
+
+2026-07-13，M5 已完成。主页端点现在从 `<link rel=alternate>` 识别 RSS、Atom 和 JSON Feed，从页面／robots 识别 Sitemap，在缺少声明时只保存通过安全抓取和解析验证的常见路径，并支持 `crawl_config` 中的 `rsshub_url` 或基于全局 RSSHub 地址的 `rsshub_route`。Sitemap URL set 形成最新候选，Sitemap index 形成有 50 个上限的独立子端点；所有新端点归属同一逻辑站点、立即到期并保留旧来源列表 API 的双读兼容。
+
+文章入池已经从“覆盖式 upsert”改为逻辑候选加幂等发现溯源。首次来源、首次时间和非空高可信元数据稳定保留；每个 Feed、Sitemap、主页链接的原 URL、来源页和最近发现时间独立存在。同一文章的重复 200、另一端点发现和 304 都不会增加正文处理／评估次数，新标题-only 项明确等待正文抓取。测试完全使用 SQLite、固定时钟、内存队列记录器和本机夹具，没有外网、真实用户或 LLM；PostgreSQL 仍因 Docker 缺失只完成 Goose 解析和增量 DDL 审查。M6 的主要风险是把当前未使用的递归站点辅助路径改造成有持久游标、批次和完成原因的回溯作业，不能一次抓完整站或在重试时重复入池。
 
 每完成一个里程碑，在本节追加实际结果、与计划差异、遗留问题和下一里程碑风险。最终必须回答：
 
@@ -1307,6 +1316,8 @@ M3 抓取证据：`api/discovery/fetch_m3_test.go` 在本地服务器和固定�
 
 M4 图谱证据：`api/discovery/blogroll_m4_test.go` 验证显式／上下文／稳定列表规则、否定语境、A→B→C→A 幂等循环、质量独立、自动 observing／端点任务、最短路径和三类 pending 恢复；`api/migrations/000005_blogroll_graph_evidence.sql` 增加检测规则、上下文摘要和持久激活时间。
 
+M5 入池证据：`api/discovery/endpoint_m5_test.go` 验证主页／Feed／Sitemap 端点共存和立即调度、Sitemap index 子端点、Feed+Sitemap 单候选双溯源、可信元数据合并、标题-only `fetch_pending` 以及重复 200／304 零重复处理；`api/migrations/000006_recent_ingestion_metadata.sql` 只增加与质量评分分离的元数据可信度。
+
 M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候选版本并发入队 100 次只执行 1 次；`TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures` 证明失败来源和模拟进程中断可恢复且不阻塞其他来源；`TestStartSQLiteDuplicateRecoveryRunsOnce` 证明两个运行时恢复同一端点只执行一次；`TestRecoverDueJobsContinuesAfterIndependentSourceFailure` 与 `TestRecoverDueJobsEnqueuesOnlyMissingLocalDay` 固定发现和日报启动补偿边界。
 
 ## Plan Revision Note
@@ -1318,6 +1329,8 @@ M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候�
 2026-07-13：完成 M3 后补充统一抓取边界、结构化抓取审计、逐端点有限调度和本地安全验收结果；新增的第四份 Goose 迁移只扩展 fetch-run 可观测字段，保留 M1 的增量／数据保留回滚策略。
 
 2026-07-13：完成 M4 后补充 Blogroll 证据规则、有界 BFS 图谱、pending 恢复、种子即时调度和只读最短路径 API 的实际结果；第五份 Goose 迁移继续采用增量且数据保留的回滚策略。
+
+2026-07-13：完成 M5 后补充端点独立调度、主页／Feed／Sitemap 增量入池、多溯源与元数据合并的实际行为；第六份 Goose 迁移只增加元数据可信度并保留回滚期间的候选和溯源数据。
 
 2026-07-13：完成 M1。此次修订记录增量 v3 模型、数据保留回填、角色和日报快照语义、唯一约束转换、SQLite 迁移证据及 PostgreSQL 基础设施缺口；选择数据保留 Down 和启动幂等回填，是为了让后续里程碑可逐步切流并在任何检查点安全恢复。
 

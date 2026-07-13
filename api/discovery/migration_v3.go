@@ -150,6 +150,8 @@ func legacyEndpointType(sourceType string) string {
 		return "rsshub"
 	case DiscoverySourceTypeSite:
 		return "homepage"
+	case DiscoverySourceTypeSitemap:
+		return DiscoveryEndpointSitemap
 	default:
 		return "legacy"
 	}
