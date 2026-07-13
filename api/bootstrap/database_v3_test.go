@@ -255,7 +255,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 8 || migrations[len(migrations)-1].Version != 8 {
+	if len(migrations) != 9 || migrations[len(migrations)-1].Version != 9 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -321,6 +321,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"processing_attempts", "next_processing_at", "dedupe_state", "assessment_state", "discovery_article_content_versions", "content_hash", "Data-preserving rollback"} {
 		if !strings.Contains(string(articleProcessing), required) {
 			t.Fatalf("article processing migration missing %q", required)
+		}
+	}
+	identityClusters, err := appmigrations.FS.ReadFile("000009_article_identity_clusters.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"discovery_duplicate_clusters", "representative_reason", "discovery_candidate_identities", "identity_key", "discovery_duplicate_review_signals", "Data-preserving rollback"} {
+		if !strings.Contains(string(identityClusters), required) {
+			t.Fatalf("article identity migration missing %q", required)
 		}
 	}
 }

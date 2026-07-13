@@ -60,10 +60,10 @@ func TestProcessCandidateExtractsVersionsAndBecomesEligible(t *testing.T) {
 	if candidate.CanonicalURL != "https://example.com/posts/1" || candidate.PublishedAt == nil || candidate.PublishedConfidence != "article_metadata" {
 		t.Fatalf("canonical/published metadata = %#v", candidate)
 	}
-	if candidate.DedupeState != DiscoveryDedupePending || candidate.AssessmentState != DiscoveryAssessmentPending {
+	if candidate.DedupeState != DiscoveryDedupeReady || candidate.AssessmentState != DiscoveryAssessmentPending {
 		t.Fatalf("downstream states = %q/%q", candidate.DedupeState, candidate.AssessmentState)
 	}
-	if candidate.EligibilityReasons != "dedupe_pending,assessment_pending" {
+	if candidate.EligibilityReasons != "assessment_pending" {
 		t.Fatalf("eligibility reasons = %q", candidate.EligibilityReasons)
 	}
 	assertContentVersionCount(t, candidate.ID, 1)

@@ -436,6 +436,15 @@ func RecordRecommendationFeedback(userID uint, recommendationItemID uint, action
 		if err := tx.Create(&feedback).Error; err != nil {
 			return err
 		}
+		if action == RecommendationFeedbackDuplicate {
+			signal := discovery.DiscoveryDuplicateReviewSignal{
+				CandidateID: item.CandidateID, ReporterUserID: userID,
+				RecommendationItemID: recommendationItemID, Status: "pending",
+			}
+			if err := tx.Create(&signal).Error; err != nil {
+				return err
+			}
+		}
 		if action != RecommendationFeedbackBlock {
 			return nil
 		}
@@ -506,6 +515,7 @@ func EnrichPendingDiscoveryCandidates(ctx context.Context, limit int, provider E
 	var candidates []DiscoveryCandidate
 	if err := db.Where("enrichment_status = ? OR enrichment_status = '' OR enrichment_status IS NULL", RecommendationEnrichmentStatusPending).
 		Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
+		Where("dedupe_state = ? AND (representative_id IS NULL OR representative_id = id)", discovery.DiscoveryDedupeReady).
 		Order("last_seen_at desc").
 		Limit(limit).
 		Find(&candidates).Error; err != nil {
@@ -742,6 +752,7 @@ func selectDailyRecommendationCandidates(ctx context.Context, userID uint, setti
 	var candidates []DiscoveryCandidate
 	query := db.Where("enrichment_status = ?", RecommendationEnrichmentStatusReady).
 		Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
+		Where("dedupe_state = ? AND (representative_id IS NULL OR representative_id = id)", discovery.DiscoveryDedupeReady).
 		Where("status <> ?", DiscoveryCandidateStatusIgnored).
 		Where("(published_at IS NULL OR published_at >= ?)", cutoff).
 		Order("quality_score desc, depth_score desc, score desc, last_seen_at desc").
@@ -770,6 +781,7 @@ func selectDailyRecommendationCandidates(ctx context.Context, userID uint, setti
 			var vectorCandidates []DiscoveryCandidate
 			if err := db.Where("id IN ?", missingIDs).
 				Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
+				Where("dedupe_state = ? AND (representative_id IS NULL OR representative_id = id)", discovery.DiscoveryDedupeReady).
 				Find(&vectorCandidates).Error; err != nil {
 				return nil, err
 			}
@@ -1155,7 +1167,7 @@ func feedbackDeltas(action string) (float64, float64, float64, float64) {
 	case RecommendationFeedbackNotInterested:
 		return -0.8, -0.4, -0.4, -0.03
 	case RecommendationFeedbackDuplicate:
-		return 0, -0.5, -0.5, 0
+		return 0, 0, 0, 0
 	default:
 		return 0, 0, 0, 0
 	}

@@ -163,6 +163,7 @@ func TestEnrichDiscoveryCandidateUpdatesStructuredFields(t *testing.T) {
 		EnrichmentStatus: RecommendationEnrichmentStatusPending,
 		ProcessingState:  discovery.DiscoveryProcessingReady,
 		EligibilityState: discovery.DiscoveryEligibilityEligible,
+		DedupeState:      discovery.DiscoveryDedupeReady,
 	}
 	if err := db.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
@@ -197,6 +198,7 @@ func TestEnrichDiscoveryCandidateRecordsFailure(t *testing.T) {
 		EnrichmentStatus: RecommendationEnrichmentStatusPending,
 		ProcessingState:  discovery.DiscoveryProcessingReady,
 		EligibilityState: discovery.DiscoveryEligibilityEligible,
+		DedupeState:      discovery.DiscoveryDedupeReady,
 	}
 	if err := db.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
@@ -372,6 +374,7 @@ func TestGenerateDailyRecommendationsEnrichesPendingCandidates(t *testing.T) {
 		EnrichmentStatus: RecommendationEnrichmentStatusPending,
 		ProcessingState:  discovery.DiscoveryProcessingReady,
 		EligibilityState: discovery.DiscoveryEligibilityEligible,
+		DedupeState:      discovery.DiscoveryDedupeReady,
 		BodyText:         strings.Repeat("A complete locally extracted article body with enough information for deterministic enrichment. ", 4),
 		LastSeenAt:       now,
 		PublishedAt:      &now,
@@ -564,6 +567,7 @@ func createReadyCandidate(t *testing.T, rawURL string, title string, topics []st
 		EnrichmentStatus: RecommendationEnrichmentStatusReady,
 		ProcessingState:  discovery.DiscoveryProcessingReady,
 		EligibilityState: discovery.DiscoveryEligibilityEligible,
+		DedupeState:      discovery.DiscoveryDedupeReady,
 		Status:           DiscoveryCandidateStatusNew,
 		DedupeKey:        dedupeKey,
 		PublishedAt:      &now,

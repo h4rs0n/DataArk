@@ -173,6 +173,39 @@ type DiscoveryArticleContentVersion struct {
 	Candidate      *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
 }
 
+type DiscoveryDuplicateCluster struct {
+	ClusterID            string              `json:"clusterId" gorm:"primaryKey;size:128"`
+	RepresentativeID     uint                `json:"representativeId" gorm:"index;not null"`
+	MatchMethod          string              `json:"matchMethod" gorm:"index;not null;size:32"`
+	RepresentativeReason string              `json:"representativeReason" gorm:"type:text"`
+	MemberCount          uint                `json:"memberCount" gorm:"not null;default:1"`
+	CreatedAt            time.Time           `json:"createdAt"`
+	UpdatedAt            time.Time           `json:"updatedAt"`
+	Representative       *DiscoveryCandidate `json:"-" gorm:"foreignKey:RepresentativeID;constraint:OnDelete:RESTRICT"`
+}
+
+type DiscoveryCandidateIdentity struct {
+	ID          uint                `json:"id" gorm:"primaryKey"`
+	CandidateID uint                `json:"candidateId" gorm:"uniqueIndex:idx_candidate_identity;index;not null"`
+	Kind        string              `json:"kind" gorm:"uniqueIndex:idx_candidate_identity;index;not null;size:32"`
+	IdentityKey string              `json:"identityKey" gorm:"uniqueIndex:idx_candidate_identity;index;not null;size:128"`
+	Value       string              `json:"value" gorm:"type:text;not null"`
+	CreatedAt   time.Time           `json:"createdAt"`
+	UpdatedAt   time.Time           `json:"updatedAt"`
+	Candidate   *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
+}
+
+type DiscoveryDuplicateReviewSignal struct {
+	ID                   uint                `json:"id" gorm:"primaryKey"`
+	CandidateID          uint                `json:"candidateId" gorm:"index;not null"`
+	ReporterUserID       uint                `json:"reporterUserId" gorm:"index;not null"`
+	RecommendationItemID uint                `json:"recommendationItemId" gorm:"index;not null"`
+	Status               string              `json:"status" gorm:"index;not null;default:pending;size:32"`
+	CreatedAt            time.Time           `json:"createdAt"`
+	UpdatedAt            time.Time           `json:"updatedAt"`
+	Candidate            *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
+}
+
 type UserCandidateState struct {
 	ID              uint                `json:"id" gorm:"primaryKey"`
 	UserID          uint                `json:"userId" gorm:"uniqueIndex:idx_user_candidate_state;not null"`
@@ -201,6 +234,9 @@ func V3Models() []interface{} {
 		&DiscoveryFetchRun{},
 		&DiscoveryBackfillState{},
 		&DiscoveryArticleContentVersion{},
+		&DiscoveryDuplicateCluster{},
+		&DiscoveryCandidateIdentity{},
+		&DiscoveryDuplicateReviewSignal{},
 		&DiscoveryArticleAssessment{},
 		&UserCandidateState{},
 	}

@@ -18,6 +18,7 @@ func setupSQLiteDB(t *testing.T) {
 		&discovery.DiscoverySource{},
 		&discovery.DiscoveryCandidate{},
 		&discovery.DiscoveryCandidateFeedback{},
+		&discovery.DiscoveryDuplicateReviewSignal{},
 		&RecommendationSettings{},
 		&RecommendationDay{},
 		&RecommendationItem{},

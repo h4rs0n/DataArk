@@ -50,6 +50,9 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 	if expected != candidate.ContentVersion {
 		return nil
 	}
+	if candidate.ProcessingState == DiscoveryProcessingReady && candidate.DedupeState == DiscoveryDedupePending && candidate.ContentHash != "" {
+		return ResolveCandidateDuplicates(ctx, candidate.ID)
+	}
 
 	now := discoveryClock.Now()
 	attempt := candidate.ProcessingAttempts + 1
@@ -89,7 +92,10 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 		}
 		return finishCandidateIneligible(&candidate, category, reason, now)
 	}
-	return commitExtractedArticle(candidate.ID, expected, finalURL, response.FetchedAt, article, now)
+	if err := commitExtractedArticle(candidate.ID, expected, finalURL, response.FetchedAt, article, now); err != nil {
+		return err
+	}
+	return ResolveCandidateDuplicates(ctx, candidate.ID)
 }
 
 func parseExpectedContentVersion(value string) (uint, error) {
