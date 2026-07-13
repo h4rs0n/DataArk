@@ -449,7 +449,7 @@ func TestGenerateDailyRecommendationsRerankerValidationAndFallback(t *testing.T)
 		t.Fatalf("snapshot candidate not attached: %#v", snapshot.Items[0])
 	}
 
-	if err := db.Model(&DiscoveryCandidate{}).Where("id IN ?", []uint{first.ID, second.ID}).Update("status", DiscoveryCandidateStatusIgnored).Error; err != nil {
+	if err := db.Model(&DiscoveryCandidate{}).Where("id IN ?", []uint{first.ID, second.ID}).Update("eligibility_state", discovery.DiscoveryEligibilityIneligible).Error; err != nil {
 		t.Fatal(err)
 	}
 	settings = DefaultRecommendationSettings(12)

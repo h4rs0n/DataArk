@@ -53,13 +53,21 @@ type RecommendationBlockTarget struct {
 }
 
 type recommendationCandidateScore struct {
-	Candidate      DiscoveryCandidate
-	Topics         []string
-	SourceHost     string
-	RetrievalScore float64
-	RerankScore    float64
-	FinalScore     float64
-	Reason         string
+	Candidate         DiscoveryCandidate
+	Topics            []string
+	SourceHost        string
+	Author            string
+	PoolTags          []string
+	PoolType          string
+	Exploration       bool
+	ExplorationReason string
+	ContentUpdated    bool
+	CooldownRepeat    bool
+	RetrievalScore    float64
+	RerankScore       float64
+	RerankRank        int
+	FinalScore        float64
+	Reason            string
 }
 
 func DefaultRecommendationSettings(userID uint) RecommendationSettings {
@@ -257,7 +265,7 @@ func AddRecommendationItem(item *RecommendationItem) (*RecommendationItem, error
 		return nil, errors.New("missing recommendation item identity")
 	}
 	var duplicate RecommendationItem
-	result := db.Where("user_id = ? AND candidate_id = ?", item.UserID, item.CandidateID).Limit(1).Find(&duplicate)
+	result := db.Where("day_id = ? AND user_id = ? AND candidate_id = ?", item.DayID, item.UserID, item.CandidateID).Limit(1).Find(&duplicate)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -265,7 +273,7 @@ func AddRecommendationItem(item *RecommendationItem) (*RecommendationItem, error
 		return nil, ErrDuplicateRecommendationItem
 	}
 	if strings.TrimSpace(item.DedupeKey) != "" {
-		result = db.Where("user_id = ? AND dedupe_key = ?", item.UserID, strings.TrimSpace(item.DedupeKey)).Limit(1).Find(&duplicate)
+		result = db.Where("day_id = ? AND user_id = ? AND dedupe_key = ?", item.DayID, item.UserID, strings.TrimSpace(item.DedupeKey)).Limit(1).Find(&duplicate)
 		if result.Error != nil {
 			return nil, result.Error
 		}
@@ -327,27 +335,39 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 	if reranker != nil && config.RECOMMENDATIONRERANKLIMIT > selectionLimit {
 		selectionLimit = config.RECOMMENDATIONRERANKLIMIT
 	}
-	selected, err := selectDailyRecommendationCandidates(ctx, userID, *settings, profile, selectionLimit)
+	selection, err := selectDailyRecommendationCandidatesV3(ctx, userID, *settings, profile, selectionLimit)
 	if err != nil {
 		_ = markRecommendationDayFailed(day.ID, err)
 		return nil, err
 	}
-	selected, rerankModel, rerankPrompt := applyRecommendationReranker(ctx, userID, settings.DailyLimit, selected, profile, reranker)
-	now := time.Now()
+	reranked, rerankModel, rerankPrompt := applyRecommendationReranker(ctx, userID, selectionLimit, selection.Candidates, profile, reranker)
+	selected, softRelaxations := diversifyRecommendationCandidatesV3(reranked, settings.DailyLimit, settings.ExplorationRate)
+	selection.SoftRelaxations = softRelaxations
+	if possible := min(settings.DailyLimit, len(reranked)); len(selected) < possible {
+		selection.Excluded["same_cluster_daily"] += possible - len(selected)
+	}
+	now := recommendationClock.Now()
 	written := make([]RecommendationItem, 0, len(selected))
 	for index, scored := range selected {
 		item := &RecommendationItem{
-			DayID:          day.ID,
-			UserID:         userID,
-			CandidateID:    scored.Candidate.ID,
-			DedupeKey:      strings.TrimSpace(scored.Candidate.DedupeKey),
-			AssessmentID:   scored.Candidate.CurrentAssessmentID,
-			Rank:           index + 1,
-			RetrievalScore: scored.RetrievalScore,
-			RerankScore:    scored.RerankScore,
-			FinalScore:     scored.FinalScore,
-			Reason:         scored.Reason,
-			ReasonMetadata: buildReasonMetadata(scored),
+			DayID:             day.ID,
+			UserID:            userID,
+			CandidateID:       scored.Candidate.ID,
+			DedupeKey:         strings.TrimSpace(scored.Candidate.DedupeKey),
+			AssessmentID:      scored.Candidate.CurrentAssessmentID,
+			Rank:              index + 1,
+			RetrievalScore:    scored.RetrievalScore,
+			RerankScore:       scored.RerankScore,
+			FinalScore:        scored.FinalScore,
+			Reason:            scored.Reason,
+			ReasonMetadata:    buildReasonMetadata(scored),
+			PoolType:          scored.PoolType,
+			ExplorationReason: scored.ExplorationReason,
+			ContentVersion:    scored.Candidate.ContentVersion,
+			ContentUpdated:    scored.ContentUpdated,
+			CooldownRepeat:    scored.CooldownRepeat,
+			CreatedAt:         now,
+			UpdatedAt:         now,
 		}
 		created, err := AddRecommendationItem(item)
 		if errors.Is(err, ErrDuplicateRecommendationItem) {
@@ -363,14 +383,17 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 		}
 		written = append(written, *created)
 	}
+	actualCount := countRecommendationDayItems(day.ID, userID)
 	updates := map[string]interface{}{
-		"status":          RecommendationDayStatusGenerated,
-		"actual_count":    countRecommendationDayItems(day.ID, userID),
-		"profile_version": profile.ProfileVersion,
-		"llm_model":       rerankModel,
-		"prompt_version":  rerankPrompt,
-		"generated_at":    &now,
-		"updated_at":      now,
+		"status":           RecommendationDayStatusGenerated,
+		"actual_count":     actualCount,
+		"shortage_reasons": marshalSelectionAudit(settings.DailyLimit, actualCount, selection, softRelaxations),
+		"policy_version":   recommendationSelectionPolicyV3,
+		"profile_version":  profile.ProfileVersion,
+		"llm_model":        rerankModel,
+		"prompt_version":   rerankPrompt,
+		"generated_at":     &now,
+		"updated_at":       now,
 	}
 	if err := db.Model(&RecommendationDay{}).Where("id = ? AND user_id = ?", day.ID, userID).Updates(updates).Error; err != nil {
 		return nil, err
@@ -527,7 +550,7 @@ func syncUserCandidateFeedbackState(tx *gorm.DB, userID uint, candidateID uint, 
 }
 
 func userCandidateStateExcludesRecommendation(state discovery.UserCandidateState) bool {
-	return state.ReadAt != nil || state.DeepReadAt != nil || state.ArchivedAt != nil || state.CurrentFeedback == RecommendationFeedbackNotInterested
+	return state.OpenedAt != nil || state.ReadAt != nil || state.DeepReadAt != nil || state.ArchivedAt != nil || strings.TrimSpace(state.CurrentFeedback) != ""
 }
 
 func ListUserBlockRules(userID uint, activeOnly bool) ([]UserBlockRule, error) {
@@ -783,7 +806,7 @@ func EnrichDiscoveryCandidate(ctx context.Context, candidateID uint, provider En
 	return &candidate, nil
 }
 
-func selectDailyRecommendationCandidates(ctx context.Context, userID uint, settings RecommendationSettings, profile *UserRecommendationProfile, selectionLimit int) ([]recommendationCandidateScore, error) {
+func selectDailyRecommendationCandidatesLegacy(ctx context.Context, userID uint, settings RecommendationSettings, profile *UserRecommendationProfile, selectionLimit int) ([]recommendationCandidateScore, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -1014,6 +1037,10 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 			candidate.Reason = strings.TrimSpace(item.Reason)
 		}
 		candidate.RerankScore = clampScore(item.Confidence)
+		candidate.RerankRank = item.Rank
+		if candidate.RerankRank <= 0 {
+			candidate.RerankRank = len(reranked) + 1
+		}
 		candidate.FinalScore += candidate.RerankScore * 0.05
 		reranked = append(reranked, candidate)
 		seen[item.CandidateID] = struct{}{}
@@ -1031,6 +1058,7 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 		if _, ok := seen[candidate.Candidate.ID]; ok {
 			continue
 		}
+		candidate.RerankRank = len(reranked) + 1
 		reranked = append(reranked, candidate)
 	}
 	return reranked, strings.TrimSpace(result.Model), strings.TrimSpace(result.PromptVersion)
@@ -1059,7 +1087,6 @@ func buildUserProfileHint(profile *UserRecommendationProfile) string {
 	}
 	return strings.Join([]string{
 		"topics=" + strings.TrimSpace(profile.TopicWeights),
-		"sources=" + strings.TrimSpace(profile.SourceWeights),
 		"styles=" + strings.TrimSpace(profile.StyleWeights),
 	}, "\n")
 }
@@ -1332,8 +1359,12 @@ func recommendationReason(candidate DiscoveryCandidate, topics []string, score f
 
 func buildReasonMetadata(scored recommendationCandidateScore) string {
 	metadata, _ := json.Marshal(map[string]interface{}{
-		"topics":     scored.Topics,
-		"sourceHost": scored.SourceHost,
+		"topics":            scored.Topics,
+		"sourceHost":        scored.SourceHost,
+		"poolTags":          scored.PoolTags,
+		"explorationReason": scored.ExplorationReason,
+		"contentUpdated":    scored.ContentUpdated,
+		"cooldownRepeat":    scored.CooldownRepeat,
 	})
 	return string(metadata)
 }

@@ -72,6 +72,9 @@ type RecommendationItem struct {
 	PoolType            string                       `json:"poolType" gorm:"index;size:32"`
 	ExplorationReason   string                       `json:"explorationReason" gorm:"type:text"`
 	AssessmentID        *uint                        `json:"assessmentId" gorm:"index"`
+	ContentVersion      uint                         `json:"contentVersion" gorm:"not null;default:0"`
+	ContentUpdated      bool                         `json:"contentUpdated" gorm:"index;not null;default:false"`
+	CooldownRepeat      bool                         `json:"cooldownRepeat" gorm:"index;not null;default:false"`
 	ProfileVersion      uint                         `json:"profileVersion"`
 	ModelVersion        string                       `json:"modelVersion" gorm:"size:255"`
 	Supplemental        bool                         `json:"supplemental" gorm:"index;not null;default:false"`

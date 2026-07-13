@@ -48,6 +48,8 @@ make build
 
 候选库存 API 分别返回 eligible 新鲜、常青、探索和当前用户硬过滤后的可用数量，并以 `可用数 / daily_limit` 计算库存天数。新鲜窗口及 7 天预警、3 天严重预警可分别通过 `-discover-inventory-fresh-days`、`-discover-inventory-warning-days` 和 `-discover-inventory-critical-days` 调整。
 
+推荐 v3 只从 ready、eligible 的当前去重代表中选择：足量时发布目标 N，不足时发布实际 M，并在日报记录各类硬排除和按作者→主题→来源放宽的软约束。默认探索比例为 15%，当 N≥5 且存在合格探索文章时至少包含 1 篇；同来源和同主主题软上限分别为 30% 和 40%。仅曝光未打开的文章默认冷却 75 天后才能再次竞争，可通过 `-recommend-reexposure-cooldown` 在 60–90 天范围内调整；正文实质更新可提前重现，已打开、归档、深读或有明确评价的文章默认不再推荐。
+
 
 
 ## 反馈与贡献

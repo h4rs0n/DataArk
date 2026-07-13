@@ -53,6 +53,8 @@ Candidate content, processing, and eligibility are shared. Exposures, opens, rea
 
 The candidate inventory API reports eligible fresh, evergreen, exploration, and current-user hard-filtered counts, with `available / daily_limit` inventory days. Tune the recent window and the default 7-day warning / 3-day critical thresholds with `-discover-inventory-fresh-days`, `-discover-inventory-warning-days`, and `-discover-inventory-critical-days`.
 
+Recommendation v3 selects only ready, eligible deduplication representatives. It publishes target N when supply is sufficient or actual M otherwise, recording every hard exclusion and any author → topic → source soft-limit relaxation. Exploration defaults to 15% and contributes at least one eligible item when N≥5 and exploration supply exists; source and primary-topic soft caps are 30% and 40%. An exposed but unopened article normally waits 75 days before competing again; tune `-recommend-reexposure-cooldown` within 60–90 days. A substantive content update may return sooner, while opened, archived, deep-read, or explicitly rated articles are excluded by default.
+
 LLM daily recommendations are prepared behind `-recommend-enabled`. PostgreSQL should provide the `vector` extension for embedding storage; Docker Compose uses a pgvector-enabled image. LLM calls are configured through `-llm-base-url`, `-llm-api-key`, `-llm-chat-model`, and `-llm-embedding-model`.
 
 

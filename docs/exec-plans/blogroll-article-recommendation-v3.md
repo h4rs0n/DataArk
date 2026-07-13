@@ -45,7 +45,7 @@
 - [x] 2026-07-14T00:34:14+08:00 M9：完成版本化、可解释的文章级内容价值评估，建立不含任何来源聚合字段的静态输入边界、始终可用的规则版和可选 OpenAI-compatible 增强版。聚焦验证 `go test ./discovery ./recommendation ./api ./bootstrap -run 'Test(ArticleAssessmentInput|LowHitSource|OptionalAssessor|OpenAICompatibleArticleAssessor|ProcessCandidate|EnrichDiscoveryCandidateUpdatesStructuredFields|V3Goose)' -count=1` 通过，模块验证 `go test ./discovery ./recommendation ./api ./bootstrap ./jobqueue -count=1` 和 race 验证 `go test -race ./discovery ./recommendation ./api -count=1` 通过；B 的 100 篇样本中 97 篇普通、3 篇精品，恰好 3 篇 eligible，同正文放在 A/B 得分完全一致且 B 精品高于 A 普通文；规则／增强版本并存，增强失败回退规则，重评不改历史 assessment 或日报引用，旧富化不再覆盖质量分。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`45f7661`。
 - [x] 2026-07-14T00:51:25+08:00 M10：完成共享候选与逐用户曝光／打开／已读／深读／不感兴趣／归档状态分离，并为来源、逻辑站点和破坏性日报操作实施 owner 权限。聚焦验证 `go test ./discovery ./recommendation ./api ./bootstrap -run 'Test(UserCandidate|RecordUserCandidate|RecommendationFeedbackAndSourceBlock|DiscoverySourceManagement|DestructiveRecommendation|CandidateInteraction|SiteStatus|OwnerPause|GlobalSafety|V3SQLiteMigration|V3Goose)' -count=1` 通过，race 验证同一测试集通过；双用户验收证明 A 的状态与来源屏蔽不影响 B，owner 暂停保留候选并停止抓取／图谱／回溯，member 管理请求明确返回 403。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。旧全局状态按候选进入可对账复核表，不猜测用户归属且旧字段继续可读；检查点提交：`4d4a488`。
 - [x] 2026-07-14T03:26:40+08:00 M11：完成分项站点运营统计、基础最大空闲时间加额外预算的公平调度、逐端点调度解释和新鲜／常青／探索候选库存。聚焦验证 `go test ./discovery ./recommendation ./api ./bootstrap -run 'Test(FairSchedule|SiteOperations|CandidateInventory|OperationsRequireOwner|V3Goose)' -count=1` 通过，race 验证同一测试集通过；四个月模拟证明 0/1000 eligible 且 999/1000 重复的观察站点仍最迟 7 天检查一次，高产出来源获得更短间隔但每轮每个到期来源仍只排一个任务。用户库存验收区分三个可重叠池、应用个人状态和显式屏蔽，并证明悲观来源产出统计不能移除 eligible 文章。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`83f4a91`。
-- [ ] M12：完成推荐 v3 候选选择、多样性、探索配额、冷却再推荐和“目标 N、实际 M”语义。
+- [x] 2026-07-14T03:43:51+08:00 M12：完成推荐 v3 硬候选门禁、文章／用户评分、探索配额、可审计软多样性、冷却／正文更新再推荐和“目标 N、实际 M”。聚焦验证 `go test ./recommendation ./bootstrap -run 'Test(RecommendationV3|GenerateDailyRecommendationsReranker|V3Goose)' -count=1` 通过，race 验证同一测试集通过；验收覆盖 N=10 恰好 10、仅 7 篇合格时 M=7、15% 探索配额、来源 30%／主题 40% 上限、作者→主题→来源固定放宽、同簇硬去重、75 天仅曝光冷却、正文版本更新提前重现和明确反馈不重现。静态评分输入禁止来源、站点、图谱、产出或声誉字段，长尾精品文章分数高于普通文章。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：待记录。
 - [ ] M13：完成幂等、可替换、可撤销的文章级反馈，偏好衰减、冷启动设置和显式来源屏蔽。
 - [ ] M14：完成按用户时区生成的不可变日报、启动补偿、非破坏性补充和模型故障降级。
 - [ ] M15：完成来源图谱、抓取健康、历史覆盖、文章评估、反馈状态和日报解释的前端体验。
@@ -97,6 +97,9 @@
 - 2026-07-14：来源恢复查询原先只检查 `discovery_sources.enabled`，逻辑站点进入 `paused/blocked` 后仍可能排入来源抓取；单独更新站点状态不足以真正暂停。M10 在恢复、旧批量抓取和实际抓取入口同时加入站点运营门禁，并保持候选数据不变。
 - 2026-07-14：M3/M6 已经分别把活跃 Feed、观察站点、休眠站点和未完成回溯限制在 24 小时、7 天、30 天和 7 天内，M11 不需要另建一套“公平队列”才能获得非零下限。真正缺少的是额外预算只能缩短这些上限的公式、持久解释和多月防回归测试。
 - 2026-07-14：GORM 链式查询对象在复用时会累积前一次 `Where`，最初的站点运营统计因此把“eligible”条件带入后续 extracted／positive 计数。M11 将每个分项统计从全新的 base query 构建，并用一个站点同时具备入链、抓取、候选、正反馈和回溯数据的测试固定各计数独立。
+- 2026-07-14：数据库在 M1 已移除跨日报永久唯一约束，但 `AddRecommendationItem` 服务仍以 `(user_id,candidate_id)` 和 `(user_id,dedupe_key)` 预查询并拒绝历史出现项；只改迁移无法实现冷却再推荐。M12 将服务幂等范围收紧到同一 `day_id`，跨日报是否允许由显式冷却、用户状态和正文版本决定。
+- 2026-07-14：旧选择器同时要求共享 `candidate.status <> ignored` 并永久排除全部历史 identity；前者会把无操作者的旧全局状态继续污染新用户，后者会让仅曝光未打开和正文更新规则永远不可达。M12 的生产选择器不再读取兼容 `status`，并用逐用户状态和版本化历史替代。
+- 2026-07-14：旧 reranker 顺序在加入 v3 多样性重排后会被基础分数重新覆盖。M12 为有效 reranker 输出保存稳定 rank，最终多样性选择优先保持该 rank，只在硬身份和软多样性约束需要时调整；无模型或模型失败仍按确定性文章分数排序。
 
 ## Decision Log
 
@@ -161,6 +164,10 @@
 - 2026-07-14：站点运营数据只保存命名明确的图谱、抓取健康、内容产出、用户正反馈文章数和历史覆盖计数；不保存综合来源质量分、声誉分或可进入文章 eligible 查询的乘数。管理 API 返回原始分项，任何比率由展示层从分子／分母计算。
 - 2026-07-14：活跃 Feed 24 小时、观察站点 7 天、休眠站点 30 天继续作为最大空闲下限；多独立入链、已发现 eligible 文章、明确 valuable/deep-read 和近期更新只能将间隔缩短到可配置的最小 1 小时，绝不能延长基础下限。每个端点保存 `base_floor` 或 `extra_budget`、基础／实际秒数、下一次时间和具体理由；失败退避单列为 `failure_backoff`，不使用产出统计。
 - 2026-07-14：库存中的 fresh、evergreen、exploration 是可重叠标签而非互斥表：fresh 使用默认 30 天窗口，evergreen 使用当前文章评估的常青维度，exploration 使用观察／长尾图谱站点或当前用户未曝光。只有 ready、eligible、dedupe representative 进入库存；用户可用数再应用个人已读／归档／不感兴趣和显式 block rule，来源运营统计不参与。
+- 2026-07-14：推荐 v3 硬门禁只接受 `processing=ready`、`eligibility=eligible`、`dedupe=ready` 当前代表，并应用用户状态、显式 block、同日报逻辑 identity 和再推荐规则；候选不足时这些条件永不放宽。共享兼容 `status`、来源产出、来源平均质量和图谱层级均不进入硬资格。
+- 2026-07-14：文章／用户评分采用静态 `recommendationScoreInput`，只含文章 assessment 质量／深度／常青、发布时间、主题、风格、用户主题／风格／深度偏好和固定时钟；不传来源或站点字段。来源只留在显式屏蔽和最终多样性计数，OpenAI-compatible reranker 也明确禁止把来源身份当质量或声誉信号。
+- 2026-07-14：探索目标为 `ceil(N * exploration_rate)`，N≥5 且存在合格探索项时至少 1；新／长尾站点、新作者、新主题或用户低曝光均给出具体原因。软上限按作者、主题、来源顺序逐级放宽并写日报；同一重复簇是硬 identity，永不放宽。
+- 2026-07-14：仅曝光且未打开的文章使用默认 75 天、可配置且强制在 60–90 天范围内的冷却；已打开／已读、归档、深读或任何明确当前反馈默认不重现。只有历史项目保存过非零正文版本且当前版本更高时标记 `content_updated` 并提前重现，避免把旧版零值快照误判成更新。
 
 ## Outcomes & Retrospective
 
@@ -211,6 +218,10 @@ M3 的验证完全使用内存 SQLite、固定时钟、测试抓取替身和本�
 2026-07-14，M11 已完成。站点现在分别记录独立入链、抓取尝试／成功／未变化／解析成功、候选／eligible／重复／正文抽取、明确正反馈文章和回溯 URL／文章计数，没有来源质量总分。每次来源调度保存基础最大空闲时间、额外预算后的实际间隔、下一次时间和理由；owner operations API 把这些解释与端点、站点状态和回溯覆盖一起返回。
 
 公平性由保守公式保证：产出差或重复多只会失去额外加速，不能超过活跃 Feed 24 小时、观察站点 7 天、休眠站点 30 天及未完成回溯 7 天的基础上限；多月模拟中的极低命中 B 仍持续获得检查。候选库存 API 返回全局和当前用户可用的 fresh／evergreen／exploration 数、`available / daily_limit` 天数以及默认 7 天预警／3 天严重状态。测试完全使用 SQLite、固定时钟和合成候选，不访问真实互联网、用户数据或 LLM；真实 PostgreSQL 迁移执行仍待容器基础设施。M12 的主要风险是把这些可重叠池用于每日恰好 N／不足 M、探索最低配额和软多样性，同时不能把来源运营统计带入文章评分或硬门槛。
+
+2026-07-14，M12 已完成。生产选择路径现在先执行文章级硬门禁和逐用户屏蔽／状态／冷却，再用不含来源表现的静态评分输入计算文章与用户相关性，最后执行探索保留和软多样性。足量时严格写入 N，不足时只写 M；日报 `shortage_reasons` 保存目标、实际、硬过滤分类和作者→主题→来源的固定放宽列表。每个项目保存 fresh／evergreen／exploration 主池、全部池标签、探索理由、正文版本、更新重现和冷却重现证据。
+
+跨日报永久排除已从服务层移除。同一日报仍以候选和逻辑 identity 硬去重；仅曝光未打开文章在 60–90 天配置范围内重现，正文实质更新可提前重现，明确反馈和阅读／归档状态继续阻止重现。规则选择使用固定时钟和 ID 稳定排序；可选 reranker 失败回到规则顺序，成功时 rank 进入受硬约束保护的最终多样性选择。验证没有真实网络、用户数据、模型或密钥；PostgreSQL 容器执行缺口不变。M13 的主要风险是把当前可叠加反馈事件改成幂等、可改选、可撤销的当前状态与历史事件，并彻底停止自动来源权重外溢。
 
 每完成一个里程碑，在本节追加实际结果、与计划差异、遗留问题和下一里程碑风险。最终必须回答：
 
@@ -1389,6 +1400,8 @@ M10 隔离与权限证据：`api/discovery/user_state_m10_test.go` 与 `api/reco
 
 M11 公平与库存证据：`api/discovery/operations_m11_test.go` 验证四个月低命中最大空闲下限、高产出额外预算、每轮每来源单任务、分项运营计数和调度解释；`api/recommendation/inventory_m11_test.go` 验证 fresh／evergreen／exploration、逐用户硬过滤、库存天数和来源产出统计不影响 eligible。`api/migrations/000012_fair_crawl_budget_and_inventory.sql` 只增加分项统计及最新调度解释表，并明确不存在来源质量总分。
 
+M12 选择证据：`api/recommendation/selection_m12_test.go` 验证评分静态边界、长尾精品胜出、10/10 与 7/10、探索配额、来源／主题软上限、固定放宽审计、同簇硬去重、正文更新和 75 天冷却再现及明确反馈排除；既有 reranker 测试验证远程失败回退。`api/migrations/000013_recommendation_v3_selection.sql` 保存项目正文版本、更新和冷却证据，不恢复任何跨日报永久唯一约束。
+
 M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候选版本并发入队 100 次只执行 1 次；`TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures` 证明失败来源和模拟进程中断可恢复且不阻塞其他来源；`TestStartSQLiteDuplicateRecoveryRunsOnce` 证明两个运行时恢复同一端点只执行一次；`TestRecoverDueJobsContinuesAfterIndependentSourceFailure` 与 `TestRecoverDueJobsEnqueuesOnlyMissingLocalDay` 固定发现和日报启动补偿边界。
 
 ## Plan Revision Note
@@ -1414,6 +1427,8 @@ M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候�
 2026-07-14：完成 M10 后补充逐用户候选 overlay、曝光与反馈同步、旧全局状态复核、owner/member 后端权限、可逆站点暂停／安全屏蔽和手动回溯；第十一份 Goose 迁移只增加可对账复核表，原状态和用户数据均保留。
 
 2026-07-14：完成 M11 后补充分项站点运营统计、基础最大空闲下限与只缩短间隔的额外预算、逐端点解释、owner operations API 和逐用户候选库存；第十二份 Goose 迁移不包含来源质量分且采用数据保留 Down。
+
+2026-07-14：完成 M12 后补充推荐 v3 硬门禁、静态文章／用户评分边界、探索配额、可审计软多样性、N/M 不足语义和版本／冷却再推荐；第十三份 Goose 迁移只增加历史项目的重现证据并保留数据。
 
 2026-07-13：完成 M1。此次修订记录增量 v3 模型、数据保留回填、角色和日报快照语义、唯一约束转换、SQLite 迁移证据及 PostgreSQL 基础设施缺口；选择数据保留 Down 和启动幂等回填，是为了让后续里程碑可逐步切流并在任何检查点安全恢复。
 

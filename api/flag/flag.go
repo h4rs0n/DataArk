@@ -51,6 +51,7 @@ func ParseFlag() {
 	RecommendationCandidatePoolSizeFlag := stdflag.Int("recommend-pool-size", 100, "Assign recommendation candidate pool size")
 	RecommendationRerankLimitFlag := stdflag.Int("recommend-rerank-limit", 30, "Assign max candidates sent to LLM reranker")
 	RecommendationExplorationRateFlag := stdflag.Float64("recommend-exploration-rate", 0.15, "Assign recommendation exploration rate")
+	RecommendationReexposureCooldownFlag := stdflag.String("recommend-reexposure-cooldown", "1800h", "Assign cooldown before an exposed but unopened article can compete again")
 	LLMBaseURLFlag := stdflag.String("llm-base-url", "", "Assign OpenAI-compatible LLM base URL")
 	LLMAPIKeyFlag := stdflag.String("llm-api-key", "", "Assign LLM API key")
 	LLMChatModelFlag := stdflag.String("llm-chat-model", "", "Assign LLM chat model")
@@ -103,6 +104,7 @@ func ParseFlag() {
 	config.RECOMMENDATIONCANDIDATEPOOLSIZE = *RecommendationCandidatePoolSizeFlag
 	config.RECOMMENDATIONRERANKLIMIT = *RecommendationRerankLimitFlag
 	config.RECOMMENDATIONEXPLORATIONRATE = *RecommendationExplorationRateFlag
+	config.RECOMMENDATIONREEXPOSURECOOLDOWN = strings.TrimSpace(*RecommendationReexposureCooldownFlag)
 	config.LLMBASEURL = strings.TrimRight(strings.TrimSpace(*LLMBaseURLFlag), "/")
 	config.LLMAPIKEY = strings.TrimSpace(*LLMAPIKeyFlag)
 	config.LLMCHATMODEL = strings.TrimSpace(*LLMChatModelFlag)
