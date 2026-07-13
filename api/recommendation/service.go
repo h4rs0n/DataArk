@@ -357,6 +357,10 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 			_ = markRecommendationDayFailed(day.ID, err)
 			return nil, err
 		}
+		if err := discovery.RecordUserCandidateExposure(db, userID, scored.Candidate.ID, now); err != nil {
+			_ = markRecommendationDayFailed(day.ID, err)
+			return nil, err
+		}
 		written = append(written, *created)
 	}
 	updates := map[string]interface{}{
@@ -446,6 +450,9 @@ func RecordRecommendationFeedback(userID uint, recommendationItemID uint, action
 				return err
 			}
 		}
+		if err := syncUserCandidateFeedbackState(tx, userID, item.CandidateID, action, time.Now()); err != nil {
+			return err
+		}
 		if action != RecommendationFeedbackBlock {
 			return nil
 		}
@@ -475,9 +482,49 @@ func RevertRecommendationFeedback(userID uint, recommendationItemID uint) error 
 		return nil
 	}
 	now := time.Now()
-	return db.Model(&RecommendationFeedback{}).
-		Where("user_id = ? AND recommendation_item_id = ? AND reverted_at IS NULL", userID, recommendationItemID).
-		Update("reverted_at", &now).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		var item RecommendationItem
+		if err := tx.Where("id = ? AND user_id = ?", recommendationItemID, userID).First(&item).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&RecommendationFeedback{}).
+			Where("user_id = ? AND recommendation_item_id = ? AND reverted_at IS NULL", userID, recommendationItemID).
+			Update("reverted_at", &now).Error; err != nil {
+			return err
+		}
+		return tx.Model(&discovery.UserCandidateState{}).Where("user_id = ? AND candidate_id = ?", userID, item.CandidateID).Updates(map[string]interface{}{
+			"current_feedback": "", "feedback_revoked": now, "updated_at": now,
+		}).Error
+	})
+}
+
+func syncUserCandidateFeedbackState(tx *gorm.DB, userID uint, candidateID uint, action string, now time.Time) error {
+	if action == RecommendationFeedbackBlock {
+		return nil
+	}
+	state := discovery.UserCandidateState{UserID: userID, CandidateID: candidateID, CreatedAt: now, UpdatedAt: now}
+	if err := tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "user_id"}, {Name: "candidate_id"}}, DoNothing: true,
+	}).Create(&state).Error; err != nil {
+		return err
+	}
+	updates := map[string]interface{}{
+		"current_feedback": action, "feedback_set_at": now, "feedback_revoked": nil, "updated_at": now,
+	}
+	switch action {
+	case RecommendationFeedbackDeepRead:
+		updates["opened_at"] = now
+		updates["read_at"] = now
+		updates["deep_read_at"] = now
+	case RecommendationFeedbackValuable, RecommendationFeedbackNotInterested, RecommendationFeedbackDuplicate:
+	default:
+		return nil
+	}
+	return tx.Model(&discovery.UserCandidateState{}).Where("user_id = ? AND candidate_id = ?", userID, candidateID).Updates(updates).Error
+}
+
+func userCandidateStateExcludesRecommendation(state discovery.UserCandidateState) bool {
+	return state.ReadAt != nil || state.DeepReadAt != nil || state.ArchivedAt != nil || state.CurrentFeedback == RecommendationFeedbackNotInterested
 }
 
 func ListUserBlockRules(userID uint, activeOnly bool) ([]UserBlockRule, error) {
@@ -798,9 +845,26 @@ func selectDailyRecommendationCandidates(ctx context.Context, userID uint, setti
 	topicWeights := parseWeightMap(profile.TopicWeights)
 	sourceWeights := parseWeightMap(profile.SourceWeights)
 	styleWeights := parseWeightMap(profile.StyleWeights)
+	personalStates := make(map[uint]discovery.UserCandidateState)
+	if len(candidates) > 0 {
+		candidateIDs := make([]uint, 0, len(candidates))
+		for _, candidate := range candidates {
+			candidateIDs = append(candidateIDs, candidate.ID)
+		}
+		var states []discovery.UserCandidateState
+		if err := db.Where("user_id = ? AND candidate_id IN ?", userID, candidateIDs).Find(&states).Error; err != nil {
+			return nil, err
+		}
+		for _, state := range states {
+			personalStates[state.CandidateID] = state
+		}
+	}
 
 	scored := make([]recommendationCandidateScore, 0, len(candidates))
 	for _, candidate := range candidates {
+		if state, ok := personalStates[candidate.ID]; ok && userCandidateStateExcludesRecommendation(state) {
+			continue
+		}
 		if seenCandidateIDs[candidate.ID] {
 			continue
 		}

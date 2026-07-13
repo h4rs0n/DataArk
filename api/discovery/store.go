@@ -212,6 +212,9 @@ func FetchDiscoverySource(ctx context.Context, source *DiscoverySource) (*Discov
 	if source == nil {
 		return nil, errors.New("missing discovery source")
 	}
+	if !discoverySourceOperationallyCrawlable(source) {
+		return &DiscoveryFetchResult{SourceID: source.ID, SourceError: ErrDiscoverySiteNotCrawlable.Error()}, ErrDiscoverySiteNotCrawlable
+	}
 	result := &DiscoveryFetchResult{SourceID: source.ID}
 	startedAt := discoveryClock.Now()
 	candidates, feedsFound, linksFound, fetchResult, err := discoverCandidates(ctx, source)
@@ -276,7 +279,8 @@ func FetchEnabledDiscoverySources(ctx context.Context) error {
 		return nil
 	}
 	var sources []DiscoverySource
-	if err := db.Where("enabled = ?", true).Order("last_fetched_at asc").Find(&sources).Error; err != nil {
+	activeSiteIDs := db.Model(&DiscoverySite{}).Select("id").Where("crawl_allowed = ? AND status NOT IN ?", true, []string{DiscoverySiteStatusPaused, DiscoverySiteStatusBlocked, DiscoverySiteStatusNonBlog})
+	if err := db.Where("enabled = ?", true).Where("site_id IS NULL OR site_id IN (?)", activeSiteIDs).Order("last_fetched_at asc").Find(&sources).Error; err != nil {
 		return err
 	}
 	for index := range sources {

@@ -113,6 +113,21 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 			}).Create(&provenance).Error; err != nil {
 				return err
 			}
+			if candidate.Status == DiscoveryCandidateStatusRead || candidate.Status == DiscoveryCandidateStatusIgnored || candidate.Status == DiscoveryCandidateStatusArchived {
+				review := DiscoveryLegacyCandidateStateReview{
+					CandidateID: candidate.ID, LegacyStatus: candidate.Status, Resolution: "pending",
+					Notes:     "legacy global state has no reliable user identity; retained for owner review",
+					CreatedAt: firstSeen, UpdatedAt: lastSeen,
+				}
+				if err := tx.Clauses(clause.OnConflict{
+					Columns: []clause.Column{{Name: "candidate_id"}},
+					DoUpdates: clause.Assignments(map[string]interface{}{
+						"legacy_status": candidate.Status, "updated_at": lastSeen,
+					}),
+				}).Create(&review).Error; err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	})

@@ -43,7 +43,7 @@
 - [x] 2026-07-14T00:06:05+08:00 M7：把安全正文抓取与 `ExtractArticle` 串入共享候选处理作业，完成文章页硬规则、错误分类、有限重试、不可变正文版本和推荐前置门禁。聚焦验证 `go test ./discovery ./recommendation ./api ./bootstrap -run 'Test(ProcessCandidate|FeedCandidatesReach|GenerateDailyRecommendationsEnrichesPendingCandidates|V3Goose)' -count=1` 通过，模块验证 `go test ./discovery ./recommendation ./api ./bootstrap ./jobqueue -count=1` 和 race 验证 `go test -race ./discovery ./recommendation ./api -count=1` 通过；本地 B Feed 的 13 个候选全部到达 `ready` 或明确 `ineligible`，相同 HTML 不增版本、正文变化增版本，标签／登录／短正文被排除，瞬时失败有限重试，摘要-only 候选不被富化或推荐。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`ef6cb17`。
 - [x] 2026-07-14T00:20:59+08:00 M8：完成跟踪参数 URL、重定向最终 URL、canonical、正文 exact hash 和确定性近似正文聚类，选出唯一代表并保留成员、版本、全部溯源和历史快照。聚焦验证 `go test ./discovery ./recommendation ./bootstrap -run 'Test(ResolveCandidateDuplicates|UpsertTrackingAliases|RecommendationSelectionOnlyUsesDuplicateRepresentative|DuplicateFeedbackCreatesReview|V3Goose)' -count=1` 通过，模块验证 `go test ./discovery ./recommendation ./api ./bootstrap ./jobqueue -count=1` 和 race 验证 `go test -race ./discovery ./recommendation ./api -count=1` 通过；本地三入口验收只产生 1 个推荐代表和 3 条代表溯源，跟踪参数双入口为 1 候选／2 溯源，近似正文同簇、独立正文异簇，代表变化不改历史快照，“太重复”只生成复核信号且来源权重为零变化。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`b629780`。
 - [x] 2026-07-14T00:34:14+08:00 M9：完成版本化、可解释的文章级内容价值评估，建立不含任何来源聚合字段的静态输入边界、始终可用的规则版和可选 OpenAI-compatible 增强版。聚焦验证 `go test ./discovery ./recommendation ./api ./bootstrap -run 'Test(ArticleAssessmentInput|LowHitSource|OptionalAssessor|OpenAICompatibleArticleAssessor|ProcessCandidate|EnrichDiscoveryCandidateUpdatesStructuredFields|V3Goose)' -count=1` 通过，模块验证 `go test ./discovery ./recommendation ./api ./bootstrap ./jobqueue -count=1` 和 race 验证 `go test -race ./discovery ./recommendation ./api -count=1` 通过；B 的 100 篇样本中 97 篇普通、3 篇精品，恰好 3 篇 eligible，同正文放在 A/B 得分完全一致且 B 精品高于 A 普通文；规则／增强版本并存，增强失败回退规则，重评不改历史 assessment 或日报引用，旧富化不再覆盖质量分。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`45f7661`。
-- [ ] M10：完成共享内容状态与用户交互状态分离，并限制全局来源和候选管理权限。
+- [x] 2026-07-14T00:51:25+08:00 M10：完成共享候选与逐用户曝光／打开／已读／深读／不感兴趣／归档状态分离，并为来源、逻辑站点和破坏性日报操作实施 owner 权限。聚焦验证 `go test ./discovery ./recommendation ./api ./bootstrap -run 'Test(UserCandidate|RecordUserCandidate|RecommendationFeedbackAndSourceBlock|DiscoverySourceManagement|DestructiveRecommendation|CandidateInteraction|SiteStatus|OwnerPause|GlobalSafety|V3SQLiteMigration|V3Goose)' -count=1` 通过，race 验证同一测试集通过；双用户验收证明 A 的状态与来源屏蔽不影响 B，owner 暂停保留候选并停止抓取／图谱／回溯，member 管理请求明确返回 403。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。旧全局状态按候选进入可对账复核表，不猜测用户归属且旧字段继续可读；检查点提交：待记录。
 - [ ] M11：完成公平抓取预算、低命中来源非零检查下限、候选库存和新鲜／常青／探索池。
 - [ ] M12：完成推荐 v3 候选选择、多样性、探索配额、冷却再推荐和“目标 N、实际 M”语义。
 - [ ] M13：完成幂等、可替换、可撤销的文章级反馈，偏好衰减、冷启动设置和显式来源屏蔽。
@@ -93,6 +93,8 @@
 - 2026-07-14：旧 `EnrichDiscoveryCandidate` 在主题、实体、摘要富化时同时覆盖 `quality_score` 和 `depth_score`；即使 M9 新 assessor 正确，后续 v2 富化仍会静默改写生效质量。M9 移除这两项更新并用回归测试固定原 assessment 分数不变，旧富化只保留内容标签和模型审计。
 - 2026-07-14：推荐包已依赖 discovery 包，discovery 不能反向导入现有 OpenAI-compatible provider，否则形成导入环。M9 把最小 `ArticleAssessor` 接口放在 discovery，由 recommendation 提供 adapter，并由 API 组合根注入；无模型配置时返回 nil，规则评估路径完全独立。
 - 2026-07-14：规则评估若只按正文长度会把重复冗长的日常更新误判为高质量。M9 的 97/3 夹具促使基线同时计算词汇信息密度、完整性、证据标记、可读性、因果／权衡深度和常青方法信号；重复 “routine status update” 即使长度有效也低于 0.45，而证据丰富的精品通过。
+- 2026-07-14：旧候选 `read/ignored/archived` 行没有操作者或用户 ID，`discovery_candidate_feedbacks` 也只有候选和动作；把这些状态自动分给 `admin`、首个用户或所有现有用户都会制造错误的个人历史。M10 因此只建立逐候选 legacy review 记录并保留原字段，数量可对账但不猜测用户。
+- 2026-07-14：来源恢复查询原先只检查 `discovery_sources.enabled`，逻辑站点进入 `paused/blocked` 后仍可能排入来源抓取；单独更新站点状态不足以真正暂停。M10 在恢复、旧批量抓取和实际抓取入口同时加入站点运营门禁，并保持候选数据不变。
 
 ## Decision Log
 
@@ -151,6 +153,9 @@
 - 2026-07-14：规则 assessor 版本固定为 `deterministic_rules/1.0.0/article-quality-v1`，输出九个 0–1 维度和 JSON 理由；默认总体门槛 0.45，可由 `-discover-article-quality-threshold` 调整。低于门槛是文章级 ineligible，低置信度是 review，任何来源产出统计不参与门槛或分数。
 - 2026-07-14：每次评估先幂等保存规则版本，再尝试可选增强；增强输出完整、范围合法且有理由时成为 current assessment，失败或格式错误只写候选 `assessment_error` 并继续使用规则版本。拒绝只在 LLM 失败时临时计算但不落库的降级，因为那样无法解释当前资格或重放。
 - 2026-07-14：推荐项创建时复制候选的 `current_assessment_id`；正文版本变化只新增新的 assessment 行并切换候选当前引用，不更新旧推荐项。旧主题／实体 enrichment 不再写质量和深度分，确保只有 ArticleAssessor 能决定文章内容价值。
+- 2026-07-14：候选 `status` 暂时保留为只读兼容字段，生产 API 的 new/read/ignored/archived 读写改为当前用户的 `user_candidate_states` overlay；个人操作永不改写共享 `status`。拒绝立即删除或复用旧字段，因为旧 UI／二进制仍需要可回滚读路径，且无操作者的历史状态不能安全迁移。
+- 2026-07-14：旧全局 `read/ignored/archived` 每个候选只写一条 `discovery_legacy_candidate_state_reviews`，默认 `pending` 并说明无可靠用户身份；不自动建立任何用户状态。迁移 Down 是数据保留 no-op，回滚旧读路径仍可使用原 `status`，复核数量可独立对账。
+- 2026-07-14：`paused` 和 `blocked` 是 owner 管理的可逆逻辑站点状态：两者都停止抓取、图谱和未完成回溯，分别记录 `owner_paused` 与 `global_safety_block`；恢复为 seed/observing/active 时只恢复运营游标，不删除或重算候选。member 只拥有个人候选状态、设置、反馈、屏蔽和归档权限。
 
 ## Outcomes & Retrospective
 
@@ -193,6 +198,10 @@ M3 的验证完全使用内存 SQLite、固定时钟、测试抓取替身和本�
 2026-07-14，M9 已完成。`ArticleAssessor` 现在是文章版本专用边界，规则实现基于正文自身的信息密度、原创增量近似、完整性、证据、可读性、深度和常青价值生成版本化分数、置信度与理由。只有去重代表会评估并依据文章门槛成为 eligible；来源名称虽仍在候选展示模型中，但无法进入 assessor 输入。恢复调度会继续 `dedupe_ready + assessment_pending` 项。
 
 规则结果始终先落库；API 组合根可注入 recommendation 包的 OpenAI-compatible adapter，成功时规则与增强两版并存，失败时规则版照常激活且错误可见。旧 enrichment 只更新摘要／主题／实体／内容标签，不再覆盖质量；推荐项保存 active assessment ID。100 篇低命中来源防回归、静态字段边界和相同正文跨来源测试证明没有来源平均表现的硬过滤、乘数或封顶。测试没有真实模型、密钥、互联网或用户数据；第十份 Goose 迁移可解析且数据保留，PostgreSQL 实跑仍待 Docker。M10 的主要风险是把旧全局 read／ignored／archived 写路径切成用户状态并实施 owner/member 权限，同时保持旧 UI 的过渡读路径和可对账回填。
+
+2026-07-14，M10 已完成。候选内容、处理、去重和文章资格继续共享，生产候选 API 则按认证用户读取和写入 `user_candidate_states`；日报发布记录独立曝光次数，推荐反馈同步个人当前状态，用户 A 的打开、不感兴趣和显式来源屏蔽均不改变用户 B 的候选或推荐选择。旧全局状态没有可靠操作者，因此只进入逐候选管理员复核表，不自动污染任何当前或未来用户；原 `status` 和全局归档任务引用仍保留供兼容与回滚。
+
+来源 CRUD／手动抓取、逻辑站点暂停／恢复／全局安全屏蔽、手动历史回溯和破坏性日报重建均由后端强制 owner 权限。暂停和屏蔽会阻止恢复调度、旧批量抓取及已排队来源的实际网络入口，并暂停未完成回溯；恢复会重新激活图谱和对应运营游标，但候选文章始终不删除。验证全程使用 SQLite、本地确定性数据和规则路径，没有真实互联网、用户数据或 LLM 密钥；PostgreSQL 容器实跑缺口仍未改变。M11 的主要风险是把运营健康、产出效率、基础抓取下限和额外预算拆开建模，不能让低命中统计通过调度公式把任何允许抓取站点的检查机会降为零。
 
 每完成一个里程碑，在本节追加实际结果、与计划差异、遗留问题和下一里程碑风险。最终必须回答：
 
@@ -1367,6 +1376,8 @@ M8 身份证据：`api/discovery/dedupe_m8_test.go` 验证 tracking URL 合并�
 
 M9 评估证据：`api/discovery/assessor_m9_test.go` 验证 assessor 静态输入边界、B 的 97 普通／3 精品、同正文跨来源同分、规则降级、正文版本重评和历史 assessment 不变；`api/recommendation/article_assessor_m9_test.go` 验证 OpenAI-compatible adapter 不传 URL／来源身份、规则与增强并存以及推荐项冻结 active assessment；`api/migrations/000010_article_assessment_activation.sql` 增加当前引用和降级错误且 Down 保留所有评估。
 
+M10 隔离与权限证据：`api/discovery/user_state_m10_test.go` 与 `api/recommendation/user_state_m10_test.go` 验证双用户状态、曝光、反馈和来源屏蔽隔离；`api/discovery/site_admin_m10_test.go` 验证 owner 暂停／安全屏蔽保留候选、停止三类工作并可恢复；`api/api/permissions_m10_test.go` 验证 member 对来源、站点、回溯和破坏性日报操作得到 403。`api/migrations/000011_user_candidate_state_and_permissions.sql` 只增加旧状态复核审计，保留旧字段和逐用户状态以支持回滚读路径。
+
 M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候选版本并发入队 100 次只执行 1 次；`TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures` 证明失败来源和模拟进程中断可恢复且不阻塞其他来源；`TestStartSQLiteDuplicateRecoveryRunsOnce` 证明两个运行时恢复同一端点只执行一次；`TestRecoverDueJobsContinuesAfterIndependentSourceFailure` 与 `TestRecoverDueJobsEnqueuesOnlyMissingLocalDay` 固定发现和日报启动补偿边界。
 
 ## Plan Revision Note
@@ -1388,6 +1399,8 @@ M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候�
 2026-07-14：完成 M8 后补充多层文章身份、确定性近似聚类、可解释代表、溯源汇聚、推荐代表门禁和重复复核信号；第九份 Goose 迁移保留候选成员与历史快照，只增身份审计结构。
 
 2026-07-14：完成 M9 后补充文章专用 assessor 边界、规则维度与门槛、可选增强适配、失败降级、旧富化隔离和推荐 assessment 快照；第十份 Goose 迁移只增加当前评估引用与错误审计并保留全部版本。
+
+2026-07-14：完成 M10 后补充逐用户候选 overlay、曝光与反馈同步、旧全局状态复核、owner/member 后端权限、可逆站点暂停／安全屏蔽和手动回溯；第十一份 Goose 迁移只增加可对账复核表，原状态和用户数据均保留。
 
 2026-07-13：完成 M1。此次修订记录增量 v3 模型、数据保留回填、角色和日报快照语义、唯一约束转换、SQLite 迁移证据及 PostgreSQL 基础设施缺口；选择数据保留 Down 和启动幂等回填，是为了让后续里程碑可逐步切流并在任何检查点安全恢复。
 

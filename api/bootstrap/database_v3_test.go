@@ -136,7 +136,7 @@ func TestV3SQLiteMigrationPreservesAndBackfillsLegacyData(t *testing.T) {
 	}
 	candidates := []legacyDiscoveryCandidate{
 		{ID: 20, SourceID: 10, SourceName: "Example Feed", URL: "https://example.com/one", Title: "Frozen title", Summary: "Frozen summary", Author: "Author", Status: discovery.DiscoveryCandidateStatusNew, LastSeenAt: now, CreatedAt: now, UpdatedAt: now},
-		{ID: 21, SourceID: 11, SourceName: "Example Home", URL: "https://example.com/two", Title: "Second title", Status: discovery.DiscoveryCandidateStatusNew, LastSeenAt: now, CreatedAt: now, UpdatedAt: now},
+		{ID: 21, SourceID: 11, SourceName: "Example Home", URL: "https://example.com/two", Title: "Second title", Status: discovery.DiscoveryCandidateStatusIgnored, LastSeenAt: now, CreatedAt: now, UpdatedAt: now},
 	}
 	if err := database.Create(&candidates).Error; err != nil {
 		t.Fatal(err)
@@ -178,6 +178,8 @@ func TestV3SQLiteMigrationPreservesAndBackfillsLegacyData(t *testing.T) {
 	assertCount(t, database, &recommendation.RecommendationFeedback{}, 1)
 	assertCount(t, database, &discovery.DiscoverySite{}, 1)
 	assertCount(t, database, &discovery.DiscoveryCandidateProvenance{}, 2)
+	assertCount(t, database, &discovery.DiscoveryLegacyCandidateStateReview{}, 1)
+	assertCount(t, database, &discovery.UserCandidateState{}, 0)
 
 	var admin auth.User
 	var member auth.User
@@ -208,6 +210,13 @@ func TestV3SQLiteMigrationPreservesAndBackfillsLegacyData(t *testing.T) {
 	}
 	if migratedCandidate.FirstSeenAt == nil || migratedCandidate.ProcessingState != discovery.DiscoveryProcessingFetchPending || migratedCandidate.EligibilityState != discovery.DiscoveryEligibilityUnknown {
 		t.Fatalf("candidate compatibility fields = %#v", migratedCandidate)
+	}
+	var legacyReview discovery.DiscoveryLegacyCandidateStateReview
+	if err := database.Where("candidate_id = ?", 21).First(&legacyReview).Error; err != nil {
+		t.Fatal(err)
+	}
+	if legacyReview.LegacyStatus != discovery.DiscoveryCandidateStatusIgnored || legacyReview.Resolution != "pending" {
+		t.Fatalf("legacy state review = %#v", legacyReview)
 	}
 
 	var migratedDay recommendation.RecommendationDay
@@ -255,7 +264,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 10 || migrations[len(migrations)-1].Version != 10 {
+	if len(migrations) != 11 || migrations[len(migrations)-1].Version != 11 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -339,6 +348,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"current_assessment_id", "assessment_error", "fk_discovery_candidates_current_assessment", "assessment_state = 'pending'", "Data-preserving rollback"} {
 		if !strings.Contains(string(assessmentActivation), required) {
 			t.Fatalf("article assessment activation migration missing %q", required)
+		}
+	}
+	userStatePermissions, err := appmigrations.FS.ReadFile("000011_user_candidate_state_and_permissions.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"discovery_legacy_candidate_state_reviews", "no reliable user identity", "status IN ('read', 'ignored', 'archived')", "Data-preserving rollback"} {
+		if !strings.Contains(string(userStatePermissions), required) {
+			t.Fatalf("user candidate state migration missing %q", required)
 		}
 	}
 }

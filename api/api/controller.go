@@ -49,13 +49,15 @@ var (
 	updateDiscoverySource        = discovery.UpdateDiscoverySource
 	deleteDiscoverySource        = discovery.DeleteDiscoverySource
 	fetchDiscoverySourceByID     = discovery.FetchDiscoverySourceByID
-	listDiscoveryCandidates      = discovery.ListDiscoveryCandidates
+	listDiscoveryCandidates      = discovery.ListDiscoveryCandidatesForUser
 	getDiscoverySiteGraph        = discovery.GetSiteGraph
 	listBackfillCoverage         = discovery.ListBackfillCoverage
+	updateDiscoverySiteStatus    = discovery.UpdateDiscoverySiteOperationalStatus
+	requestDiscoverySiteBackfill = discovery.RequestDiscoverySiteBackfill
 	getDiscoveryCandidate        = discovery.GetDiscoveryCandidate
-	markCandidateRead            = discovery.MarkDiscoveryCandidateRead
-	markCandidateIgnored         = discovery.MarkDiscoveryCandidateIgnored
-	markCandidateArchived        = discovery.MarkDiscoveryCandidateArchived
+	markCandidateRead            = discovery.MarkUserCandidateRead
+	markCandidateIgnored         = discovery.MarkUserCandidateIgnored
+	markCandidateArchived        = discovery.MarkUserCandidateArchived
 	getRecommendationSettings    = recommendation.GetRecommendationSettings
 	saveRecommendationSettings   = recommendation.SaveRecommendationSettings
 	getRecommendationDaySnapshot = recommendation.GetRecommendationDaySnapshot
@@ -397,6 +399,9 @@ func ListDiscoverySources(c *gin.Context) {
 }
 
 func CreateDiscoverySource(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
 	var req discoverySourceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(403, gin.H{"Status": "0", "Message": "请求参数错误"})
@@ -411,6 +416,9 @@ func CreateDiscoverySource(c *gin.Context) {
 }
 
 func UpdateDiscoverySource(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
 	sourceID, ok := parseUintParam(c, "id")
 	if !ok {
 		return
@@ -429,6 +437,9 @@ func UpdateDiscoverySource(c *gin.Context) {
 }
 
 func DeleteDiscoverySource(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
 	sourceID, ok := parseUintParam(c, "id")
 	if !ok {
 		return
@@ -441,6 +452,9 @@ func DeleteDiscoverySource(c *gin.Context) {
 }
 
 func FetchDiscoverySource(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
 	sourceID, ok := parseUintParam(c, "id")
 	if !ok {
 		return
@@ -483,8 +497,51 @@ func GetDiscoveryBackfillCoverage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询历史覆盖成功", "Data": coverage})
 }
 
+func UpdateDiscoverySiteStatus(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	siteID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		Status string `json:"status" binding:"required"`
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "请求参数错误"})
+		return
+	}
+	site, err := updateDiscoverySiteStatus(siteID, req.Status, req.Reason)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "更新站点状态失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "站点状态已更新", "Data": site})
+}
+
+func RequestDiscoverySiteBackfill(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	siteID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	if err := requestDiscoverySiteBackfill(c.Request.Context(), siteID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "启动历史回溯失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "历史回溯已排队"})
+}
+
 func ListDiscoveryCandidates(c *gin.Context) {
-	candidates, err := listDiscoveryCandidates(c.Query("status"), queryInt(c, "limit", 50))
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	candidates, err := listDiscoveryCandidates(userID, c.Query("status"), queryInt(c, "limit", 50))
 	if err != nil {
 		c.JSON(500, gin.H{"Status": "0", "Message": "查询候选文章失败", "Error": err.Error()})
 		return
@@ -493,11 +550,15 @@ func ListDiscoveryCandidates(c *gin.Context) {
 }
 
 func MarkDiscoveryCandidateRead(c *gin.Context) {
+	userID, authenticated := requireCurrentUserID(c)
+	if !authenticated {
+		return
+	}
 	candidateID, ok := parseUintParam(c, "id")
 	if !ok {
 		return
 	}
-	candidate, err := markCandidateRead(candidateID)
+	candidate, err := markCandidateRead(userID, candidateID)
 	if err != nil {
 		c.JSON(500, gin.H{"Status": "0", "Message": "更新候选文章失败", "Error": err.Error()})
 		return
@@ -506,11 +567,15 @@ func MarkDiscoveryCandidateRead(c *gin.Context) {
 }
 
 func IgnoreDiscoveryCandidate(c *gin.Context) {
+	userID, authenticated := requireCurrentUserID(c)
+	if !authenticated {
+		return
+	}
 	candidateID, ok := parseUintParam(c, "id")
 	if !ok {
 		return
 	}
-	candidate, err := markCandidateIgnored(candidateID)
+	candidate, err := markCandidateIgnored(userID, candidateID)
 	if err != nil {
 		c.JSON(500, gin.H{"Status": "0", "Message": "忽略候选文章失败", "Error": err.Error()})
 		return
@@ -519,6 +584,10 @@ func IgnoreDiscoveryCandidate(c *gin.Context) {
 }
 
 func ArchiveDiscoveryCandidate(c *gin.Context) {
+	userID, authenticated := requireCurrentUserID(c)
+	if !authenticated {
+		return
+	}
 	candidateID, ok := parseUintParam(c, "id")
 	if !ok {
 		return
@@ -533,7 +602,7 @@ func ArchiveDiscoveryCandidate(c *gin.Context) {
 		c.JSON(500, gin.H{"Status": "0", "Message": "创建归档任务失败", "Error": err.Error()})
 		return
 	}
-	updatedCandidate, err := markCandidateArchived(candidateID, task.ID)
+	updatedCandidate, err := markCandidateArchived(userID, candidateID, task.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"Status": "0", "Message": "更新候选文章失败", "Error": err.Error()})
 		return
@@ -581,6 +650,9 @@ func GetRecommendationDay(c *gin.Context) {
 }
 
 func GenerateRecommendationDay(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
 	userID, ok := requireCurrentUserID(c)
 	if !ok {
 		return
@@ -749,6 +821,19 @@ func requireCurrentUserID(c *gin.Context) (uint, bool) {
 		return 0, false
 	}
 	return userID, true
+}
+
+func requireOwner(c *gin.Context) bool {
+	user, ok := GetCurrentUser(c)
+	if !ok || user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"Status": "0", "Message": "请先登录"})
+		return false
+	}
+	if user.Role != auth.UserRoleOwner {
+		c.JSON(http.StatusForbidden, gin.H{"Status": "0", "Message": "仅 owner 可执行此操作"})
+		return false
+	}
+	return true
 }
 
 func GetArchiveConsistency(c *gin.Context) {
@@ -1120,6 +1205,8 @@ func WebStarter(debugMode bool) {
 		protected.POST("/discovery/sources/:id/fetch", FetchDiscoverySource)
 		protected.GET("/discovery/sites/:id/graph", GetDiscoverySiteGraph)
 		protected.GET("/discovery/sites/:id/backfill", GetDiscoveryBackfillCoverage)
+		protected.PUT("/discovery/sites/:id/status", UpdateDiscoverySiteStatus)
+		protected.POST("/discovery/sites/:id/backfill", RequestDiscoverySiteBackfill)
 		protected.GET("/discovery/candidates", ListDiscoveryCandidates)
 		protected.POST("/discovery/candidates/:id/read", MarkDiscoveryCandidateRead)
 		protected.POST("/discovery/candidates/:id/archive", ArchiveDiscoveryCandidate)

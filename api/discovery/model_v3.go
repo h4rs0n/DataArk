@@ -226,6 +226,17 @@ type UserCandidateState struct {
 	Candidate       *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
 }
 
+type DiscoveryLegacyCandidateStateReview struct {
+	ID           uint                `json:"id" gorm:"primaryKey"`
+	CandidateID  uint                `json:"candidateId" gorm:"uniqueIndex;not null"`
+	LegacyStatus string              `json:"legacyStatus" gorm:"index;not null;size:32"`
+	Resolution   string              `json:"resolution" gorm:"index;not null;default:pending;size:32"`
+	Notes        string              `json:"notes" gorm:"type:text"`
+	CreatedAt    time.Time           `json:"createdAt"`
+	UpdatedAt    time.Time           `json:"updatedAt"`
+	Candidate    *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
+}
+
 func V3Models() []interface{} {
 	return []interface{}{
 		&DiscoverySite{},
@@ -239,5 +250,6 @@ func V3Models() []interface{} {
 		&DiscoveryDuplicateReviewSignal{},
 		&DiscoveryArticleAssessment{},
 		&UserCandidateState{},
+		&DiscoveryLegacyCandidateStateReview{},
 	}
 }
