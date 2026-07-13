@@ -33,7 +33,7 @@
 - [x] 2026-07-13T00:00:00-07:00 审阅 `dev` 分支现有发现、正文抽取、推荐、反馈、调度、迁移和前端结构。
 - [x] 2026-07-13T00:00:00-07:00 确认产品不变量：友情链接扩展、文章级质量、来源非零探索预算、共享候选与用户状态分离、不可变日报。
 - [x] 2026-07-13T00:00:00-07:00 编写本执行计划的初始版本。
-- [x] 2026-07-13T21:08:04+08:00 M0：固定基线、建立确定性测试站点和可替换的时钟、抓取器、任务队列测试接口。基线为 `9602a91`、Go 1.26.4、Node 24.15.0、迁移 `000001`–`000002`；聚焦测试 `go test ./discovery ./recommendation -run 'Test(Deterministic|HTTPClientFetcher|DiscoverySourceFetchAndCandidateState|RecommendationDayAndItemDeduplication|RecommendationGenerationDueUsesSettingsTime|GenerateDailyRecommendationsRerankerValidationAndFallback)' -count=1` 通过，仓库验证 `go test ./...`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交哈希在提交后回填。
+- [x] 2026-07-13T21:08:04+08:00 M0：固定基线、建立确定性测试站点和可替换的时钟、抓取器、任务队列测试接口。基线为 `9602a91`、Go 1.26.4、Node 24.15.0、迁移 `000001`–`000002`；聚焦测试 `go test ./discovery ./recommendation -run 'Test(Deterministic|HTTPClientFetcher|DiscoverySourceFetchAndCandidateState|RecommendationDayAndItemDeduplication|RecommendationGenerationDueUsesSettingsTime|GenerateDailyRecommendationsRerankerValidationAndFallback)' -count=1` 通过，仓库验证 `go test ./...`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`979a17e`。
 - [ ] M1：完成增量数据库模型和兼容迁移，保留现有数据并建立逻辑博客、来源端点、图谱边、文章溯源、处理状态、用户状态和日报快照结构。
 - [ ] M2：抽取共享持久任务运行时，支持发现抓取、图谱扫描、历史回溯、文章处理和日报生成的幂等作业。
 - [ ] M3：完成安全 HTTP 抓取层、条件请求、robots、SSRF 防护、域名限流、失败退避和逐来源调度。
