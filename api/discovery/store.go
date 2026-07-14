@@ -160,32 +160,6 @@ func DeleteDiscoverySource(id uint) error {
 	return db.Delete(&DiscoverySource{}, id).Error
 }
 
-func ListDiscoveryCandidates(status string, limit int) ([]DiscoveryCandidate, error) {
-	candidates := make([]DiscoveryCandidate, 0)
-	if db == nil {
-		return candidates, nil
-	}
-	limit = normalizeLimit(limit, 50, 200)
-	query := db.Order("score desc, published_at desc, last_seen_at desc").Limit(limit)
-	if strings.TrimSpace(status) != "" {
-		query = query.Where("status = ?", strings.TrimSpace(status))
-	}
-	err := query.Find(&candidates).Error
-	return candidates, err
-}
-
-func MarkDiscoveryCandidateRead(id uint) (*DiscoveryCandidate, error) {
-	return updateCandidateStatus(id, DiscoveryCandidateStatusRead, "", "read")
-}
-
-func MarkDiscoveryCandidateIgnored(id uint) (*DiscoveryCandidate, error) {
-	return updateCandidateStatus(id, DiscoveryCandidateStatusIgnored, "", "ignore")
-}
-
-func MarkDiscoveryCandidateArchived(id uint, taskID string) (*DiscoveryCandidate, error) {
-	return updateCandidateStatus(id, DiscoveryCandidateStatusArchived, taskID, "archive")
-}
-
 func GetDiscoveryCandidate(id uint) (*DiscoveryCandidate, error) {
 	if db == nil {
 		return nil, gorm.ErrRecordNotFound
@@ -272,23 +246,6 @@ func StartDiscoveryScheduler() func() {
 		}
 	}()
 	return func() { close(stop) }
-}
-
-func FetchEnabledDiscoverySources(ctx context.Context) error {
-	if db == nil {
-		return nil
-	}
-	var sources []DiscoverySource
-	activeSiteIDs := db.Model(&DiscoverySite{}).Select("id").Where("crawl_allowed = ? AND status NOT IN ?", true, []string{DiscoverySiteStatusPaused, DiscoverySiteStatusBlocked, DiscoverySiteStatusNonBlog})
-	if err := db.Where("enabled = ?", true).Where("site_id IS NULL OR site_id IN (?)", activeSiteIDs).Order("last_fetched_at asc").Find(&sources).Error; err != nil {
-		return err
-	}
-	for index := range sources {
-		if _, err := FetchDiscoverySource(ctx, &sources[index]); err != nil {
-			log.Printf("failed to fetch discovery source %d: %v", sources[index].ID, err)
-		}
-	}
-	return nil
 }
 
 func NormalizeDiscoveryURL(rawURL string) (string, error) {
@@ -642,32 +599,6 @@ func discoverLinksFromHTML(body []byte, baseURL *neturl.URL) ([]string, []string
 	}
 	walk(doc)
 	return sortedKeys(feedSet), sortedKeys(articleSet)
-}
-
-func updateCandidateStatus(id uint, status string, taskID string, action string) (*DiscoveryCandidate, error) {
-	if db == nil {
-		return nil, gorm.ErrRecordNotFound
-	}
-	var candidate DiscoveryCandidate
-	if err := db.First(&candidate, id).Error; err != nil {
-		return nil, err
-	}
-	if err := db.Transaction(func(tx *gorm.DB) error {
-		updates := map[string]interface{}{"status": status}
-		if taskID != "" {
-			updates["archived_task_id"] = taskID
-		}
-		if err := tx.Model(&candidate).Updates(updates).Error; err != nil {
-			return err
-		}
-		return tx.Create(&DiscoveryCandidateFeedback{CandidateID: id, Action: action}).Error
-	}); err != nil {
-		return nil, err
-	}
-	if err := db.First(&candidate, id).Error; err != nil {
-		return nil, err
-	}
-	return &candidate, nil
 }
 
 func scoreAndLimitCandidates(candidates []discoveredCandidate) []discoveredCandidate {

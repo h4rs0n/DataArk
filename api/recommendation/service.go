@@ -681,6 +681,8 @@ func RecordRecommendationFeedback(userID uint, recommendationItemID uint, action
 				return err
 			}
 			rule.FeedbackID = &feedback.ID
+			rule.CreatedAt = now
+			rule.UpdatedAt = now
 			if err := tx.Create(&rule).Error; err != nil {
 				return err
 			}

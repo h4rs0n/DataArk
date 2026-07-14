@@ -119,20 +119,21 @@ func TestDiscoverySourceFetchAndCandidateState(t *testing.T) {
 	if _, err := FetchDiscoverySource(context.Background(), source); err != nil {
 		t.Fatal(err)
 	}
-	candidates, err := ListDiscoveryCandidates(DiscoveryCandidateStatusNew, 10)
+	const userID = 901
+	candidates, err := ListDiscoveryCandidatesForUser(userID, DiscoveryCandidateStatusNew, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(candidates) != 1 || candidates[0].Title != "First Post" {
 		t.Fatalf("candidates = %#v", candidates)
 	}
-	if _, err := MarkDiscoveryCandidateRead(candidates[0].ID); err != nil {
+	if _, err := MarkUserCandidateRead(userID, candidates[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := MarkDiscoveryCandidateIgnored(candidates[0].ID); err != nil {
+	if _, err := MarkUserCandidateIgnored(userID, candidates[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	ignored, err := ListDiscoveryCandidates(DiscoveryCandidateStatusIgnored, 10)
+	ignored, err := ListDiscoveryCandidatesForUser(userID, DiscoveryCandidateStatusIgnored, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -43,7 +43,7 @@ func ParseFlag() {
 	DiscoveryInventoryFreshDaysFlag := stdflag.Int("discover-inventory-fresh-days", 30, "Assign recent article window used by candidate inventory")
 	DiscoveryInventoryWarningDaysFlag := stdflag.Float64("discover-inventory-warning-days", 7, "Assign candidate inventory warning threshold in days")
 	DiscoveryInventoryCriticalDaysFlag := stdflag.Float64("discover-inventory-critical-days", 3, "Assign candidate inventory critical threshold in days")
-	RecommendationEnabledFlag := stdflag.Bool("recommend-enabled", false, "Enable LLM daily recommendations")
+	RecommendationEnabledFlag := stdflag.Bool("recommend-enabled", false, "Enable deterministic daily recommendations with optional model enhancement")
 	RecommendationDailyLimitFlag := stdflag.Int("recommend-daily-limit", 10, "Assign default daily recommendation count")
 	RecommendationTimezoneFlag := stdflag.String("recommend-timezone", "Asia/Shanghai", "Assign recommendation timezone")
 	RecommendationGenerationTimeFlag := stdflag.String("recommend-time", "07:00", "Assign daily recommendation generation time")
