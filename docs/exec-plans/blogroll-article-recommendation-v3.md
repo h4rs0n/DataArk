@@ -47,7 +47,7 @@
 - [x] 2026-07-14T03:26:40+08:00 M11：完成分项站点运营统计、基础最大空闲时间加额外预算的公平调度、逐端点调度解释和新鲜／常青／探索候选库存。聚焦验证 `go test ./discovery ./recommendation ./api ./bootstrap -run 'Test(FairSchedule|SiteOperations|CandidateInventory|OperationsRequireOwner|V3Goose)' -count=1` 通过，race 验证同一测试集通过；四个月模拟证明 0/1000 eligible 且 999/1000 重复的观察站点仍最迟 7 天检查一次，高产出来源获得更短间隔但每轮每个到期来源仍只排一个任务。用户库存验收区分三个可重叠池、应用个人状态和显式屏蔽，并证明悲观来源产出统计不能移除 eligible 文章。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`83f4a91`。
 - [x] 2026-07-14T03:43:51+08:00 M12：完成推荐 v3 硬候选门禁、文章／用户评分、探索配额、可审计软多样性、冷却／正文更新再推荐和“目标 N、实际 M”。聚焦验证 `go test ./recommendation ./bootstrap -run 'Test(RecommendationV3|GenerateDailyRecommendationsReranker|V3Goose)' -count=1` 通过，race 验证同一测试集通过；验收覆盖 N=10 恰好 10、仅 7 篇合格时 M=7、15% 探索配额、来源 30%／主题 40% 上限、作者→主题→来源固定放宽、同簇硬去重、75 天仅曝光冷却、正文版本更新提前重现和明确反馈不重现。静态评分输入禁止来源、站点、图谱、产出或声誉字段，长尾精品文章分数高于普通文章。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`e5cab43`。
 - [x] 2026-07-14T03:56:53+08:00 M13：完成逐推荐项唯一当前反馈与保留事件历史、幂等重提／改选／撤销、显式来源屏蔽关联、软偏好衰减／重置和可跳过冷启动设置。聚焦验证 `go test ./recommendation ./api ./bootstrap -run 'Test(FeedbackM13|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；验收覆盖重复提交不新增事件或画像版本、改选链和撤销历史、90 天半衰、重复反馈只写聚类复核信号、文章反馈不产生来源权重、显式来源屏蔽逐用户生效并随反馈撤销、打开弱／深读强／纯曝光中性、重置保留事件以及冷启动偏好不跨用户。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`aa82f2f`。
-- [ ] M14：完成按用户时区生成的不可变日报、启动补偿、非破坏性补充和模型故障降级。
+- [x] 2026-07-14T10:25:41+08:00 M14：完成统一用户本地日期、`draft → published / failed` 生命周期、事务冻结快照、幂等非破坏重试和 append-only `supplemented` 补充。聚焦验证 `go test ./recommendation ./api ./bootstrap -run 'Test(DailyDigestM14|RecoverDueJobs|RegenerateDailyRecommendationsPreserves|GenerateDailyRecommendationsDoesNotEnrich|RecommendationRetryRequiresOwner|RecommendationSupplementRequiresOwner|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；验收覆盖上海／洛杉矶同一时刻的不同本地日期、历史时区冻结、启动恢复 missing／draft／failed 且跳过 published、重复重试字节语义一致、候选变更不改历史、反馈不删除、补充只追加、失败可重试以及 reranker 下线规则降级审计。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`d39e5c1`。
 - [ ] M15：完成来源图谱、抓取健康、历史覆盖、文章评估、反馈状态和日报解释的前端体验。
 - [ ] M16：完成运营指标、结构化日志、管理统计和长尾精品贡献指标。
 - [ ] M17：完成端到端验收、PostgreSQL/SQLite 回归、灰度迁移、旧路径清理、部署文档和最终复盘。
@@ -102,6 +102,8 @@
 - 2026-07-14：旧 reranker 顺序在加入 v3 多样性重排后会被基础分数重新覆盖。M12 为有效 reranker 输出保存稳定 rank，最终多样性选择优先保持该 rank，只在硬身份和软多样性约束需要时调整；无模型或模型失败仍按确定性文章分数排序。
 - 2026-07-14：旧画像重建会在每次读取时无条件增加 `profile_version`，即使反馈完全没变；简单地加入连续时间衰减还会让同一日报日内每次重建都产生细微不同。M13 改为只在画像语义变化时升版，并按完整天计算 90 天半衰，因此重复反馈和同日重建稳定，跨日仍可审计衰减。
 - 2026-07-14：旧反馈撤销按用户／推荐项批量标记全部活动行，屏蔽规则又没有反馈事件引用，无法区分改选、撤销当前项和用户单独删除规则。M13 用 nullable 唯一 `current_key` 约束单一当前事件，并让显式规则引用 `feedback_id`；关闭当前事件只解除该事件仍活动的规则，历史行不删除。
+- 2026-07-14：推荐项虽然已有 `snapshot_*` 列，读取日报时 `attachRecommendationItemCandidates` 仍会把当前候选整行挂回响应，因此候选改标题／摘要／来源后历史页面会变化。M14 对 published／supplemented 日报只从冻结列重建展示候选，当前候选只用于未发布兼容数据。
+- 2026-07-14：旧生成函数在选文前同步运行 `EnrichPendingDiscoveryCandidates`，会把待富化池和可选远程模型调用放进发布临界路径；同时启动恢复看到任意同日期行就跳过，导致 draft／failed 永久滞留。M14 移除同步富化，发布只消费 ready/eligible 池，恢复仅跳过 published／supplemented。
 
 ## Decision Log
 
@@ -174,6 +176,10 @@
 - 2026-07-14：文章反馈只更新主题、风格、深度和内容向量，`source_weights` 保持空；`too_repetitive` 规范化到既有 duplicate 聚类复核语义，只有显式 `block_source` 的 source target 建立来源硬规则。明确来源收藏作为用户输入在最终选择中给予小幅软加分，但来源身份、历史命中和运营统计仍不进入文章质量分。
 - 2026-07-14：软反馈和打开／深读／归档参与按完整天计算的 90 天半衰，打开权重 0.15，深读或归档权重 1.2，纯曝光不进入画像；显式屏蔽不衰减，只能由撤销反馈或删除规则解除。拒绝把曝光未点击当负反馈，因为无法区分未看到、无时间和真正不喜欢。
 - 2026-07-14：偏好重置写入 `feedback_reset_at` 并递增画像版本，后续只消费边界之后的新软事件，同时清空冷启动主题／语言／长度／深度／收藏设置；历史反馈、日报和显式屏蔽规则保留。拒绝物理删除历史或解除安全性硬偏好，因为重置目标是个人化权重而非审计和明确屏蔽。
+- 2026-07-14：所有无显式日期的“今日”操作通过同一 `RecommendationDateForUser`／`recommendationDateForSettings` 边界读取 IANA 时区；无效时区在保存时回退仓库默认，不使用进程本地时区。日报创建时冻结时区，后续设置变化只影响新日期。拒绝继续由 API 使用服务器 `time.Now().Format`，因为它会与调度器跨午夜分叉。
+- 2026-07-14：日报持久状态使用 `draft`、`published`、`supplemented`、`failed`；选文在事务外完成，但推荐项、展示快照、曝光和发布审计在一个带行锁的事务内提交。失败只保存有限错误且不伪装为空 published；旧 `pending/generated` 在迁移中变为 `draft/published`。拒绝逐项写入后再更新状态，因为中途失败会留下可见半份日报。
+- 2026-07-14：普通生成和 owner 手动重试对 published／supplemented 均直接返回原快照，旧 `RegenerateDailyRecommendations` 仅保留兼容名称，不再删除日报、项目或反馈；应用服务也拒绝向 published 日报普通追加项目。需要补足时只能走独立 owner supplement 路径，按原缺口追加 `supplemental` 项并保留原 rank、ID、发布时间和反馈。
+- 2026-07-14：配置了 reranker 但调用失败或输出无效时，仍以确定性规则顺序发布，并在日报写 `degraded/degradation_reason`；未配置模型是正常规则模式，不标记故障。拒绝把可选模型错误升级为整份日报失败，也拒绝悄然降级而不留下审计。
 
 ## Outcomes & Retrospective
 
@@ -232,6 +238,12 @@ M3 的验证完全使用内存 SQLite、固定时钟、测试抓取替身和本�
 2026-07-14，M13 已完成。推荐反馈现在有数据库约束保护的单一当前状态和完整历史链：同动作／同目标重提返回同一事件，改选关闭旧 current 并解除其关联屏蔽，撤销只关闭当前事件；GET API 同时返回 current 与 history，重置 API 建立新画像边界而不删除日报或原始反馈。`block_source` 只接受来源 target 并按用户建立硬规则，`too_repetitive` 只创建重复复核信号，普通不感兴趣、正反馈和参与信号均不会生成来源权重。
 
 画像以冷启动主题、语言、长短／深度、探索率和明确收藏为可选输入，跳过时仍使用默认文章质量、新鲜度与多样性。文章反馈、打开、深读和归档按完整天执行 90 天半衰，纯曝光中性；画像只在语义变化时升版，因此日内重复提交确定性一致。迁移 `000014` 对旧活动反馈选择每用户／项目最新项为 current，保留其余历史，SQLite 回填与 Goose 解析均有自动证据；测试不使用真实互联网、用户数据或 LLM。真实 PostgreSQL 执行缺口仍受本机 Docker 不可用限制。M14 的主要风险是移除破坏性日报重建语义、统一本地日期并冻结已发布项目，同时保持失败重试和不足补充可恢复。
+
+2026-07-14，M14 已完成。API 今日查询、生成服务、调度器、持久任务和启动恢复现在共享用户 IANA 时区日期函数；同一 UTC 时刻可为上海和洛杉矶生成不同本地日期，已有日报继续保存创建时区。启动和每分钟调度会补做已过生成时间的 missing、draft 或 failed 日期，published／supplemented 直接跳过，队列参数按用户与本地日期幂等。
+
+日报只从 ready/eligible 候选池选择，不再同步抓取或富化。初次发布在单事务内写推荐项快照、版本、理由、曝光和日报审计；失败保留可重试错误且没有半份 published。已发布重试返回完全相同的冻结响应，当前候选标题、摘要、来源或 assessment 变化不会改历史，旧破坏性重建已退化为安全重试且反馈不会删除。候选后到时，owner-only supplement 只追加缺口并记录策略／时间，不修改原项目。可选 reranker 故障使用规则顺序发布并记录降级。
+
+迁移 `000015` 增量加入失败、降级和补充审计并把旧生命周期映射到新状态；SQLite 真实回填、Goose 解析、无模型和故障模型路径均有自动证据，不使用真实网络、用户数据或 LLM 密钥。PostgreSQL 容器执行仍因当前机器缺少 Docker 留到 M17。M15 的主要风险是把图谱、运营、回溯、文章评估、用户反馈和不可变日报的这些后端语义拆成可维护前端组件，同时彻底移除旧全局状态和重建交互。
 
 每完成一个里程碑，在本节追加实际结果、与计划差异、遗留问题和下一里程碑风险。最终必须回答：
 
