@@ -425,7 +425,10 @@ func buildRecommendationItems(dayID uint, userID uint, selected []recommendation
 			SnapshotTitle: scored.Candidate.Title, SnapshotURL: scored.Candidate.URL,
 			SnapshotSummary: scored.Candidate.Summary, SnapshotAuthor: scored.Candidate.Author,
 			SnapshotSource: scored.Candidate.SourceName, SnapshotPublishedAt: scored.Candidate.PublishedAt,
-			PoolType: scored.PoolType, ExplorationReason: scored.ExplorationReason,
+			SnapshotTopics: scored.Candidate.Topics, SnapshotContentType: scored.Candidate.ContentType,
+			SnapshotStyle: scored.Candidate.ContentStyle, SnapshotLanguage: scored.Candidate.Language,
+			SnapshotWordCount: scored.Candidate.WordCount,
+			PoolType:          scored.PoolType, ExplorationReason: scored.ExplorationReason,
 			ContentVersion: scored.Candidate.ContentVersion, ContentUpdated: scored.ContentUpdated,
 			CooldownRepeat: scored.CooldownRepeat, ProfileVersion: profileVersion,
 			Supplemental: supplemental, CreatedAt: now, UpdatedAt: now,
@@ -1552,6 +1555,9 @@ func attachRecommendationItemCandidates(items []RecommendationItem, dayStatus st
 				ID: items[index].CandidateID, URL: items[index].SnapshotURL, Title: items[index].SnapshotTitle,
 				Summary: items[index].SnapshotSummary, Author: items[index].SnapshotAuthor,
 				SourceName: items[index].SnapshotSource, PublishedAt: items[index].SnapshotPublishedAt,
+				Topics: items[index].SnapshotTopics, ContentType: items[index].SnapshotContentType,
+				ContentStyle: items[index].SnapshotStyle, Language: items[index].SnapshotLanguage,
+				WordCount: items[index].SnapshotWordCount,
 			}
 			continue
 		}

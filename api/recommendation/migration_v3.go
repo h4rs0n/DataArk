@@ -47,6 +47,11 @@ SET snapshot_title = CASE WHEN snapshot_title IS NULL OR snapshot_title = '' THE
     snapshot_author = CASE WHEN snapshot_author IS NULL OR snapshot_author = '' THEN COALESCE((SELECT author FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_author END,
     snapshot_source = CASE WHEN snapshot_source IS NULL OR snapshot_source = '' THEN COALESCE((SELECT source_name FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_source END,
     snapshot_published_at = CASE WHEN snapshot_published_at IS NULL THEN (SELECT published_at FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id) ELSE snapshot_published_at END,
+    snapshot_topics = CASE WHEN snapshot_topics IS NULL OR snapshot_topics = '' THEN COALESCE((SELECT topics FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_topics END,
+    snapshot_content_type = CASE WHEN snapshot_content_type IS NULL OR snapshot_content_type = '' THEN COALESCE((SELECT content_type FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_content_type END,
+    snapshot_style = CASE WHEN snapshot_style IS NULL OR snapshot_style = '' THEN COALESCE((SELECT content_style FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_style END,
+    snapshot_language = CASE WHEN snapshot_language IS NULL OR snapshot_language = '' THEN COALESCE((SELECT language FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_language END,
+    snapshot_word_count = CASE WHEN snapshot_word_count IS NULL OR snapshot_word_count = 0 THEN COALESCE((SELECT word_count FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), 0) ELSE snapshot_word_count END,
     audit_version = CASE WHEN audit_version IS NULL OR audit_version = 0 THEN 1 ELSE audit_version END`).Error
 }
 

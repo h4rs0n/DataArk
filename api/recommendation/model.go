@@ -79,6 +79,11 @@ type RecommendationItem struct {
 	SnapshotAuthor      string                       `json:"snapshotAuthor" gorm:"size:255"`
 	SnapshotSource      string                       `json:"snapshotSource" gorm:"size:255"`
 	SnapshotPublishedAt *time.Time                   `json:"snapshotPublishedAt"`
+	SnapshotTopics      string                       `json:"snapshotTopics" gorm:"type:text"`
+	SnapshotContentType string                       `json:"snapshotContentType" gorm:"size:64"`
+	SnapshotStyle       string                       `json:"snapshotStyle" gorm:"size:64"`
+	SnapshotLanguage    string                       `json:"snapshotLanguage" gorm:"size:32"`
+	SnapshotWordCount   int                          `json:"snapshotWordCount"`
 	PoolType            string                       `json:"poolType" gorm:"index;size:32"`
 	ExplorationReason   string                       `json:"explorationReason" gorm:"type:text"`
 	AssessmentID        *uint                        `json:"assessmentId" gorm:"index"`

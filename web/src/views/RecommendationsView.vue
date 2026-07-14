@@ -29,9 +29,8 @@
                 <span>{{ todayStatusText }}</span>
               </div>
               <a-space wrap>
-                <a-button :loading="generating" type="primary" @click="generateDaily(todaySnapshot.day.date)">
-                  <template #icon><icon-calendar-clock /></template>
-                  生成今日
+                <a-button v-if="isOwner && todaySnapshot.day.actualCount < todaySnapshot.day.requestedCount && ['published', 'supplemented'].includes(todaySnapshot.day.status)" :loading="generating" type="primary" @click="supplementDaily(todaySnapshot.day.date)">
+                  补充缺少文章
                 </a-button>
                 <a-button @click="loadToday">
                   <template #icon><icon-refresh /></template>
@@ -39,6 +38,8 @@
                 </a-button>
               </a-space>
             </div>
+
+            <DigestSummary :day="todaySnapshot.day" />
 
             <a-empty v-if="todaySnapshot.items.length === 0" description="暂无今日推荐" />
             <div v-else class="recommendation-list">
@@ -53,6 +54,8 @@
                   <p>{{ item.candidate.summary || item.candidate.url }}</p>
                   <div class="topic-row">
                     <span v-for="topic in parseList(item.candidate.topics).slice(0, 4)" :key="topic">{{ topic }}</span>
+                    <span v-if="item.poolType">{{ item.poolType }}</span>
+                    <span v-if="item.explorationReason">探索：{{ item.explorationReason }}</span>
                   </div>
                   <small>{{ item.reason || '基于内容质量和反馈画像推荐' }}</small>
                 </div>
@@ -65,33 +68,8 @@
                     <template #icon><icon-storage /></template>
                     入库
                   </a-button>
-                  <div class="feedback-row">
-                    <a-tooltip content="有价值">
-                      <a-button size="small" :loading="feedbackLoadingId === item.id" @click="sendFeedback(item, 'valuable')">
-                        <template #icon><icon-thumb-up /></template>
-                      </a-button>
-                    </a-tooltip>
-                    <a-tooltip content="不感兴趣">
-                      <a-button size="small" :loading="feedbackLoadingId === item.id" @click="sendFeedback(item, 'not_interested')">
-                        <template #icon><icon-thumb-down /></template>
-                      </a-button>
-                    </a-tooltip>
-                    <a-tooltip content="太重复">
-                      <a-button size="small" :loading="feedbackLoadingId === item.id" @click="sendFeedback(item, 'duplicate')">
-                        <template #icon><icon-loop /></template>
-                      </a-button>
-                    </a-tooltip>
-                    <a-tooltip content="值得深读">
-                      <a-button size="small" :loading="feedbackLoadingId === item.id" @click="sendFeedback(item, 'deep_read')">
-                        <template #icon><icon-star /></template>
-                      </a-button>
-                    </a-tooltip>
-                    <a-tooltip content="屏蔽此类">
-                      <a-button size="small" status="danger" @click="openBlockDialog(item)">
-                        <template #icon><icon-stop /></template>
-                      </a-button>
-                    </a-tooltip>
-                  </div>
+                  <a-button size="small" @click="openItemContext(item)">查看发现路径</a-button>
+                  <FeedbackControls :item-id="item.id" :current-action="feedbackByItem[item.id]?.action" :loading="feedbackLoadingId === item.id" @select="(action) => sendFeedback(item, action)" @scope="(scope) => openImpactDialog(item, scope)" @revert="revertFeedback(item)" />
                 </div>
               </article>
             </div>
@@ -149,7 +127,7 @@
                 <span>RSS、RSSHub 或受限站点发现</span>
               </div>
             </div>
-            <form class="source-form" @submit.prevent="saveSource">
+            <form v-if="isOwner" class="source-form" @submit.prevent="saveSource">
               <label class="source-field" for="source-name">
                 <span>名称</span>
                 <input id="source-name" v-model="sourceForm.name" name="source-name" placeholder="名称" />
@@ -181,16 +159,18 @@
                   <small v-if="source.lastError">{{ source.lastError }}</small>
                 </div>
                 <a-space>
-                  <a-button size="small" :loading="fetchingSourceId === source.id" @click="fetchSource(source.id)">
+                  <a-button v-if="source.siteId" size="small" @click="loadSiteInsight(source)">图谱与回溯</a-button>
+                  <a-button v-if="isOwner" size="small" :loading="fetchingSourceId === source.id" @click="fetchSource(source.id)">
                     <template #icon><icon-sync /></template>
                     获取
                   </a-button>
-                  <a-button size="small" status="danger" @click="deleteSource(source.id)">
+                  <a-button v-if="isOwner" size="small" status="danger" @click="deleteSource(source.id)">
                     <template #icon><icon-delete /></template>
                   </a-button>
                 </a-space>
               </article>
             </div>
+            <SiteInsightPanel :source="selectedSource" :graph="siteGraph" :operations="siteOperations" :backfills="siteBackfills" :is-owner="isOwner" @reload="reloadSiteInsight" @backfill="requestBackfill" />
           </section>
 
           <section class="panel">
@@ -215,7 +195,8 @@
                 <div class="item-main">
                   <h3>{{ candidate.title }}</h3>
                   <p>{{ candidate.summary || candidate.url }}</p>
-                  <span>{{ candidate.sourceName }} · {{ candidate.status }} · {{ candidate.enrichmentStatus || 'pending' }}</span>
+                  <span>{{ candidate.sourceName }} · 处理 {{ candidate.processingState || 'unknown' }} · 资格 {{ candidate.eligibilityState || 'unknown' }} · 去重 {{ candidate.dedupeState || 'unknown' }}</span>
+                  <small>评估 {{ candidate.assessmentState || 'pending' }} · 正文 v{{ candidate.contentVersion || 0 }} · {{ candidate.userState?.currentFeedback || '无个人反馈' }}</small>
                 </div>
                 <a-space class="candidate-actions" wrap>
                   <a-button @click="openCandidate(candidate)">
@@ -256,6 +237,11 @@
                 <span>生成时间</span>
                 <input id="generation-time" v-model="settingsForm.generationTime" name="generation-time" type="time" />
               </label>
+              <label class="source-field"><span>偏好主题（逗号分隔）</span><input v-model="preferredTopicsText" placeholder="Go, 数据库" /></label>
+              <label class="source-field"><span>偏好语言（逗号分隔）</span><input v-model="preferredLanguagesText" placeholder="zh, en" /></label>
+              <label class="source-field"><span>文章长度</span><select v-model="settingsForm.preferredLength"><option value="">不指定</option><option value="short">短文</option><option value="long">长文</option></select></label>
+              <label class="source-field"><span>探索比例 {{ Math.round(settingsForm.explorationRate * 100) }}%</span><input v-model.number="settingsForm.explorationRate" type="range" min="0" max="1" step="0.05" /></label>
+              <label class="source-field"><span>明确收藏来源（逗号分隔）</span><input v-model="favoriteSourcesText" placeholder="example.com" /></label>
               <label class="toggle-row">
                 <input id="recommendation-enabled" v-model="settingsForm.enabled" name="recommendation-enabled" type="checkbox" />
                 <span>启用日报生成</span>
@@ -264,6 +250,7 @@
                 <template #icon><icon-settings /></template>
                 保存设置
               </a-button>
+              <a-button status="danger" :loading="savingSettings" @click.prevent="resetPreferences">重置个人推荐偏好</a-button>
             </form>
 
             <section class="block-list">
@@ -350,14 +337,29 @@
       </a-tabs>
     </main>
 
-    <a-modal v-model:visible="blockDialog.visible" title="屏蔽此类" :ok-loading="feedbackLoadingId === blockDialog.item?.id" @ok="submitBlockFeedback">
+    <a-modal v-model:visible="impactDialog.visible" :title="impactDialogTitle" :ok-loading="feedbackLoadingId === impactDialog.item?.id" @ok="submitImpactFeedback">
       <div class="block-options">
-        <label v-for="option in blockOptions" :key="`${option.type}:${option.value}`">
-          <input v-model="selectedBlockKeys" type="checkbox" :value="`${option.type}:${option.value}`" />
+        <label v-for="option in impactOptions" :key="`${option.type}:${option.value}`">
+          <input v-model="selectedImpactValue" type="radio" :value="option.value" />
           <span>{{ blockRuleTypeLabel(option.type) }}：{{ option.value }}</span>
         </label>
       </div>
     </a-modal>
+
+    <a-drawer v-model:visible="contextDrawerVisible" :width="520" title="推荐追溯与文章评估">
+      <a-spin :loading="contextLoading" style="width:100%">
+        <template v-if="itemContext">
+          <h3>{{ itemContext.item.snapshotTitle }}</h3>
+          <p>文章评估：{{ itemContext.assessment ? `${Math.round(itemContext.assessment.overallQuality * 100)} 分 · ${itemContext.assessment.assessor}` : '规则评估详情不可用' }}</p>
+          <p>个人状态：{{ itemContext.userState?.currentFeedback || '无反馈' }}</p>
+          <article v-for="entry in itemContext.provenance" :key="entry.provenance.id" class="trace-entry">
+            <strong>{{ entry.site.displayName || entry.site.hostKey }}</strong>
+            <span>{{ entry.provenance.discoveryMethod }} · {{ entry.provenance.sourcePageUrl || entry.provenance.originalUrl }}</span>
+            <span>路径：{{ (entry.graph?.shortestSeedPath?.sites || []).map((site:any) => site.displayName || site.hostKey).join(' → ') || '种子站点' }}</span>
+          </article>
+        </template>
+      </a-spin>
+    </a-drawer>
   </div>
 </template>
 
@@ -365,27 +367,24 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message, Notification } from '@arco-design/web-vue'
+import DigestSummary from '@/components/recommendations/DigestSummary.vue'
+import FeedbackControls from '@/components/recommendations/FeedbackControls.vue'
+import SiteInsightPanel from '@/components/recommendations/SiteInsightPanel.vue'
 import {
   IconArrowLeft,
-  IconCalendarClock,
   IconClose,
   IconDelete,
   IconEye,
   IconLink,
-  IconLoop,
   IconPlus,
   IconRefresh,
   IconRobot,
   IconSettings,
-  IconStar,
-  IconStop,
   IconStorage,
   IconSync,
-  IconThumbDown,
-  IconThumbUp,
 } from '@arco-design/web-vue/es/icon'
 
-type FeedbackAction = 'valuable' | 'not_interested' | 'duplicate' | 'deep_read' | 'block'
+type FeedbackAction = 'valuable' | 'not_interested' | 'too_repetitive' | 'deep_read' | 'block_source' | 'reduce_topic' | 'reduce_style'
 type BlockRuleType = 'topic' | 'source' | 'style'
 
 interface ArchiveRankingItem {
@@ -415,6 +414,11 @@ interface DiscoverySource {
   type: string
   enabled: boolean
   lastError: string
+  siteId?: number
+  endpointType?: string
+  nextDueAt?: string
+  nextFetchAt?: string
+  lastSuccessAt?: string
 }
 
 interface DiscoveryCandidate {
@@ -430,6 +434,12 @@ interface DiscoveryCandidate {
   contentStyle?: string
   enrichmentStatus?: string
   publishedAt?: string
+  processingState?: string
+  eligibilityState?: string
+  dedupeState?: string
+  assessmentState?: string
+  contentVersion?: number
+  userState?: { currentFeedback?: string; openedAt?: string; archivedAt?: string }
 }
 
 interface RecommendationDay {
@@ -441,6 +451,9 @@ interface RecommendationDay {
   requestedCount: number
   actualCount: number
   generatedAt?: string
+  shortageReasons?: string
+  degraded?: boolean
+  degradationReason?: string
 }
 
 interface RecommendationItem {
@@ -449,6 +462,9 @@ interface RecommendationItem {
   rank: number
   reason: string
   rerankScore: number
+  poolType?: string
+  explorationReason?: string
+  snapshotTitle?: string
   candidate: DiscoveryCandidate
 }
 
@@ -463,6 +479,11 @@ interface RecommendationSettings {
   generationTime: string
   candidateWindowDays: number
   explorationRate: number
+  preferredTopics: string
+  preferredLanguages: string
+  preferredLength: string
+  preferredDepth: number
+  favoriteSources: string
   enabled: boolean
 }
 
@@ -498,6 +519,15 @@ const sources = ref<DiscoverySource[]>([])
 const candidates = ref<DiscoveryCandidate[]>([])
 const historyDays = ref<RecommendationDay[]>([])
 const blockRules = ref<BlockRule[]>([])
+const feedbackByItem = reactive<Record<number, { action: string } | undefined>>({})
+const isOwner = ref(false)
+const selectedSource = ref<DiscoverySource>()
+const siteGraph = ref<any>()
+const siteOperations = ref<any>()
+const siteBackfills = ref<any[]>([])
+const contextDrawerVisible = ref(false)
+const contextLoading = ref(false)
+const itemContext = ref<any>()
 const todaySnapshot = ref<RecommendationSnapshot>(emptySnapshot(formatLocalDate(new Date())))
 const historySnapshot = ref<RecommendationSnapshot>(emptySnapshot(historyDate.value))
 const sourceForm = reactive({ name: '', url: '', type: 'feed' })
@@ -507,34 +537,43 @@ const settingsForm = reactive<RecommendationSettings>({
   generationTime: '07:00',
   candidateWindowDays: 30,
   explorationRate: 0.15,
+  preferredTopics: '[]',
+  preferredLanguages: '[]',
+  preferredLength: '',
+  preferredDepth: 0,
+  favoriteSources: '[]',
   enabled: false,
 })
-const blockDialog = reactive<{ visible: boolean; item: RecommendationItem | null }>({ visible: false, item: null })
-const selectedBlockKeys = ref<string[]>([])
+const preferredTopicsText = ref('')
+const preferredLanguagesText = ref('')
+const favoriteSourcesText = ref('')
+const impactDialog = reactive<{ visible: boolean; item: RecommendationItem | null; scope: BlockRuleType }>({ visible: false, item: null, scope: 'source' })
+const selectedImpactValue = ref('')
 
 const todayStatusText = computed(() => {
   const day = todaySnapshot.value.day
-  if (day.status === 'generated') {
+  if (day.status === 'published' || day.status === 'supplemented') {
     return `${day.actualCount}/${day.requestedCount} 篇 · ${day.generatedAt ? formatDateTime(day.generatedAt) : '已生成'}`
   }
   if (day.status === 'missing') return '尚未生成'
   return day.status
 })
 
-const blockOptions = computed<BlockTarget[]>(() => {
-  const item = blockDialog.item
+const impactOptions = computed<BlockTarget[]>(() => {
+  const item = impactDialog.item
   if (!item) return []
   const candidate = item.candidate
   const options: BlockTarget[] = []
-  for (const topic of parseList(candidate.topics).slice(0, 3)) {
-    options.push({ type: 'topic', value: topic })
+  if (impactDialog.scope === 'topic') {
+    for (const topic of parseList(candidate.topics).slice(0, 3)) options.push({ type: 'topic', value: topic })
   }
   const host = candidate.sourceName || sourceHost(candidate.url)
-  if (host) options.push({ type: 'source', value: host })
-  if (candidate.contentStyle) options.push({ type: 'style', value: candidate.contentStyle })
-  if (candidate.contentType && candidate.contentType !== candidate.contentStyle) options.push({ type: 'style', value: candidate.contentType })
+  if (impactDialog.scope === 'source' && host) options.push({ type: 'source', value: host })
+  if (impactDialog.scope === 'style' && candidate.contentStyle) options.push({ type: 'style', value: candidate.contentStyle })
+  if (impactDialog.scope === 'style' && candidate.contentType && candidate.contentType !== candidate.contentStyle) options.push({ type: 'style', value: candidate.contentType })
   return options
 })
+const impactDialogTitle = computed(() => ({ source: '屏蔽此来源', topic: '少推荐此主题', style: '少推荐此风格' }[impactDialog.scope]))
 
 const authHeaders = (json = false): Record<string, string> => {
   const token = localStorage.getItem('token') || sessionStorage.getItem('token')
@@ -555,6 +594,17 @@ const requestJSON = async <T>(url: string, options: RequestInit = {}): Promise<T
 
 const loadToday = async () => {
   todaySnapshot.value = normalizeSnapshot(await requestJSON<RecommendationSnapshot>('/api/recommendations/today', { headers: authHeaders() }))
+  await Promise.all(todaySnapshot.value.items.map(loadItemFeedback))
+}
+
+const loadIdentity = async () => {
+  const user = await requestJSON<{ role?: string }>('/api/authChecker', { headers: authHeaders() })
+  isOwner.value = user?.role === 'owner'
+}
+
+const loadItemFeedback = async (item: RecommendationItem) => {
+  const data = await requestJSON<{ current?: { action: string } }>(`/api/recommendations/items/${item.id}/feedback`, { headers: authHeaders() })
+  feedbackByItem[item.id] = data?.current ? { action: data.current.action === 'duplicate' ? 'too_repetitive' : data.current.action } : undefined
 }
 
 const loadHistory = async () => {
@@ -578,6 +628,9 @@ const selectHistoryDay = async (date: string) => {
 const loadSettings = async () => {
   const settings = await requestJSON<RecommendationSettings>('/api/recommendations/settings', { headers: authHeaders() })
   Object.assign(settingsForm, settings)
+  preferredTopicsText.value = parseList(settings.preferredTopics).join(', ')
+  preferredLanguagesText.value = parseList(settings.preferredLanguages).join(', ')
+  favoriteSourcesText.value = parseList(settings.favoriteSources).join(', ')
 }
 
 const loadBlocks = async () => {
@@ -608,6 +661,7 @@ const loadAll = async () => {
   try {
     loading.value = true
     await Promise.all([
+      loadIdentity(),
       loadToday(),
       loadHistory(),
       loadSettings(),
@@ -625,21 +679,16 @@ const loadAll = async () => {
   }
 }
 
-const generateDaily = async (date: string) => {
+const supplementDaily = async (date: string) => {
   try {
     generating.value = true
     const query = date ? `?date=${encodeURIComponent(date)}` : ''
-    todaySnapshot.value = normalizeSnapshot(await requestJSON<RecommendationSnapshot>(`/api/admin/recommendations/generate${query}`, {
-      method: 'POST',
-      headers: authHeaders(),
-    }))
+    todaySnapshot.value = normalizeSnapshot(await requestJSON<RecommendationSnapshot>(`/api/admin/recommendations/supplement${query}`, { method: 'POST', headers: authHeaders() }))
     await loadHistory()
-    Message.success('推荐日报已生成')
+    Message.success('日报已按缺口追加')
   } catch (error) {
-    Message.error(error instanceof Error ? error.message : '生成推荐日报失败')
-  } finally {
-    generating.value = false
-  }
+    Message.error(error instanceof Error ? error.message : '补充日报失败')
+  } finally { generating.value = false }
 }
 
 const saveSettings = async () => {
@@ -648,7 +697,12 @@ const saveSettings = async () => {
     const saved = await requestJSON<RecommendationSettings>('/api/recommendations/settings', {
       method: 'PUT',
       headers: authHeaders(true),
-      body: JSON.stringify(settingsForm),
+      body: JSON.stringify({
+        ...settingsForm,
+        preferredTopics: splitPreference(preferredTopicsText.value),
+        preferredLanguages: splitPreference(preferredLanguagesText.value),
+        favoriteSources: splitPreference(favoriteSourcesText.value),
+      }),
     })
     Object.assign(settingsForm, saved)
     Message.success('推荐设置已保存')
@@ -657,6 +711,16 @@ const saveSettings = async () => {
   } finally {
     savingSettings.value = false
   }
+}
+
+const resetPreferences = async () => {
+  try {
+    savingSettings.value = true
+    await requestJSON('/api/recommendations/preferences/reset', { method: 'POST', headers: authHeaders() })
+    await Promise.all([loadSettings(), loadBlocks()])
+    Message.success('个人推荐偏好已重置，历史日报和反馈事件保留')
+  } catch (error) { Message.error(error instanceof Error ? error.message : '重置失败') }
+  finally { savingSettings.value = false }
 }
 
 const saveSource = async () => {
@@ -713,7 +777,7 @@ const sendFeedback = async (item: RecommendationItem, action: FeedbackAction, bl
       headers: authHeaders(true),
       body: JSON.stringify({ action, blockTargets }),
     })
-    await loadBlocks()
+    await Promise.all([loadBlocks(), loadItemFeedback(item)])
     Message.success('反馈已记录')
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '记录反馈失败')
@@ -722,21 +786,66 @@ const sendFeedback = async (item: RecommendationItem, action: FeedbackAction, bl
   }
 }
 
-const openBlockDialog = (item: RecommendationItem) => {
-  blockDialog.item = item
-  blockDialog.visible = true
-  selectedBlockKeys.value = blockOptions.value.slice(0, 1).map((option) => `${option.type}:${option.value}`)
+const revertFeedback = async (item: RecommendationItem) => {
+  try {
+    feedbackLoadingId.value = item.id
+    await requestJSON(`/api/recommendations/items/${item.id}/feedback`, { method: 'DELETE', headers: authHeaders() })
+    feedbackByItem[item.id] = undefined
+    await loadBlocks()
+    Message.success('当前反馈已撤销，历史事件仍保留')
+  } catch (error) { Message.error(error instanceof Error ? error.message : '撤销反馈失败') }
+  finally { feedbackLoadingId.value = null }
 }
 
-const submitBlockFeedback = async () => {
-  if (!blockDialog.item) return
-  const targets = blockOptions.value.filter((option) => selectedBlockKeys.value.includes(`${option.type}:${option.value}`))
+const openImpactDialog = (item: RecommendationItem, scope: BlockRuleType) => {
+  impactDialog.item = item
+  impactDialog.scope = scope
+  impactDialog.visible = true
+  selectedImpactValue.value = impactOptions.value[0]?.value || ''
+}
+
+const submitImpactFeedback = async () => {
+  if (!impactDialog.item) return
+  const targets = impactOptions.value.filter((option) => option.value === selectedImpactValue.value)
   if (targets.length === 0) {
-    Message.warning('请选择屏蔽范围')
+    Message.warning('请选择影响范围')
     return
   }
-  await sendFeedback(blockDialog.item, 'block', targets)
-  blockDialog.visible = false
+  const action: FeedbackAction = impactDialog.scope === 'source' ? 'block_source' : impactDialog.scope === 'topic' ? 'reduce_topic' : 'reduce_style'
+  await sendFeedback(impactDialog.item, action, targets)
+  impactDialog.visible = false
+}
+
+const openItemContext = async (item: RecommendationItem) => {
+  contextDrawerVisible.value = true
+  contextLoading.value = true
+  itemContext.value = undefined
+  try { itemContext.value = await requestJSON<any>(`/api/recommendations/items/${item.id}/context`, { headers: authHeaders() }) }
+  catch (error) { Message.error(error instanceof Error ? error.message : '加载追溯信息失败') }
+  finally { contextLoading.value = false }
+}
+
+const loadSiteInsight = async (source: DiscoverySource) => {
+  selectedSource.value = source
+  await reloadSiteInsight(source.siteId || 0)
+}
+
+const reloadSiteInsight = async (siteId: number) => {
+  if (!siteId) return
+  const requests: Promise<void>[] = [
+    requestJSON<any>(`/api/discovery/sites/${siteId}/graph`, { headers: authHeaders() }).then((value) => { siteGraph.value = value }),
+    requestJSON<any[]>(`/api/discovery/sites/${siteId}/backfill`, { headers: authHeaders() }).then((value) => { siteBackfills.value = value || [] }),
+  ]
+  if (isOwner.value) requests.push(requestJSON<any>(`/api/discovery/sites/${siteId}/operations`, { headers: authHeaders() }).then((value) => { siteOperations.value = value }))
+  try { await Promise.all(requests) } catch (error) { Message.error(error instanceof Error ? error.message : '加载站点详情失败') }
+}
+
+const requestBackfill = async (siteId: number) => {
+  try {
+    await requestJSON(`/api/discovery/sites/${siteId}/backfill`, { method: 'POST', headers: authHeaders() })
+    await reloadSiteInsight(siteId)
+    Message.success('历史回溯已排队')
+  } catch (error) { Message.error(error instanceof Error ? error.message : '启动回溯失败') }
 }
 
 const deleteBlockRule = async (ruleId: number) => {
@@ -823,6 +932,10 @@ function parseList(raw?: string): string[] {
   } catch {
     return []
   }
+}
+
+function splitPreference(raw: string): string[] {
+  return [...new Set(raw.split(/[,，\n]/).map((value) => value.trim()).filter(Boolean))]
 }
 
 function sourceHost(rawUrl?: string): string {

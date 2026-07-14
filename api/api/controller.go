@@ -73,6 +73,7 @@ var (
 	recordRecommendationFeedback       = recommendation.RecordRecommendationFeedback
 	revertRecommendationFeedback       = recommendation.RevertRecommendationFeedback
 	getCurrentRecommendationFeedback   = recommendation.GetCurrentRecommendationFeedback
+	getRecommendationItemContext       = recommendation.GetRecommendationItemContext
 	listRecommendationFeedbackHistory  = recommendation.ListRecommendationFeedbackHistory
 	resetUserRecommendationPreferences = recommendation.ResetUserRecommendationPreferences
 	listUserBlockRules                 = recommendation.ListUserBlockRules
@@ -188,9 +189,11 @@ func (ac *AuthController) Login(c *gin.Context) {
 }
 
 func (ac *AuthController) AuthChecker(c *gin.Context) {
+	user, _ := GetCurrentUser(c)
 	c.JSON(http.StatusOK, gin.H{
 		"Status":  "1",
 		"Message": "Already login",
+		"Data":    user,
 	})
 }
 
@@ -852,6 +855,27 @@ func GetRecommendationItemFeedback(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询推荐反馈成功", "Data": gin.H{"current": feedback, "history": history}})
 }
 
+func GetRecommendationItemContext(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	itemID, ok := parseUintParam(c, "itemId")
+	if !ok {
+		return
+	}
+	context, err := getRecommendationItemContext(userID, itemID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"Status": "0", "Message": "查询推荐追溯信息失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询推荐追溯信息成功", "Data": context})
+}
+
 func ResetRecommendationPreferences(c *gin.Context) {
 	userID, ok := requireCurrentUserID(c)
 	if !ok {
@@ -1331,6 +1355,7 @@ func WebStarter(debugMode bool) {
 		protected.PUT("/recommendations/settings", UpdateRecommendationSettings)
 		protected.POST("/recommendations/items/:itemId/feedback", RecordRecommendationItemFeedback)
 		protected.GET("/recommendations/items/:itemId/feedback", GetRecommendationItemFeedback)
+		protected.GET("/recommendations/items/:itemId/context", GetRecommendationItemContext)
 		protected.DELETE("/recommendations/items/:itemId/feedback", RevertRecommendationItemFeedback)
 		protected.POST("/recommendations/preferences/reset", ResetRecommendationPreferences)
 		protected.GET("/recommendations/blocks", ListRecommendationBlocks)
