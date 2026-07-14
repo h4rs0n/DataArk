@@ -39,7 +39,11 @@ SET status = CASE status WHEN 'pending' THEN 'draft' WHEN 'generated' THEN 'publ
     published_at = CASE WHEN status IN ('generated', 'published') AND published_at IS NULL THEN generated_at ELSE published_at END`).Error; err != nil {
 		return err
 	}
-	return database.Exec(`
+	topicsExpression := "COALESCE((SELECT topics FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '')"
+	if database.Dialector.Name() == "postgres" {
+		topicsExpression = "COALESCE((SELECT topics::text FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '')"
+	}
+	return database.Exec(fmt.Sprintf(`
 UPDATE recommendation_items
 SET snapshot_title = CASE WHEN snapshot_title IS NULL OR snapshot_title = '' THEN COALESCE((SELECT title FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_title END,
     snapshot_url = CASE WHEN snapshot_url IS NULL OR snapshot_url = '' THEN COALESCE((SELECT url FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_url END,
@@ -47,7 +51,7 @@ SET snapshot_title = CASE WHEN snapshot_title IS NULL OR snapshot_title = '' THE
     snapshot_author = CASE WHEN snapshot_author IS NULL OR snapshot_author = '' THEN COALESCE((SELECT author FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_author END,
     snapshot_source = CASE WHEN snapshot_source IS NULL OR snapshot_source = '' THEN COALESCE((SELECT source_name FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_source END,
     snapshot_published_at = CASE WHEN snapshot_published_at IS NULL THEN (SELECT published_at FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id) ELSE snapshot_published_at END,
-    snapshot_topics = CASE WHEN snapshot_topics IS NULL OR snapshot_topics = '' THEN COALESCE((SELECT topics FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_topics END,
+    snapshot_topics = CASE WHEN snapshot_topics IS NULL OR snapshot_topics = '' THEN %s ELSE snapshot_topics END,
     snapshot_content_type = CASE WHEN snapshot_content_type IS NULL OR snapshot_content_type = '' THEN COALESCE((SELECT content_type FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_content_type END,
     snapshot_style = CASE WHEN snapshot_style IS NULL OR snapshot_style = '' THEN COALESCE((SELECT content_style FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_style END,
     snapshot_language = CASE WHEN snapshot_language IS NULL OR snapshot_language = '' THEN COALESCE((SELECT language FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_language END,
@@ -56,7 +60,7 @@ SET snapshot_title = CASE WHEN snapshot_title IS NULL OR snapshot_title = '' THE
     snapshot_eligibility_state = CASE WHEN snapshot_eligibility_state IS NULL OR snapshot_eligibility_state = '' THEN COALESCE((SELECT eligibility_state FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_eligibility_state END,
     snapshot_dedupe_state = CASE WHEN snapshot_dedupe_state IS NULL OR snapshot_dedupe_state = '' THEN COALESCE((SELECT dedupe_state FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_dedupe_state END,
     snapshot_cluster_id = CASE WHEN snapshot_cluster_id IS NULL OR snapshot_cluster_id = '' THEN COALESCE((SELECT duplicate_cluster_id FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_cluster_id END,
-    audit_version = CASE WHEN audit_version IS NULL OR audit_version = 0 THEN 1 ELSE audit_version END`).Error
+    audit_version = CASE WHEN audit_version IS NULL OR audit_version = 0 THEN 1 ELSE audit_version END`, topicsExpression)).Error
 }
 
 // BackfillFeedbackCurrentState selects the newest active legacy event for each

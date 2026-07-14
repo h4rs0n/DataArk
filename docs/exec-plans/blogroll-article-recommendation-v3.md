@@ -51,6 +51,7 @@
 - [x] 2026-07-14T10:40:28+08:00 M15：完成推荐中心组件拆分和可见的日报、图谱、抓取、回溯、文章评估、逐用户状态与反馈语义。聚焦验证 `go test ./recommendation ./api ./bootstrap -run 'Test(RecommendationExperienceM15|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；`npm test` 固定范围反馈、追溯契约和无破坏性生成交互，`npm run build` 类型检查与生产构建通过。页面支持 N/M、短缺／降级／探索解释，站点发现路径、端点健康和回溯，推荐项 assessment/provenance 追溯，反馈选中／改选／撤销和来源／主题／风格范围，冷启动设置／重置，以及 owner-only 来源、回溯和补充操作。仓库验证 `go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`9db105f`。
 - [x] 2026-07-14T10:53:33+08:00 M16：完成 owner-only 推荐运营指标、受限字段结构化事件和长尾精品贡献统计。聚焦验证 `go test ./recommendation ./api ./observability ./jobqueue ./bootstrap -run 'Test(ObservabilityM16|EventSchema|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；固定数据验证低命中分组、调度下限违规、规则／模型评估率、日报填充／降级／按时发布、探索配额、正反馈、图谱／回溯贡献、首篇精品延迟和三类快照完整性违规，且候选发布后变更不会误报历史日报。仓库验证 `go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`af262a9`。
 - [x] 2026-07-14T11:07:27+08:00 M17：完成确定性端到端闭环、SQLite／全仓／race 回归、旧全局个人状态和串行发现辅助路径清理，以及升级、灰度、回滚、权限、故障处理和数据保留手册。聚焦验收 `go test ./discovery ./recommendation ./jobqueue ./bootstrap ./api ./observability -run 'Test(DeterministicSiteWorld|BlogrollGraphFixture|BackfillFinds|ProcessCandidate|LowHitSource|EndToEndM17|DailyDigestM14|ObservabilityM16|RecoverDueJobs|V3Goose|V3SQLiteMigration)' -count=1` 通过；`go test -race ./discovery ./recommendation ./jobqueue/... -count=1`、`go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`658abff`。本机 Docker Desktop WSL 集成未启用且没有 PostgreSQL CLI/Podman，真实 PostgreSQL 迁移、River 进程重启与 pgvector 可选路径无法执行，已作为生产灰度前的必要外部基础设施验证写入运维手册；没有用外网、真实数据或模型密钥替代。
+- [x] 2026-07-14T14:38:44+08:00 M17 外部基础设施补验：在 Docker Desktop WSL 集成恢复后，以独立 Compose 项目、localhost 端口和 `tmpfs` 空数据库运行 `DATAARK_POSTGRES_TEST_DSN=... go test ./bootstrap -run TestPostgresV3MigrationsRiverRestartAndPGVector -count=1 -v`。真实 PostgreSQL 17/pgvector 从零执行 `000001`–`000017`、重复执行、应用 JSONB 写入、向量写读、River 两次运行时启动和两条持久作业均通过；测试发现并修复 `000016` JSONB→TEXT 回填类型错误，以及来源／候选空 JSON 字段的 PostgreSQL 写入错误。聚焦、全仓、race、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 随后全部通过。临时数据库、角色、容器、网络和构建产物已删除；检查点提交见包含本条目的提交。
 
 ## Surprises & Discoveries
 
@@ -112,6 +113,8 @@
 - 2026-07-14：M17 端到端固定时钟暴露 `RecordRecommendationFeedback` 使用业务时钟创建反馈、但让 GORM 用墙钟创建关联屏蔽规则；两个时钟顺序不一致时，指标会把发布后屏蔽误判成发布时违规。规则现在和反馈共享同一个 `now` 写 `created_at/updated_at`，回归夹具要求三类完整性违规均为零。
 - 2026-07-14：全局 `MarkDiscoveryCandidateRead/Ignored/Archived` 和 `FetchEnabledDiscoverySources` 已没有生产调用，但继续留在 `store.go` 会保留个人行为写共享状态和串行抓取的可调用旧入口。M17 删除这些函数并把最后一个旧测试改为逐用户 overlay；候选兼容 `status` 和旧反馈表只保留为迁移／回滚数据，不再有写调用方。
 - 2026-07-14：M17 再次执行 `docker --version` 时，WSL 只发现 Docker Desktop 转发程序并明确报告 WSL integration 未启用；`psql`、`pg_isready` 和 Podman 均不存在。因此当前机器不能提供真实 PostgreSQL Goose、River 进程重启或 pgvector 证据，这属于基础设施不可用而非测试失败。
+- 2026-07-14：Docker 补验首次在真实 PostgreSQL 执行到 `000016_recommendation_experience_context.sql` 时失败。`discovery_candidates.topics` 是 JSONB，而 `recommendation_items.snapshot_topics` 是 TEXT；`COALESCE(candidate.topics, '')` 会先把空字符串解释为 JSON 并报 `SQLSTATE 22P02`，即使待更新表为空。显式使用 `candidate.topics::text` 后 17 份迁移从零通过。
+- 2026-07-14：真实迁移通过后，GORM 创建尚未富化的来源／候选又暴露 JSONB 空字符串问题：PostgreSQL 中 `crawl_config`、`topics`、`entities` 是 JSONB，但 Go 兼容模型仍以 string 表达。SQLite 接受空字符串，PostgreSQL 拒绝。PostgreSQL `BeforeSave` 现在分别规范为空对象 `{}` 和空数组 `[]`，集成测试通过应用写路径及 `::text` 读回固定该差异。
 
 ## Decision Log
 
@@ -198,6 +201,8 @@
 - 2026-07-14：M17 端到端验收拆为同一正式测试命令中的两半：discovery 包用本机 `httptest` A/B/C 世界执行抓取、循环、Feed、Sitemap、归档、304、robots、失败和恢复，recommendation 包用单个共享 SQLite 数据库继续图谱、低命中文章、溯源、双用户、反馈、屏蔽、时区、N/M、探索、不可变日报、模型降级和长尾指标闭环。拒绝用真实站点或真实模型“演示”验收。
 - 2026-07-14：删除无调用的共享候选个人状态写函数和串行全来源抓取函数；保留 `discovery_candidates.status`、`discovery_candidate_feedbacks`、legacy review 表、v2 enrichment 展示字段，以及 `/admin/recommendations/generate`／`RegenerateDailyRecommendations` 兼容名称至少一个稳定发布窗口。保留理由分别是旧数据对账／回滚和旧客户端兼容；generate 名称的实现已是幂等安全重试，不能删除或重排 published 日报。
 - 2026-07-14：真实 PostgreSQL/River/pgvector 验收因当前机器外部基础设施不可用而不伪造通过。生产灰度必须先按 `docs/operations/recommendation-v3-runbook.md` 启动 PostgreSQL、执行启动迁移、重启 API 并核对 River 恢复、快照不变和可选 vector；SQLite 自动证据不能替代该门槛。
+- 2026-07-14：外部数据库门槛使用显式 opt-in 的 `TestPostgresV3MigrationsRiverRestartAndPGVector` 固化，默认无 DSN 时跳过；测试只接受名称以 `dataark_v3_verify` 开头的可丢弃数据库。理由是普通单元测试不能要求 Docker，而发布验证必须真实覆盖 Goose、River 和 pgvector；拒绝复用现有 Compose 数据库或真实用户数据。
+- 2026-07-14：PostgreSQL JSONB 兼容保持现有 Go string API，不在本轮把模型全面改成自定义 JSON 类型；迁移回填显式 `::text`，写入钩子只在 PostgreSQL 把空值规范成合法 JSON。这样是最小、可回滚修复，不改变 SQLite、HTTP JSON 或推荐解析语义；后续若类型化 JSON，应另做兼容迁移。
 
 ## Outcomes & Retrospective
 
@@ -277,7 +282,11 @@ M3 的验证完全使用内存 SQLite、固定时钟、测试抓取替身和本�
 
 生产代码已删除最后的共享候选个人状态写函数和串行全来源抓取辅助函数；认证 API 只写逐用户 overlay，发现 ticker 只唤醒持久队列恢复。published/supplemented 没有删除／重排路径，旧 generate 名称只做安全重试，跨日报永久 user/candidate 唯一约束已移除并由显式冷却替代。端到端验收同时修正屏蔽规则与反馈的时钟不一致，确保发布后规则不会污染发布时完整性指标。README 中英文说明、配置语义和 `docs/operations/recommendation-v3-runbook.md` 已覆盖灰度、回滚、权限、故障、指标、数据保留和隐私。
 
-最终结论：Blogroll 图谱确实驱动新站点和历史精品发现；来源统计没有进入文章有效性、质量分或封顶；多月测试证明低命中站点仍获得非零检查；日报、候选状态、反馈和屏蔽按用户隔离；发布快照在刷新、重试、候选修改、模型故障和重启恢复语义下不变；固定数据得到非零长尾精品贡献。仍保留的兼容数据是共享候选 `status`、旧候选反馈／复核表、v2 enrichment 展示列和安全重试的旧 generate 名称，删除需等待稳定发布窗口并另做对账迁移。唯一未完成的执行证据是当前机器无法提供的真实 PostgreSQL/River/pgvector 容器和认证浏览器截图；前者是生产灰度硬门槛，后者由现有前端契约与构建覆盖但应在可启动完整服务的环境补录。`make all` 也未直接运行，因为用户工作区版本会修改全局 npm 配置；等价的仓库级前端测试／构建、`make web2api` 和后端二进制构建均通过且产物已清理。
+最终结论：Blogroll 图谱确实驱动新站点和历史精品发现；来源统计没有进入文章有效性、质量分或封顶；多月测试证明低命中站点仍获得非零检查；日报、候选状态、反馈和屏蔽按用户隔离；发布快照在刷新、重试、候选修改、模型故障和重启恢复语义下不变；固定数据得到非零长尾精品贡献。仍保留的兼容数据是共享候选 `status`、旧候选反馈／复核表、v2 enrichment 展示列和安全重试的旧 generate 名称，删除需等待稳定发布窗口并另做对账迁移。M17 初次收尾时未完成的执行证据是真实 PostgreSQL/River/pgvector 容器和认证浏览器截图；前者是生产灰度硬门槛并已在下述补验中完成，后者由现有前端契约与构建覆盖但应在可启动完整服务的环境补录。`make all` 也未直接运行，因为用户工作区版本会修改全局 npm 配置；等价的仓库级前端测试／构建、`make web2api` 和后端二进制构建均通过且产物已清理。
+
+2026-07-14，Docker Desktop WSL 集成恢复后的 M17 外部门槛补验已完成。独立 `tmpfs` PostgreSQL 17/pgvector 从空库真实执行全部 17 份 Goose 迁移，第二次执行保持 version 17；River schema 建立后，同一测试进程先后启动两次共享运行时并完成两个确定性日报作业；应用路径写入三维向量并按 pgvector 文本精确读回。补验发现的 `000016` JSONB 回填类型错误和空 JSON GORM 写入错误均已修复，并由默认跳过、显式 DSN 才运行的发布门槛测试固定。测试未使用互联网、LLM 密钥、真实用户或现有数据库，所有临时基础设施已清理。
+
+因此真实 PostgreSQL/River/pgvector 不再是遗留证据。剩余验证差异只有认证浏览器截图／console／network 证据，以及因用户本地 `makefile` 全局 npm 副作用而采用等价分步构建；前端契约、类型、生产构建和嵌入二进制仍全部通过。兼容字段／路由清理结论不变。
 
 每完成一个里程碑，在本节追加实际结果、与计划差异、遗留问题和下一里程碑风险。最终必须回答：
 
@@ -1460,6 +1469,8 @@ M12 选择证据：`api/recommendation/selection_m12_test.go` 验证评分静态
 
 M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候选版本并发入队 100 次只执行 1 次；`TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures` 证明失败来源和模拟进程中断可恢复且不阻塞其他来源；`TestStartSQLiteDuplicateRecoveryRunsOnce` 证明两个运行时恢复同一端点只执行一次；`TestRecoverDueJobsContinuesAfterIndependentSourceFailure` 与 `TestRecoverDueJobsEnqueuesOnlyMissingLocalDay` 固定发现和日报启动补偿边界。
 
+M17 PostgreSQL 证据：`api/bootstrap/postgres_v3_integration_test.go` 的 `TestPostgresV3MigrationsRiverRestartAndPGVector` 只接受 `dataark_v3_verify*` 可丢弃数据库，真实执行全量 Goose 与 River schema、第二次幂等迁移、来源／候选 JSONB、pgvector 写读和两次 River 运行时。2026-07-14 在独立 PostgreSQL 17/pgvector `tmpfs` 容器上从空库通过，随后临时库和容器被删除。
+
 ## Plan Revision Note
 
 2026-07-13：创建初始版本。相较于早期“来源质量优先”的可能解释，本计划明确采用“友情链接受控扩展、来源级信号只调度资源、文章级独立质量判断、低命中来源保留非零预算”的产品约束，并把它贯穿数据模型、抓取、历史回溯、推荐、反馈、日报、UI、指标和端到端验收。
@@ -1489,3 +1500,5 @@ M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候�
 2026-07-13：完成 M1。此次修订记录增量 v3 模型、数据保留回填、角色和日报快照语义、唯一约束转换、SQLite 迁移证据及 PostgreSQL 基础设施缺口；选择数据保留 Down 和启动幂等回填，是为了让后续里程碑可逐步切流并在任何检查点安全恢复。
 
 2026-07-13：完成 M2。此次修订记录共享 River／内存运行时、五类稳定作业参数、启动恢复、并发幂等、失败隔离、发现 ticker 切换及 v2 兼容证据；函数式 handler 注入保持基础设施与领域包无环，为后续抓取、图谱、回溯和文章处理逐项接入留下明确边界。
+
+2026-07-14：在 Docker Desktop WSL 集成恢复后补齐 M17 外部门槛。此次修订记录真实 PostgreSQL 17 的 17 份 Goose 迁移与幂等执行、River 两次运行时、pgvector 写读，以及由实跑发现并修复的 JSONB→TEXT 回填和空 JSON 写入差异；新增 opt-in 发布测试使该门槛可重复且不污染普通无 Docker 测试。

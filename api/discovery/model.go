@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -31,6 +32,13 @@ type DiscoverySource struct {
 	LastError     string     `json:"lastError" gorm:"type:text"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
+}
+
+func (source *DiscoverySource) BeforeSave(tx *gorm.DB) error {
+	if tx != nil && tx.Dialector.Name() == "postgres" && strings.TrimSpace(source.CrawlConfig) == "" {
+		source.CrawlConfig = "{}"
+	}
+	return nil
 }
 
 type DiscoveryCandidate struct {
@@ -88,6 +96,19 @@ type DiscoveryCandidate struct {
 	FirstSeenAt         *time.Time `json:"firstSeenAt" gorm:"index"`
 	CreatedAt           time.Time  `json:"createdAt"`
 	UpdatedAt           time.Time  `json:"updatedAt"`
+}
+
+func (candidate *DiscoveryCandidate) BeforeSave(tx *gorm.DB) error {
+	if tx == nil || tx.Dialector.Name() != "postgres" {
+		return nil
+	}
+	if strings.TrimSpace(candidate.Topics) == "" {
+		candidate.Topics = "[]"
+	}
+	if strings.TrimSpace(candidate.Entities) == "" {
+		candidate.Entities = "[]"
+	}
+	return nil
 }
 
 type DiscoveryCandidateFeedback struct {

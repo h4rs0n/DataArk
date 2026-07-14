@@ -18,6 +18,16 @@ docker compose logs --no-color dataarkapi
 
 After the restart, verify that migrations are current, interrupted River work resumes once, published digests are unchanged, and no secret is printed in structured `dataark_event` records. Never place production tokens, passwords, private Feed bodies, or user content in fixtures, Compose files, command history, or this runbook.
 
+Before a production rollout, run the repository's opt-in database gate against a disposable empty database whose name begins with `dataark_v3_verify`:
+
+```sh
+cd api
+DATAARK_POSTGRES_TEST_DSN='host=127.0.0.1 port=5432 user=<test-user> password=<test-password> dbname=dataark_v3_verify sslmode=disable' \
+  go test ./bootstrap -run TestPostgresV3MigrationsRiverRestartAndPGVector -count=1 -v
+```
+
+The test refuses other database names. It applies all Goose and River migrations, repeats the migration path, checks PostgreSQL JSON fields, writes and reads a pgvector value, starts the River runtime twice, and completes deterministic synthetic jobs. Drop the disposable database after the test; never point this command at production or a database containing user data.
+
 ## Staged rollout and rollback
 
 Use the following order. Each step is reversible and must pass count reconciliation before advancing.

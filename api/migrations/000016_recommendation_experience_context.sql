@@ -8,7 +8,7 @@ ALTER TABLE recommendation_items
     ADD COLUMN IF NOT EXISTS snapshot_word_count INTEGER NOT NULL DEFAULT 0;
 
 UPDATE recommendation_items AS item
-SET snapshot_topics = COALESCE(candidate.topics, ''),
+SET snapshot_topics = COALESCE(candidate.topics::text, ''),
     snapshot_content_type = COALESCE(candidate.content_type, ''),
     snapshot_style = COALESCE(candidate.content_style, ''),
     snapshot_language = COALESCE(candidate.language, ''),

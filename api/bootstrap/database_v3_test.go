@@ -377,6 +377,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 			t.Fatalf("recommendation v3 selection migration missing %q", required)
 		}
 	}
+	experienceContext, err := appmigrations.FS.ReadFile("000016_recommendation_experience_context.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"snapshot_topics", "candidate.topics::text", "Data-preserving rollback"} {
+		if !strings.Contains(string(experienceContext), required) {
+			t.Fatalf("recommendation experience migration missing %q", required)
+		}
+	}
 }
 
 func assertCount(t *testing.T, database *gorm.DB, model interface{}, want int64) {
