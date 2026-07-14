@@ -243,7 +243,10 @@ func populateGlobalSelectionExclusions(excluded map[string]int) error {
 func loadRecommendationHistoryV3(userID uint) (map[string]recommendationHistoryEntry, error) {
 	result := make(map[string]recommendationHistoryEntry)
 	var items []RecommendationItem
-	if err := db.Where("user_id = ?", userID).Order("created_at asc, id asc").Find(&items).Error; err != nil {
+	if err := db.Table("recommendation_items AS item").Select("item.*").
+		Joins("JOIN recommendation_days AS day ON day.id = item.day_id").
+		Where("item.user_id = ? AND day.status IN ?", userID, []string{RecommendationDayStatusPublished, RecommendationDayStatusSupplemented, "generated"}).
+		Order("item.created_at asc, item.id asc").Scan(&items).Error; err != nil {
 		return nil, err
 	}
 	for _, item := range items {
@@ -321,7 +324,10 @@ func loadSeenTopicsAndAuthors(userID uint) (map[string]bool, map[string]bool, er
 	topics := make(map[string]bool)
 	authors := make(map[string]bool)
 	var items []RecommendationItem
-	if err := db.Where("user_id = ?", userID).Find(&items).Error; err != nil {
+	if err := db.Table("recommendation_items AS item").Select("item.*").
+		Joins("JOIN recommendation_days AS day ON day.id = item.day_id").
+		Where("item.user_id = ? AND day.status IN ?", userID, []string{RecommendationDayStatusPublished, RecommendationDayStatusSupplemented, "generated"}).
+		Scan(&items).Error; err != nil {
 		return nil, nil, err
 	}
 	ids := make([]uint, 0, len(items))

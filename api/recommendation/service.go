@@ -18,10 +18,16 @@ import (
 )
 
 const (
-	RecommendationDayStatusMissing   = "missing"
-	RecommendationDayStatusPending   = "pending"
-	RecommendationDayStatusGenerated = "generated"
-	RecommendationDayStatusFailed    = "failed"
+	RecommendationDayStatusMissing      = "missing"
+	RecommendationDayStatusDraft        = "draft"
+	RecommendationDayStatusPublished    = "published"
+	RecommendationDayStatusSupplemented = "supplemented"
+	RecommendationDayStatusFailed       = "failed"
+
+	// Compatibility names remain source-compatible while persisted lifecycle
+	// values use the immutable v3 terminology.
+	RecommendationDayStatusPending   = RecommendationDayStatusDraft
+	RecommendationDayStatusGenerated = RecommendationDayStatusPublished
 
 	RecommendationFeedbackValuable      = "valuable"
 	RecommendationFeedbackNotInterested = "not_interested"
@@ -46,6 +52,7 @@ var (
 	ErrInvalidRecommendationFeedback = errors.New("invalid recommendation feedback action")
 	ErrInvalidBlockRule              = errors.New("invalid block rule")
 	ErrDuplicateRecommendationItem   = errors.New("recommendation item already exists for this user")
+	ErrRecommendationDayImmutable    = errors.New("published recommendation day is immutable")
 )
 
 type RecommendationDaySnapshot struct {
@@ -197,7 +204,11 @@ func SaveRecommendationSettings(settings *RecommendationSettings) (*Recommendati
 }
 
 func GetRecommendationDaySnapshot(userID uint, date string) (*RecommendationDaySnapshot, error) {
-	date = normalizeRecommendationDate(date)
+	var err error
+	date, err = normalizeRecommendationDateForUser(userID, date, recommendationClock.Now())
+	if err != nil {
+		return nil, err
+	}
 	if db == nil || userID == 0 {
 		return &RecommendationDaySnapshot{Day: missingRecommendationDay(userID, date), Items: []RecommendationItem{}}, nil
 	}
@@ -214,7 +225,7 @@ func GetRecommendationDaySnapshot(userID uint, date string) (*RecommendationDayS
 	if err := db.Where("day_id = ? AND user_id = ?", day.ID, userID).Order("rank asc").Find(&items).Error; err != nil {
 		return nil, err
 	}
-	if err := attachRecommendationItemCandidates(items); err != nil {
+	if err := attachRecommendationItemCandidates(items, day.Status); err != nil {
 		return nil, err
 	}
 	day.RecommendationDate = normalizeRecommendationDate(day.RecommendationDate)
@@ -245,15 +256,22 @@ func ListRecommendationDays(userID uint, from string, to string, page int, pageS
 }
 
 func CreateRecommendationDay(userID uint, date string, requestedCount int) (*RecommendationDay, error) {
-	date = normalizeRecommendationDate(date)
+	settings, err := GetRecommendationSettings(userID)
+	if err != nil {
+		return nil, err
+	}
+	date, err = normalizeRecommendationDateForSettings(*settings, date, recommendationClock.Now())
+	if err != nil {
+		return nil, err
+	}
 	if requestedCount <= 0 {
-		requestedCount = DefaultRecommendationSettings(userID).DailyLimit
+		requestedCount = settings.DailyLimit
 	}
 	day := RecommendationDay{
 		UserID:             userID,
 		RecommendationDate: date,
-		Timezone:           DefaultRecommendationSettings(userID).Timezone,
-		Status:             RecommendationDayStatusPending,
+		Timezone:           settings.Timezone,
+		Status:             RecommendationDayStatusDraft,
 		RequestedCount:     requestedCount,
 		ActualCount:        0,
 	}
@@ -278,6 +296,13 @@ func AddRecommendationItem(item *RecommendationItem) (*RecommendationItem, error
 	}
 	if item.UserID == 0 || item.DayID == 0 || item.CandidateID == 0 {
 		return nil, errors.New("missing recommendation item identity")
+	}
+	var day RecommendationDay
+	if err := db.Select("id", "status").Where("id = ? AND user_id = ?", item.DayID, item.UserID).First(&day).Error; err != nil {
+		return nil, err
+	}
+	if day.Status == RecommendationDayStatusPublished || day.Status == RecommendationDayStatusSupplemented {
+		return nil, ErrRecommendationDayImmutable
 	}
 	var duplicate RecommendationItem
 	result := db.Where("day_id = ? AND user_id = ? AND candidate_id = ?", item.DayID, item.UserID, item.CandidateID).Limit(1).Find(&duplicate)
@@ -311,25 +336,30 @@ func GenerateDailyRecommendationsWithReranker(ctx context.Context, userID uint, 
 }
 
 func RegenerateDailyRecommendations(ctx context.Context, userID uint, date string) (*RecommendationDaySnapshot, error) {
+	// Kept for source compatibility: retries are now non-destructive and an
+	// already published digest is returned byte-semantically unchanged.
 	return generateDailyRecommendationsWithOptions(ctx, userID, date, ConfiguredRecommendationReranker(), true)
 }
 
 func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, date string, reranker RerankProvider, force bool) (*RecommendationDaySnapshot, error) {
 	if db == nil || userID == 0 {
+		if userID != 0 {
+			if localDate, err := normalizeRecommendationDateForUser(userID, date, recommendationClock.Now()); err == nil {
+				date = localDate
+			}
+		}
 		return &RecommendationDaySnapshot{Day: missingRecommendationDay(userID, normalizeRecommendationDate(date)), Items: []RecommendationItem{}}, nil
 	}
 	settings, err := GetRecommendationSettings(userID)
 	if err != nil {
 		return nil, err
 	}
+	date, err = normalizeRecommendationDateForSettings(*settings, date, recommendationClock.Now())
+	if err != nil {
+		return nil, err
+	}
 	if !force && !settings.Enabled {
 		return GetRecommendationDaySnapshot(userID, date)
-	}
-	_, _ = EnrichPendingDiscoveryCandidates(ctx, config.RECOMMENDATIONCANDIDATEPOOLSIZE, ConfiguredEnrichmentProvider())
-	if force {
-		if err := deleteRecommendationDay(userID, date); err != nil {
-			return nil, err
-		}
 	}
 	day, err := CreateRecommendationDay(userID, date, settings.DailyLimit)
 	if err != nil {
@@ -339,7 +369,7 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 	if err != nil {
 		return nil, err
 	}
-	if existing.Day != nil && existing.Day.Status == RecommendationDayStatusGenerated {
+	if existing.Day != nil && (existing.Day.Status == RecommendationDayStatusPublished || existing.Day.Status == RecommendationDayStatusSupplemented) {
 		return existing, nil
 	}
 	profile, err := RebuildUserRecommendationProfile(userID)
@@ -355,94 +385,193 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 		_ = markRecommendationDayFailed(day.ID, err)
 		return nil, err
 	}
-	reranked, rerankModel, rerankPrompt := applyRecommendationReranker(ctx, userID, selectionLimit, selection.Candidates, profile, reranker)
+	reranked, rerankModel, rerankPrompt, degradationReason := applyRecommendationReranker(ctx, userID, selectionLimit, selection.Candidates, profile, reranker)
 	selected, softRelaxations := diversifyRecommendationCandidatesV3(reranked, settings.DailyLimit, settings.ExplorationRate)
 	selection.SoftRelaxations = softRelaxations
 	if possible := min(settings.DailyLimit, len(reranked)); len(selected) < possible {
 		selection.Excluded["same_cluster_daily"] += possible - len(selected)
 	}
 	now := recommendationClock.Now()
-	written := make([]RecommendationItem, 0, len(selected))
-	for index, scored := range selected {
-		item := &RecommendationItem{
-			DayID:             day.ID,
-			UserID:            userID,
-			CandidateID:       scored.Candidate.ID,
-			DedupeKey:         strings.TrimSpace(scored.Candidate.DedupeKey),
-			AssessmentID:      scored.Candidate.CurrentAssessmentID,
-			Rank:              index + 1,
-			RetrievalScore:    scored.RetrievalScore,
-			RerankScore:       scored.RerankScore,
-			FinalScore:        scored.FinalScore,
-			Reason:            scored.Reason,
-			ReasonMetadata:    buildReasonMetadata(scored),
-			PoolType:          scored.PoolType,
-			ExplorationReason: scored.ExplorationReason,
-			ContentVersion:    scored.Candidate.ContentVersion,
-			ContentUpdated:    scored.ContentUpdated,
-			CooldownRepeat:    scored.CooldownRepeat,
-			CreatedAt:         now,
-			UpdatedAt:         now,
-		}
-		created, err := AddRecommendationItem(item)
-		if errors.Is(err, ErrDuplicateRecommendationItem) {
-			continue
-		}
-		if err != nil {
-			_ = markRecommendationDayFailed(day.ID, err)
-			return nil, err
-		}
-		if err := discovery.RecordUserCandidateExposure(db, userID, scored.Candidate.ID, now); err != nil {
-			_ = markRecommendationDayFailed(day.ID, err)
-			return nil, err
-		}
-		written = append(written, *created)
-	}
-	actualCount := countRecommendationDayItems(day.ID, userID)
-	updates := map[string]interface{}{
-		"status":           RecommendationDayStatusGenerated,
-		"actual_count":     actualCount,
-		"shortage_reasons": marshalSelectionAudit(settings.DailyLimit, actualCount, selection, softRelaxations),
-		"policy_version":   recommendationSelectionPolicyV3,
-		"profile_version":  profile.ProfileVersion,
-		"llm_model":        rerankModel,
-		"prompt_version":   rerankPrompt,
-		"generated_at":     &now,
-		"updated_at":       now,
-	}
-	if err := db.Model(&RecommendationDay{}).Where("id = ? AND user_id = ?", day.ID, userID).Updates(updates).Error; err != nil {
+	items := buildRecommendationItems(day.ID, userID, selected, 1, profile.ProfileVersion, false, now)
+	if err := publishRecommendationDay(day.ID, userID, items, map[string]interface{}{
+		"status":             RecommendationDayStatusPublished,
+		"actual_count":       len(items),
+		"shortage_reasons":   marshalSelectionAudit(settings.DailyLimit, len(items), selection, softRelaxations),
+		"policy_version":     recommendationSelectionPolicyV3,
+		"profile_version":    profile.ProfileVersion,
+		"llm_model":          rerankModel,
+		"prompt_version":     rerankPrompt,
+		"failure_reason":     "",
+		"degraded":           degradationReason != "",
+		"degradation_reason": degradationReason,
+		"generated_at":       &now,
+		"published_at":       &now,
+		"updated_at":         now,
+	}); err != nil {
+		_ = markRecommendationDayFailed(day.ID, err)
 		return nil, err
 	}
 	return GetRecommendationDaySnapshot(userID, day.RecommendationDate)
 }
 
-func deleteRecommendationDay(userID uint, date string) error {
-	if db == nil || userID == 0 {
-		return nil
+func buildRecommendationItems(dayID uint, userID uint, selected []recommendationCandidateScore, firstRank int, profileVersion uint, supplemental bool, now time.Time) []RecommendationItem {
+	items := make([]RecommendationItem, 0, len(selected))
+	for index, scored := range selected {
+		item := RecommendationItem{
+			DayID: dayID, UserID: userID, CandidateID: scored.Candidate.ID,
+			DedupeKey: strings.TrimSpace(scored.Candidate.DedupeKey), AssessmentID: scored.Candidate.CurrentAssessmentID,
+			Rank: firstRank + index, RetrievalScore: scored.RetrievalScore, RerankScore: scored.RerankScore,
+			FinalScore: scored.FinalScore, Reason: scored.Reason, ReasonMetadata: buildReasonMetadata(scored),
+			SnapshotTitle: scored.Candidate.Title, SnapshotURL: scored.Candidate.URL,
+			SnapshotSummary: scored.Candidate.Summary, SnapshotAuthor: scored.Candidate.Author,
+			SnapshotSource: scored.Candidate.SourceName, SnapshotPublishedAt: scored.Candidate.PublishedAt,
+			PoolType: scored.PoolType, ExplorationReason: scored.ExplorationReason,
+			ContentVersion: scored.Candidate.ContentVersion, ContentUpdated: scored.ContentUpdated,
+			CooldownRepeat: scored.CooldownRepeat, ProfileVersion: profileVersion,
+			Supplemental: supplemental, CreatedAt: now, UpdatedAt: now,
+		}
+		if supplemental {
+			item.SupplementedAt = &now
+		}
+		items = append(items, item)
 	}
-	date = normalizeRecommendationDate(date)
+	return items
+}
+
+func publishRecommendationDay(dayID uint, userID uint, items []RecommendationItem, updates map[string]interface{}) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		var day RecommendationDay
-		result := tx.Where("user_id = ? AND recommendation_date = ?", userID, date).Limit(1).Find(&day)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return nil
-		}
-		var itemIDs []uint
-		if err := tx.Model(&RecommendationItem{}).Where("day_id = ? AND user_id = ?", day.ID, userID).Pluck("id", &itemIDs).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", dayID, userID).First(&day).Error; err != nil {
 			return err
 		}
-		if len(itemIDs) > 0 {
-			if err := tx.Where("recommendation_item_id IN ?", itemIDs).Delete(&RecommendationFeedback{}).Error; err != nil {
+		if day.Status == RecommendationDayStatusPublished || day.Status == RecommendationDayStatusSupplemented {
+			return nil
+		}
+		if day.Status != RecommendationDayStatusDraft && day.Status != RecommendationDayStatusFailed && day.Status != "pending" {
+			return fmt.Errorf("recommendation day %d cannot publish from status %q", day.ID, day.Status)
+		}
+		var feedbackCount int64
+		if err := tx.Table("recommendation_feedbacks AS feedback").
+			Joins("JOIN recommendation_items AS item ON item.id = feedback.recommendation_item_id").
+			Where("item.day_id = ? AND item.user_id = ?", dayID, userID).Count(&feedbackCount).Error; err != nil {
+			return err
+		}
+		if feedbackCount > 0 {
+			return errors.New("unpublished recommendation items have feedback and require audit repair")
+		}
+		if err := tx.Where("day_id = ? AND user_id = ?", dayID, userID).Delete(&RecommendationItem{}).Error; err != nil {
+			return err
+		}
+		for index := range items {
+			if err := tx.Create(&items[index]).Error; err != nil {
 				return err
 			}
-			if err := tx.Where("day_id = ? AND user_id = ?", day.ID, userID).Delete(&RecommendationItem{}).Error; err != nil {
+			if err := discovery.RecordUserCandidateExposure(tx, userID, items[index].CandidateID, items[index].CreatedAt); err != nil {
 				return err
 			}
 		}
-		return tx.Where("id = ? AND user_id = ?", day.ID, userID).Delete(&RecommendationDay{}).Error
+		return tx.Model(&RecommendationDay{}).Where("id = ? AND user_id = ?", dayID, userID).Updates(updates).Error
+	})
+}
+
+func SupplementDailyRecommendations(ctx context.Context, userID uint, date string) (*RecommendationDaySnapshot, error) {
+	return SupplementDailyRecommendationsWithReranker(ctx, userID, date, ConfiguredRecommendationReranker())
+}
+
+func SupplementDailyRecommendationsWithReranker(ctx context.Context, userID uint, date string, reranker RerankProvider) (*RecommendationDaySnapshot, error) {
+	snapshot, err := GetRecommendationDaySnapshot(userID, date)
+	if err != nil || snapshot.Day == nil {
+		return snapshot, err
+	}
+	day := snapshot.Day
+	if day.Status != RecommendationDayStatusPublished && day.Status != RecommendationDayStatusSupplemented {
+		return nil, fmt.Errorf("recommendation day %d is not published", day.ID)
+	}
+	missing := day.RequestedCount - day.ActualCount
+	if missing <= 0 {
+		return snapshot, nil
+	}
+	settings, err := GetRecommendationSettings(userID)
+	if err != nil {
+		return nil, err
+	}
+	profile, err := RebuildUserRecommendationProfile(userID)
+	if err != nil {
+		return nil, err
+	}
+	selectionLimit := missing
+	if reranker != nil && config.RECOMMENDATIONRERANKLIMIT > selectionLimit {
+		selectionLimit = config.RECOMMENDATIONRERANKLIMIT
+	}
+	selection, err := selectDailyRecommendationCandidatesV3(ctx, userID, *settings, profile, selectionLimit)
+	if err != nil {
+		return nil, err
+	}
+	reranked, rerankModel, rerankPrompt, degradationReason := applyRecommendationReranker(ctx, userID, selectionLimit, selection.Candidates, profile, reranker)
+	selected, relaxations := diversifyRecommendationCandidatesV3(reranked, missing, settings.ExplorationRate)
+	now := recommendationClock.Now()
+	items := buildRecommendationItems(day.ID, userID, selected, day.ActualCount+1, profile.ProfileVersion, true, now)
+	if err := appendRecommendationSupplement(day.ID, userID, day.RequestedCount, items, selection, relaxations, rerankModel, rerankPrompt, degradationReason, now); err != nil {
+		return nil, err
+	}
+	return GetRecommendationDaySnapshot(userID, day.RecommendationDate)
+}
+
+func appendRecommendationSupplement(dayID uint, userID uint, requestedCount int, items []RecommendationItem, selection *recommendationSelectionReport, relaxations []string, rerankModel string, rerankPrompt string, degradationReason string, now time.Time) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var day RecommendationDay
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", dayID, userID).First(&day).Error; err != nil {
+			return err
+		}
+		if day.Status != RecommendationDayStatusPublished && day.Status != RecommendationDayStatusSupplemented {
+			return fmt.Errorf("recommendation day %d cannot be supplemented from status %q", day.ID, day.Status)
+		}
+		missing := requestedCount - day.ActualCount
+		if missing <= 0 || len(items) == 0 {
+			return nil
+		}
+		if len(items) > missing {
+			items = items[:missing]
+		}
+		var maxRank int
+		if err := tx.Model(&RecommendationItem{}).Where("day_id = ? AND user_id = ?", dayID, userID).Select("COALESCE(MAX(rank), 0)").Scan(&maxRank).Error; err != nil {
+			return err
+		}
+		appended := 0
+		for index := range items {
+			items[index].Rank = maxRank + appended + 1
+			var count int64
+			query := tx.Model(&RecommendationItem{}).Where("day_id = ? AND user_id = ? AND candidate_id = ?", dayID, userID, items[index].CandidateID)
+			if key := strings.TrimSpace(items[index].DedupeKey); key != "" {
+				query = tx.Model(&RecommendationItem{}).Where("day_id = ? AND user_id = ? AND (candidate_id = ? OR dedupe_key = ?)", dayID, userID, items[index].CandidateID, key)
+			}
+			if err := query.Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				continue
+			}
+			if err := tx.Create(&items[index]).Error; err != nil {
+				return err
+			}
+			if err := discovery.RecordUserCandidateExposure(tx, userID, items[index].CandidateID, now); err != nil {
+				return err
+			}
+			appended++
+		}
+		if appended == 0 {
+			return nil
+		}
+		actual := day.ActualCount + appended
+		return tx.Model(&RecommendationDay{}).Where("id = ? AND user_id = ?", dayID, userID).Updates(map[string]interface{}{
+			"status": RecommendationDayStatusSupplemented, "actual_count": actual,
+			"shortage_reasons":  marshalSelectionAudit(requestedCount, actual, selection, relaxations),
+			"supplement_policy": "append_missing_v1", "supplemented_at": &now,
+			"degraded":           day.Degraded || degradationReason != "",
+			"degradation_reason": firstNonEmpty(day.DegradationReason, degradationReason),
+			"llm_model":          firstNonEmpty(day.LLMModel, rerankModel), "prompt_version": firstNonEmpty(day.PromptVersion, rerankPrompt),
+			"updated_at": now,
+		}).Error
 	})
 }
 
@@ -1218,15 +1347,15 @@ func diversifyRecommendationCandidates(candidates []recommendationCandidateScore
 	return selected
 }
 
-func applyRecommendationReranker(ctx context.Context, userID uint, requestedCount int, candidates []recommendationCandidateScore, profile *UserRecommendationProfile, reranker RerankProvider) ([]recommendationCandidateScore, string, string) {
+func applyRecommendationReranker(ctx context.Context, userID uint, requestedCount int, candidates []recommendationCandidateScore, profile *UserRecommendationProfile, reranker RerankProvider) ([]recommendationCandidateScore, string, string, string) {
 	if requestedCount <= 0 {
 		requestedCount = 10
 	}
 	if len(candidates) == 0 {
-		return []recommendationCandidateScore{}, "", ""
+		return []recommendationCandidateScore{}, "", "", ""
 	}
 	if reranker == nil {
-		return trimRecommendationCandidates(candidates, requestedCount), "", ""
+		return trimRecommendationCandidates(candidates, requestedCount), "", "", ""
 	}
 	input := RerankInput{
 		UserID:          userID,
@@ -1236,7 +1365,7 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 	}
 	result, err := reranker.Rerank(ctx, input)
 	if err != nil {
-		return trimRecommendationCandidates(candidates, requestedCount), "", ""
+		return trimRecommendationCandidates(candidates, requestedCount), "", "", "reranker_unavailable: " + truncateError(err.Error(), 300)
 	}
 	byID := make(map[uint]recommendationCandidateScore, len(candidates))
 	for _, candidate := range candidates {
@@ -1274,7 +1403,7 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 		}
 	}
 	if len(reranked) == 0 {
-		return trimRecommendationCandidates(candidates, requestedCount), "", ""
+		return trimRecommendationCandidates(candidates, requestedCount), "", "", "reranker_invalid_output"
 	}
 	for _, candidate := range candidates {
 		if len(reranked) >= requestedCount {
@@ -1286,7 +1415,7 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 		candidate.RerankRank = len(reranked) + 1
 		reranked = append(reranked, candidate)
 	}
-	return reranked, strings.TrimSpace(result.Model), strings.TrimSpace(result.PromptVersion)
+	return reranked, strings.TrimSpace(result.Model), strings.TrimSpace(result.PromptVersion), ""
 }
 
 func buildRerankCandidates(candidates []recommendationCandidateScore) []RerankCandidate {
@@ -1332,6 +1461,9 @@ func normalizeRecommendationSettings(settings RecommendationSettings) Recommenda
 		settings.CandidateWindowDays = defaults.CandidateWindowDays
 	}
 	if strings.TrimSpace(settings.Timezone) == "" {
+		settings.Timezone = defaults.Timezone
+	}
+	if _, err := time.LoadLocation(settings.Timezone); err != nil {
 		settings.Timezone = defaults.Timezone
 	}
 	if strings.TrimSpace(settings.GenerationTime) == "" {
@@ -1390,14 +1522,14 @@ func markRecommendationDayFailed(dayID uint, cause error) error {
 	if cause != nil {
 		message = cause.Error()
 	}
-	return db.Model(&RecommendationDay{}).Where("id = ?", dayID).Updates(map[string]interface{}{
+	return db.Model(&RecommendationDay{}).Where("id = ? AND status IN ?", dayID, []string{RecommendationDayStatusDraft, RecommendationDayStatusFailed, "pending"}).Updates(map[string]interface{}{
 		"status":         RecommendationDayStatusFailed,
-		"prompt_version": message,
-		"updated_at":     time.Now(),
+		"failure_reason": truncateError(message, 1000),
+		"updated_at":     recommendationClock.Now(),
 	}).Error
 }
 
-func attachRecommendationItemCandidates(items []RecommendationItem) error {
+func attachRecommendationItemCandidates(items []RecommendationItem, dayStatus string) error {
 	if db == nil || len(items) == 0 {
 		return nil
 	}
@@ -1414,7 +1546,16 @@ func attachRecommendationItemCandidates(items []RecommendationItem) error {
 		byID[candidate.ID] = candidate
 	}
 	for index := range items {
-		items[index].Candidate = byID[items[index].CandidateID]
+		live := byID[items[index].CandidateID]
+		if dayStatus == RecommendationDayStatusPublished || dayStatus == RecommendationDayStatusSupplemented || items[index].SnapshotURL != "" {
+			items[index].Candidate = DiscoveryCandidate{
+				ID: items[index].CandidateID, URL: items[index].SnapshotURL, Title: items[index].SnapshotTitle,
+				Summary: items[index].SnapshotSummary, Author: items[index].SnapshotAuthor,
+				SourceName: items[index].SnapshotSource, PublishedAt: items[index].SnapshotPublishedAt,
+			}
+			continue
+		}
+		items[index].Candidate = live
 	}
 	return nil
 }
@@ -1754,6 +1895,14 @@ func maxFloat(left float64, right float64) float64 {
 	return right
 }
 
+func truncateError(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit]
+}
+
 func normalizeRecommendationDate(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1773,8 +1922,26 @@ func normalizeRecommendationDate(value string) string {
 	return value
 }
 
+func normalizeRecommendationDateForUser(userID uint, value string, now time.Time) (string, error) {
+	settings, err := GetRecommendationSettings(userID)
+	if err != nil {
+		return "", err
+	}
+	return normalizeRecommendationDateForSettings(*settings, value, now)
+}
+
+func normalizeRecommendationDateForSettings(settings RecommendationSettings, value string, now time.Time) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return recommendationDateForSettings(settings, now), nil
+	}
+	return normalizeRecommendationDate(value), nil
+}
+
 func missingRecommendationDay(userID uint, date string) *RecommendationDay {
 	defaults := DefaultRecommendationSettings(userID)
+	if settings, err := GetRecommendationSettings(userID); err == nil && settings != nil {
+		defaults = *settings
+	}
 	return &RecommendationDay{
 		UserID:             userID,
 		RecommendationDate: date,

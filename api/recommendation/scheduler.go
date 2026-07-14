@@ -57,10 +57,7 @@ func runDueRecommendationGeneration(ctx context.Context, now time.Time) {
 }
 
 func recommendationGenerationDue(settings RecommendationSettings, now time.Time) bool {
-	location, err := time.LoadLocation(firstNonEmpty(settings.Timezone, DefaultRecommendationSettings(settings.UserID).Timezone))
-	if err != nil {
-		location = time.Local
-	}
+	location := recommendationLocation(settings)
 	localNow := now.In(location)
 	hour, minute, ok := parseRecommendationGenerationTime(settings.GenerationTime)
 	if !ok {
@@ -70,11 +67,28 @@ func recommendationGenerationDue(settings RecommendationSettings, now time.Time)
 }
 
 func recommendationDateForSettings(settings RecommendationSettings, now time.Time) string {
-	location, err := time.LoadLocation(firstNonEmpty(settings.Timezone, DefaultRecommendationSettings(settings.UserID).Timezone))
-	if err != nil {
-		location = time.Local
+	return now.In(recommendationLocation(settings)).Format("2006-01-02")
+}
+
+func recommendationLocation(settings RecommendationSettings) *time.Location {
+	name := firstNonEmpty(settings.Timezone, DefaultRecommendationSettings(settings.UserID).Timezone)
+	location, err := time.LoadLocation(name)
+	if err == nil {
+		return location
 	}
-	return now.In(location).Format("2006-01-02")
+	fallback, err := time.LoadLocation(DefaultRecommendationSettings(settings.UserID).Timezone)
+	if err == nil {
+		return fallback
+	}
+	return time.UTC
+}
+
+func RecommendationDateForUser(userID uint, now time.Time) (string, error) {
+	settings, err := GetRecommendationSettings(userID)
+	if err != nil {
+		return "", err
+	}
+	return recommendationDateForSettings(*settings, now), nil
 }
 
 func parseRecommendationGenerationTime(value string) (int, int, bool) {

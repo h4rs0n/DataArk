@@ -4,13 +4,14 @@ import (
 	"DataArk/jobqueue"
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
 const RecommendationGenerateDailyJobKind = jobqueue.GenerateDailyJobKind
 
 func RunGenerateDailyRecommendationJob(ctx context.Context, userID uint, localDate string) error {
-	_, err := GenerateDailyRecommendationsWithReranker(ctx, userID, normalizeRecommendationDate(localDate), ConfiguredRecommendationReranker())
+	_, err := GenerateDailyRecommendationsWithReranker(ctx, userID, localDate, ConfiguredRecommendationReranker())
 	return err
 }
 
@@ -21,7 +22,16 @@ func EnqueueDailyRecommendation(ctx context.Context, userID uint, date string) (
 	if !available {
 		return false, nil
 	}
-	if err := queue.EnqueueGenerateDaily(ctx, userID, normalizeRecommendationDate(date)); err != nil {
+	if strings.TrimSpace(date) == "" {
+		var err error
+		date, err = RecommendationDateForUser(userID, recommendationClock.Now())
+		if err != nil {
+			return true, err
+		}
+	} else {
+		date = normalizeRecommendationDate(date)
+	}
+	if err := queue.EnqueueGenerateDaily(ctx, userID, date); err != nil {
 		return true, err
 	}
 	return true, nil
@@ -44,12 +54,13 @@ func RecoverDueJobs(ctx context.Context, queue jobqueue.JobEnqueuer, now time.Ti
 			continue
 		}
 		date := recommendationDateForSettings(item, now)
-		var count int64
-		if err := db.Model(&RecommendationDay{}).Where("user_id = ? AND recommendation_date = ?", item.UserID, date).Count(&count).Error; err != nil {
-			recoveryErrors = append(recoveryErrors, err)
+		var day RecommendationDay
+		result := db.Where("user_id = ? AND recommendation_date = ?", item.UserID, date).Limit(1).Find(&day)
+		if result.Error != nil {
+			recoveryErrors = append(recoveryErrors, result.Error)
 			continue
 		}
-		if count > 0 {
+		if result.RowsAffected > 0 && (day.Status == RecommendationDayStatusPublished || day.Status == RecommendationDayStatusSupplemented) {
 			continue
 		}
 		if err := queue.EnqueueGenerateDaily(ctx, item.UserID, date); err != nil {

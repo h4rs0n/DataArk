@@ -264,7 +264,7 @@ func TestGenerateDailyRecommendationsFiltersHistoryAndBlocks(t *testing.T) {
 	}
 }
 
-func TestRegenerateDailyRecommendationsDiscardsExistingDay(t *testing.T) {
+func TestRegenerateDailyRecommendationsPreservesPublishedDayAndFeedback(t *testing.T) {
 	setupSQLiteDB(t)
 	settings := DefaultRecommendationSettings(15)
 	settings.DailyLimit = 1
@@ -283,7 +283,7 @@ func TestRegenerateDailyRecommendationsDiscardsExistingDay(t *testing.T) {
 	if _, _, err := RecordRecommendationFeedback(15, initial.Items[0].ID, RecommendationFeedbackValuable, nil); err != nil {
 		t.Fatal(err)
 	}
-	second := createReadyCandidate(t, "https://second.example/manual", "Second Manual", []string{"Go"}, "manual-second", 0.95, 0.9)
+	createReadyCandidate(t, "https://second.example/manual", "Second Manual", []string{"Go"}, "manual-second", 0.95, 0.9)
 	idempotent, err := GenerateDailyRecommendations(context.Background(), 15, "2026-06-28")
 	if err != nil {
 		t.Fatal(err)
@@ -296,8 +296,8 @@ func TestRegenerateDailyRecommendationsDiscardsExistingDay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(regenerated.Items) != 1 || regenerated.Items[0].CandidateID != second.ID {
-		t.Fatalf("regenerated snapshot = %#v, want candidate %d", regenerated.Items, second.ID)
+	if len(regenerated.Items) != 1 || regenerated.Items[0].ID != initial.Items[0].ID || regenerated.Items[0].CandidateID != first.ID {
+		t.Fatalf("retry changed published snapshot = %#v", regenerated.Items)
 	}
 	var itemCount int64
 	if err := db.Model(&RecommendationItem{}).Where("user_id = ? AND day_id = ?", 15, regenerated.Day.ID).Count(&itemCount).Error; err != nil {
@@ -310,15 +310,15 @@ func TestRegenerateDailyRecommendationsDiscardsExistingDay(t *testing.T) {
 	if err := db.Model(&RecommendationItem{}).Where("id = ?", initial.Items[0].ID).Count(&oldItemCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if oldItemCount != 0 {
-		t.Fatalf("old item count = %d, want 0", oldItemCount)
+	if oldItemCount != 1 {
+		t.Fatalf("old item count = %d, want 1", oldItemCount)
 	}
 	var feedbackCount int64
 	if err := db.Model(&RecommendationFeedback{}).Where("recommendation_item_id = ?", initial.Items[0].ID).Count(&feedbackCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if feedbackCount != 0 {
-		t.Fatalf("old feedback count = %d, want 0", feedbackCount)
+	if feedbackCount != 1 {
+		t.Fatalf("feedback count = %d, want 1", feedbackCount)
 	}
 }
 
@@ -357,7 +357,7 @@ func TestGenerateDailyRecommendationsUsesFeedbackProfile(t *testing.T) {
 	}
 }
 
-func TestGenerateDailyRecommendationsEnrichesPendingCandidates(t *testing.T) {
+func TestGenerateDailyRecommendationsDoesNotEnrichOnPublishPath(t *testing.T) {
 	setupSQLiteDB(t)
 	settings := DefaultRecommendationSettings(13)
 	settings.DailyLimit = 1
@@ -405,8 +405,8 @@ func TestGenerateDailyRecommendationsEnrichesPendingCandidates(t *testing.T) {
 	if err := db.First(&enriched, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if enriched.EnrichmentStatus != RecommendationEnrichmentStatusReady || enriched.DedupeKey == "" {
-		t.Fatalf("enriched candidate = %#v", enriched)
+	if enriched.EnrichmentStatus != RecommendationEnrichmentStatusPending || enriched.DedupeKey != "" {
+		t.Fatalf("publish path changed candidate enrichment = %#v", enriched)
 	}
 	if err := db.First(&summaryOnly, summaryOnly.ID).Error; err != nil {
 		t.Fatal(err)

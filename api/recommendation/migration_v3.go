@@ -33,9 +33,10 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 	}
 	if err := database.Exec(`
 UPDATE recommendation_days
-SET policy_version = CASE WHEN policy_version IS NULL OR policy_version = '' THEN 'v2' ELSE policy_version END,
+SET status = CASE status WHEN 'pending' THEN 'draft' WHEN 'generated' THEN 'published' ELSE status END,
+    policy_version = CASE WHEN policy_version IS NULL OR policy_version = '' THEN 'v2' ELSE policy_version END,
     audit_version = CASE WHEN audit_version IS NULL OR audit_version = 0 THEN 1 ELSE audit_version END,
-    published_at = CASE WHEN status = 'generated' AND published_at IS NULL THEN generated_at ELSE published_at END`).Error; err != nil {
+    published_at = CASE WHEN status IN ('generated', 'published') AND published_at IS NULL THEN generated_at ELSE published_at END`).Error; err != nil {
 		return err
 	}
 	return database.Exec(`

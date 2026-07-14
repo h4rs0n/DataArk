@@ -40,7 +40,7 @@ func TestDiscoverySourceManagementRequiresOwner(t *testing.T) {
 	}
 }
 
-func TestDestructiveRecommendationGenerationRequiresOwner(t *testing.T) {
+func TestRecommendationRetryRequiresOwner(t *testing.T) {
 	oldRegenerate := regenerateRecommendations
 	t.Cleanup(func() { regenerateRecommendations = oldRegenerate })
 	called := 0
@@ -55,6 +55,20 @@ func TestDestructiveRecommendationGenerationRequiresOwner(t *testing.T) {
 	}
 	if called != 0 {
 		t.Fatalf("regeneration called %d times for member", called)
+	}
+}
+
+func TestRecommendationSupplementRequiresOwner(t *testing.T) {
+	oldSupplement := supplementRecommendations
+	t.Cleanup(func() { supplementRecommendations = oldSupplement })
+	called := 0
+	supplementRecommendations = func(context.Context, uint, string) (*recommendationSnapshotAlias, error) {
+		called++
+		return nil, nil
+	}
+	response := performUserControllerRequest(http.MethodPost, "/admin/recommendations/supplement", nil, &auth.User{ID: 2, Role: auth.UserRoleMember}, SupplementRecommendationDay)
+	if response.Code != http.StatusForbidden || called != 0 {
+		t.Fatalf("member supplement status=%d calls=%d", response.Code, called)
 	}
 }
 

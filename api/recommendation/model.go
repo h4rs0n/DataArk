@@ -47,8 +47,13 @@ type RecommendationDay struct {
 	ProfileVersion     uint                 `json:"profileVersion"`
 	LLMModel           string               `json:"llmModel" gorm:"size:255"`
 	PromptVersion      string               `json:"promptVersion" gorm:"size:64"`
+	FailureReason      string               `json:"failureReason" gorm:"type:text"`
+	Degraded           bool                 `json:"degraded" gorm:"index;not null;default:false"`
+	DegradationReason  string               `json:"degradationReason" gorm:"type:text"`
+	SupplementPolicy   string               `json:"supplementPolicy" gorm:"size:64"`
 	GeneratedAt        *time.Time           `json:"generatedAt"`
 	PublishedAt        *time.Time           `json:"publishedAt" gorm:"index"`
+	SupplementedAt     *time.Time           `json:"supplementedAt" gorm:"index"`
 	AuditVersion       uint                 `json:"auditVersion" gorm:"not null;default:1"`
 	Items              []RecommendationItem `json:"items" gorm:"foreignKey:DayID"`
 	CreatedAt          time.Time            `json:"createdAt"`

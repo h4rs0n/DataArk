@@ -63,10 +63,13 @@ var (
 	getRecommendationSettings          = recommendation.GetRecommendationSettings
 	saveRecommendationSettings         = recommendation.SaveRecommendationSettings
 	getRecommendationDaySnapshot       = recommendation.GetRecommendationDaySnapshot
+	recommendationDateForUser          = recommendation.RecommendationDateForUser
+	recommendationNow                  = time.Now
 	listRecommendationDays             = recommendation.ListRecommendationDays
 	createRecommendationDay            = recommendation.CreateRecommendationDay
 	generateDailyRecommendations       = recommendation.GenerateDailyRecommendations
 	regenerateRecommendations          = recommendation.RegenerateDailyRecommendations
+	supplementRecommendations          = recommendation.SupplementDailyRecommendations
 	recordRecommendationFeedback       = recommendation.RecordRecommendationFeedback
 	revertRecommendationFeedback       = recommendation.RevertRecommendationFeedback
 	getCurrentRecommendationFeedback   = recommendation.GetCurrentRecommendationFeedback
@@ -637,7 +640,12 @@ func GetRecommendationToday(c *gin.Context) {
 	if !ok {
 		return
 	}
-	snapshot, err := getRecommendationDaySnapshot(userID, time.Now().Format("2006-01-02"))
+	date, err := recommendationDateForUser(userID, recommendationNow())
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "计算用户本地日期失败", "Error": err.Error()})
+		return
+	}
+	snapshot, err := getRecommendationDaySnapshot(userID, date)
 	if err != nil {
 		c.JSON(500, gin.H{"Status": "0", "Message": "查询今日推荐失败", "Error": err.Error()})
 		return
@@ -685,6 +693,22 @@ func GenerateRecommendationDay(c *gin.Context) {
 		return
 	}
 	c.JSON(202, gin.H{"Status": "1", "Message": "推荐日报已生成", "Data": snapshot})
+}
+
+func SupplementRecommendationDay(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	snapshot, err := supplementRecommendations(c.Request.Context(), userID, c.Query("date"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "补充推荐日报失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "推荐日报补充完成", "Data": snapshot})
 }
 
 func GetRecommendationSettings(c *gin.Context) {
@@ -1301,6 +1325,7 @@ func WebStarter(debugMode bool) {
 		protected.GET("/recommendations/history", GetRecommendationHistory)
 		protected.GET("/recommendations/days/:date", GetRecommendationDay)
 		protected.POST("/admin/recommendations/generate", GenerateRecommendationDay)
+		protected.POST("/admin/recommendations/supplement", SupplementRecommendationDay)
 		protected.GET("/recommendations/settings", GetRecommendationSettings)
 		protected.GET("/recommendations/inventory", GetRecommendationInventory)
 		protected.PUT("/recommendations/settings", UpdateRecommendationSettings)

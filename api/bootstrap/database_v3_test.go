@@ -227,7 +227,7 @@ func TestV3SQLiteMigrationPreservesAndBackfillsLegacyData(t *testing.T) {
 	if err := database.First(&migratedItem, 40).Error; err != nil {
 		t.Fatal(err)
 	}
-	if migratedDay.PolicyVersion != "v2" || migratedDay.PublishedAt == nil || migratedDay.AuditVersion != 1 {
+	if migratedDay.Status != recommendation.RecommendationDayStatusPublished || migratedDay.PolicyVersion != "v2" || migratedDay.PublishedAt == nil || migratedDay.AuditVersion != 1 {
 		t.Fatalf("day compatibility fields = %#v", migratedDay)
 	}
 	if migratedItem.SnapshotTitle != "Frozen title" || migratedItem.SnapshotURL != "https://example.com/one" || migratedItem.SnapshotSummary != "Frozen summary" || migratedItem.SnapshotSource != "Example Feed" {
@@ -264,7 +264,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 14 || migrations[len(migrations)-1].Version != 14 {
+	if len(migrations) != 15 || migrations[len(migrations)-1].Version != 15 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
