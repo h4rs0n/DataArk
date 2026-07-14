@@ -50,7 +50,7 @@
 - [x] 2026-07-14T10:25:41+08:00 M14：完成统一用户本地日期、`draft → published / failed` 生命周期、事务冻结快照、幂等非破坏重试和 append-only `supplemented` 补充。聚焦验证 `go test ./recommendation ./api ./bootstrap -run 'Test(DailyDigestM14|RecoverDueJobs|RegenerateDailyRecommendationsPreserves|GenerateDailyRecommendationsDoesNotEnrich|RecommendationRetryRequiresOwner|RecommendationSupplementRequiresOwner|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；验收覆盖上海／洛杉矶同一时刻的不同本地日期、历史时区冻结、启动恢复 missing／draft／failed 且跳过 published、重复重试字节语义一致、候选变更不改历史、反馈不删除、补充只追加、失败可重试以及 reranker 下线规则降级审计。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`d39e5c1`。
 - [x] 2026-07-14T10:40:28+08:00 M15：完成推荐中心组件拆分和可见的日报、图谱、抓取、回溯、文章评估、逐用户状态与反馈语义。聚焦验证 `go test ./recommendation ./api ./bootstrap -run 'Test(RecommendationExperienceM15|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；`npm test` 固定范围反馈、追溯契约和无破坏性生成交互，`npm run build` 类型检查与生产构建通过。页面支持 N/M、短缺／降级／探索解释，站点发现路径、端点健康和回溯，推荐项 assessment/provenance 追溯，反馈选中／改选／撤销和来源／主题／风格范围，冷启动设置／重置，以及 owner-only 来源、回溯和补充操作。仓库验证 `go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`9db105f`。
 - [x] 2026-07-14T10:53:33+08:00 M16：完成 owner-only 推荐运营指标、受限字段结构化事件和长尾精品贡献统计。聚焦验证 `go test ./recommendation ./api ./observability ./jobqueue ./bootstrap -run 'Test(ObservabilityM16|EventSchema|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；固定数据验证低命中分组、调度下限违规、规则／模型评估率、日报填充／降级／按时发布、探索配额、正反馈、图谱／回溯贡献、首篇精品延迟和三类快照完整性违规，且候选发布后变更不会误报历史日报。仓库验证 `go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`af262a9`。
-- [ ] M17：完成端到端验收、PostgreSQL/SQLite 回归、灰度迁移、旧路径清理、部署文档和最终复盘。
+- [x] 2026-07-14T11:07:27+08:00 M17：完成确定性端到端闭环、SQLite／全仓／race 回归、旧全局个人状态和串行发现辅助路径清理，以及升级、灰度、回滚、权限、故障处理和数据保留手册。聚焦验收 `go test ./discovery ./recommendation ./jobqueue ./bootstrap ./api ./observability -run 'Test(DeterministicSiteWorld|BlogrollGraphFixture|BackfillFinds|ProcessCandidate|LowHitSource|EndToEndM17|DailyDigestM14|ObservabilityM16|RecoverDueJobs|V3Goose|V3SQLiteMigration)' -count=1` 通过；`go test -race ./discovery ./recommendation ./jobqueue/... -count=1`、`go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`658abff`。本机 Docker Desktop WSL 集成未启用且没有 PostgreSQL CLI/Podman，真实 PostgreSQL 迁移、River 进程重启与 pgvector 可选路径无法执行，已作为生产灰度前的必要外部基础设施验证写入运维手册；没有用外网、真实数据或模型密钥替代。
 
 ## Surprises & Discoveries
 
@@ -109,6 +109,9 @@
 - 2026-07-14：若完整性指标直接查询推荐项目关联候选的当前 `processing/eligibility/dedupe/cluster`，文章在日报发布后重新处理或重新聚类会把正确历史快照误报为违规。M16 通过 `000017` 在推荐项冻结发布时的四类完整性证据，指标只审计发布事实，当前候选变更不改历史判断。
 - 2026-07-14：现有日志多为自由文本，无法可靠串联 job／fetch／site／source／candidate／user，也无法在编译边界阻止正文、Cookie 或密钥混入。M16 新增字段白名单事件类型，调用方只能提交安全标识、状态、错误类别和计数；没有任意详情字段。
 - 2026-07-14：低命中分组若持久化到来源或候选，会形成被后续资格／调度误用的隐性来源分数。M16 只在管理指标查询时由候选数和 eligible 数派生分组，不新增来源质量列，也不回写任何业务状态。
+- 2026-07-14：M17 端到端固定时钟暴露 `RecordRecommendationFeedback` 使用业务时钟创建反馈、但让 GORM 用墙钟创建关联屏蔽规则；两个时钟顺序不一致时，指标会把发布后屏蔽误判成发布时违规。规则现在和反馈共享同一个 `now` 写 `created_at/updated_at`，回归夹具要求三类完整性违规均为零。
+- 2026-07-14：全局 `MarkDiscoveryCandidateRead/Ignored/Archived` 和 `FetchEnabledDiscoverySources` 已没有生产调用，但继续留在 `store.go` 会保留个人行为写共享状态和串行抓取的可调用旧入口。M17 删除这些函数并把最后一个旧测试改为逐用户 overlay；候选兼容 `status` 和旧反馈表只保留为迁移／回滚数据，不再有写调用方。
+- 2026-07-14：M17 再次执行 `docker --version` 时，WSL 只发现 Docker Desktop 转发程序并明确报告 WSL integration 未启用；`psql`、`pg_isready` 和 Podman 均不存在。因此当前机器不能提供真实 PostgreSQL Goose、River 进程重启或 pgvector 证据，这属于基础设施不可用而非测试失败。
 
 ## Decision Log
 
@@ -192,6 +195,9 @@
 - 2026-07-14：M16 将“低历史命中”定义为至少发现 5 篇候选且 eligible 比例不超过 10%，只用于查询时的长尾统计分组；“正反馈文章”按 distinct 推荐项统计，接受 `valuable`、`deep_read` 或归档状态。拒绝把分组结果保存为来源分数或用于文章门槛。
 - 2026-07-14：结构化事件采用固定 `observability.Event` 字段集合，只允许作业、抓取、站点、来源、候选、用户的稳定 ID，以及事件名、状态、错误类别和计数；拒绝提供 message/details/body 等任意载荷，以便从接口层排除正文、Cookie、认证头、令牌、密码和模型密钥。
 - 2026-07-14：管理指标只通过 owner-only `GET /api/admin/recommendations/metrics` 暴露；日报硬过滤、屏蔽和重复簇完整性以发布时冻结证据审计，目标为零。低命中调度违规按各站点基础最大空闲时间计算，不因低产出获得豁免。
+- 2026-07-14：M17 端到端验收拆为同一正式测试命令中的两半：discovery 包用本机 `httptest` A/B/C 世界执行抓取、循环、Feed、Sitemap、归档、304、robots、失败和恢复，recommendation 包用单个共享 SQLite 数据库继续图谱、低命中文章、溯源、双用户、反馈、屏蔽、时区、N/M、探索、不可变日报、模型降级和长尾指标闭环。拒绝用真实站点或真实模型“演示”验收。
+- 2026-07-14：删除无调用的共享候选个人状态写函数和串行全来源抓取函数；保留 `discovery_candidates.status`、`discovery_candidate_feedbacks`、legacy review 表、v2 enrichment 展示字段，以及 `/admin/recommendations/generate`／`RegenerateDailyRecommendations` 兼容名称至少一个稳定发布窗口。保留理由分别是旧数据对账／回滚和旧客户端兼容；generate 名称的实现已是幂等安全重试，不能删除或重排 published 日报。
+- 2026-07-14：真实 PostgreSQL/River/pgvector 验收因当前机器外部基础设施不可用而不伪造通过。生产灰度必须先按 `docs/operations/recommendation-v3-runbook.md` 启动 PostgreSQL、执行启动迁移、重启 API 并核对 River 恢复、快照不变和可选 vector；SQLite 自动证据不能替代该门槛。
 
 ## Outcomes & Retrospective
 
@@ -266,6 +272,12 @@ M3 的验证完全使用内存 SQLite、固定时钟、测试抓取替身和本�
 2026-07-14，M16 已完成。owner 管理指标按站点／图谱、抓取运行、候选处理、评估、库存、日报、反馈和长尾精品分层返回原始计数与命名比率，可以从空日报的短缺原因、候选处理状态和到期调度违规区分库存不足、硬过滤、处理积压或调度失败。低命中站点分组仅查询时派生；固定夹具证明它仍可贡献正反馈精品且其最大空闲时间违规可独立报警。Blogroll 扩展、历史回溯、贡献站点数和新站到首篇精品延迟均有可测量证据。
 
 抓取候选、持久作业和日报发布／失败／补充现在输出只含白名单标识与状态的 JSON 事件，完整链路可用 job、fetch、site、source、candidate、user ID 关联，接口没有正文或任意敏感详情入口。推荐项新增发布时处理、资格、去重和 cluster 快照，三类硬规则违规审计不受后续候选变化影响；固定测试中全部完整性违规为零。迁移 `000017` 为纯增量并保留回滚数据；SQLite、Goose、API 权限、race、全仓 Go、前端测试／构建和最终二进制构建均通过。真实 PostgreSQL/River/pgvector 容器验证和认证浏览器证据仍因本机基础设施缺口留给 M17；M17 还需完成跨模块端到端验收、灰度／回滚手册和兼容路径最终盘点。
+
+2026-07-14，M17 已完成本机可执行范围。正式聚焦套件把确定性 A→B→C→A 发现、近期 Feed、历史 Sitemap／归档精品、正文处理、文章级评估、代表与多溯源、304／robots／500／超时／恢复，与同一 SQLite 闭环中的低命中 B、双用户、单篇不感兴趣、显式来源屏蔽、10/10 与不足 M、15% 探索、双时区、不可变重试、模型故障规则降级和非零长尾精品指标连接起来。全仓 Go、race、前端契约／类型／生产构建和最终嵌入二进制构建全部通过，不依赖外网、真实用户、LLM 或向量服务。
+
+生产代码已删除最后的共享候选个人状态写函数和串行全来源抓取辅助函数；认证 API 只写逐用户 overlay，发现 ticker 只唤醒持久队列恢复。published/supplemented 没有删除／重排路径，旧 generate 名称只做安全重试，跨日报永久 user/candidate 唯一约束已移除并由显式冷却替代。端到端验收同时修正屏蔽规则与反馈的时钟不一致，确保发布后规则不会污染发布时完整性指标。README 中英文说明、配置语义和 `docs/operations/recommendation-v3-runbook.md` 已覆盖灰度、回滚、权限、故障、指标、数据保留和隐私。
+
+最终结论：Blogroll 图谱确实驱动新站点和历史精品发现；来源统计没有进入文章有效性、质量分或封顶；多月测试证明低命中站点仍获得非零检查；日报、候选状态、反馈和屏蔽按用户隔离；发布快照在刷新、重试、候选修改、模型故障和重启恢复语义下不变；固定数据得到非零长尾精品贡献。仍保留的兼容数据是共享候选 `status`、旧候选反馈／复核表、v2 enrichment 展示列和安全重试的旧 generate 名称，删除需等待稳定发布窗口并另做对账迁移。唯一未完成的执行证据是当前机器无法提供的真实 PostgreSQL/River/pgvector 容器和认证浏览器截图；前者是生产灰度硬门槛，后者由现有前端契约与构建覆盖但应在可启动完整服务的环境补录。`make all` 也未直接运行，因为用户工作区版本会修改全局 npm 配置；等价的仓库级前端测试／构建、`make web2api` 和后端二进制构建均通过且产物已清理。
 
 每完成一个里程碑，在本节追加实际结果、与计划差异、遗留问题和下一里程碑风险。最终必须回答：
 
