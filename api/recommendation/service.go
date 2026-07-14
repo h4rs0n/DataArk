@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	neturl "net/url"
 	"sort"
 	"strings"
@@ -24,8 +26,12 @@ const (
 	RecommendationFeedbackValuable      = "valuable"
 	RecommendationFeedbackNotInterested = "not_interested"
 	RecommendationFeedbackDuplicate     = "duplicate"
+	RecommendationFeedbackTooRepetitive = "too_repetitive"
 	RecommendationFeedbackDeepRead      = "deep_read"
 	RecommendationFeedbackBlock         = "block"
+	RecommendationFeedbackBlockSource   = "block_source"
+	RecommendationFeedbackReduceTopic   = "reduce_topic"
+	RecommendationFeedbackReduceStyle   = "reduce_style"
 
 	UserBlockRuleTopic  = "topic"
 	UserBlockRuleSource = "source"
@@ -50,6 +56,10 @@ type RecommendationDaySnapshot struct {
 type RecommendationBlockTarget struct {
 	Type  string `json:"type"`
 	Value string `json:"value"`
+}
+
+type recommendationFeedbackMetadata struct {
+	BlockTargets []RecommendationBlockTarget `json:"blockTargets,omitempty"`
 }
 
 type recommendationCandidateScore struct {
@@ -172,6 +182,11 @@ func SaveRecommendationSettings(settings *RecommendationSettings) (*Recommendati
 			"generation_time":       normalized.GenerationTime,
 			"candidate_window_days": normalized.CandidateWindowDays,
 			"exploration_rate":      normalized.ExplorationRate,
+			"preferred_topics":      normalized.PreferredTopics,
+			"preferred_languages":   normalized.PreferredLanguages,
+			"preferred_length":      normalized.PreferredLength,
+			"preferred_depth":       normalized.PreferredDepth,
+			"favorite_sources":      normalized.FavoriteSources,
 			"enabled":               normalized.Enabled,
 			"updated_at":            time.Now(),
 		}),
@@ -432,6 +447,7 @@ func deleteRecommendationDay(userID uint, date string) error {
 }
 
 func RecordRecommendationFeedback(userID uint, recommendationItemID uint, action string, targets []RecommendationBlockTarget) (*RecommendationFeedback, []UserBlockRule, error) {
+	rawAction := strings.TrimSpace(action)
 	action = normalizeFeedbackAction(action)
 	if action == "" {
 		return nil, nil, ErrInvalidRecommendationFeedback
@@ -447,19 +463,58 @@ func RecordRecommendationFeedback(userID uint, recommendationItemID uint, action
 	if err := db.First(&item, "id = ? AND user_id = ?", recommendationItemID, userID).Error; err != nil {
 		return nil, nil, err
 	}
-	metadataBytes, _ := json.Marshal(struct {
-		BlockTargets []RecommendationBlockTarget `json:"blockTargets,omitempty"`
-	}{BlockTargets: targets})
+	targets = normalizeFeedbackTargets(targets)
+	if (action == RecommendationFeedbackBlock || action == RecommendationFeedbackReduceTopic || action == RecommendationFeedbackReduceStyle) && len(targets) == 0 {
+		return nil, nil, ErrInvalidBlockRule
+	}
+	for _, target := range targets {
+		if (rawAction == RecommendationFeedbackBlockSource && target.Type != UserBlockRuleSource) ||
+			(action == RecommendationFeedbackReduceTopic && target.Type != UserBlockRuleTopic) ||
+			(action == RecommendationFeedbackReduceStyle && target.Type != UserBlockRuleStyle) {
+			return nil, nil, ErrInvalidBlockRule
+		}
+	}
+	metadataBytes, _ := json.Marshal(recommendationFeedbackMetadata{BlockTargets: targets})
+	metadata := string(metadataBytes)
 
 	var feedback RecommendationFeedback
 	blockRules := make([]UserBlockRule, 0)
 	err := db.Transaction(func(tx *gorm.DB) error {
+		var current RecommendationFeedback
+		currentResult := tx.Where("user_id = ? AND recommendation_item_id = ? AND is_current = ?", userID, recommendationItemID, true).Limit(1).Find(&current)
+		if currentResult.Error != nil {
+			return currentResult.Error
+		}
+		if currentResult.RowsAffected > 0 && current.Action == action && current.Metadata == metadata {
+			feedback = current
+			return tx.Where("feedback_id = ? AND active = ?", current.ID, true).Find(&blockRules).Error
+		}
+		now := recommendationClock.Now()
+		var supersedesID *uint
+		if currentResult.RowsAffected > 0 {
+			supersedesID = &current.ID
+			if err := tx.Model(&RecommendationFeedback{}).Where("id = ?", current.ID).Updates(map[string]interface{}{
+				"is_current": false, "current_key": nil, "reverted_at": now, "closed_reason": "superseded",
+			}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&UserBlockRule{}).Where("feedback_id = ? AND active = ?", current.ID, true).Updates(map[string]interface{}{
+				"active": false, "updated_at": now,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		currentKey := fmt.Sprintf("%d:%d", userID, recommendationItemID)
 		feedback = RecommendationFeedback{
 			UserID:               userID,
 			RecommendationItemID: recommendationItemID,
 			CandidateID:          item.CandidateID,
 			Action:               action,
-			Metadata:             string(metadataBytes),
+			Metadata:             metadata,
+			IsCurrent:            true,
+			CurrentKey:           &currentKey,
+			SupersedesID:         supersedesID,
+			CreatedAt:            now,
 		}
 		if err := tx.Create(&feedback).Error; err != nil {
 			return err
@@ -473,7 +528,7 @@ func RecordRecommendationFeedback(userID uint, recommendationItemID uint, action
 				return err
 			}
 		}
-		if err := syncUserCandidateFeedbackState(tx, userID, item.CandidateID, action, time.Now()); err != nil {
+		if err := syncUserCandidateFeedbackState(tx, userID, item.CandidateID, action, now); err != nil {
 			return err
 		}
 		if action != RecommendationFeedbackBlock {
@@ -484,6 +539,7 @@ func RecordRecommendationFeedback(userID uint, recommendationItemID uint, action
 			if err != nil {
 				return err
 			}
+			rule.FeedbackID = &feedback.ID
 			if err := tx.Create(&rule).Error; err != nil {
 				return err
 			}
@@ -495,6 +551,15 @@ func RecordRecommendationFeedback(userID uint, recommendationItemID uint, action
 		return nil
 	})
 	if err != nil {
+		if isUniqueConstraintError(err) {
+			var concurrent RecommendationFeedback
+			result := db.Where("user_id = ? AND recommendation_item_id = ? AND is_current = ? AND action = ? AND metadata = ?", userID, recommendationItemID, true, action, metadata).Limit(1).Find(&concurrent)
+			if result.Error == nil && result.RowsAffected > 0 {
+				if rulesErr := db.Where("feedback_id = ? AND active = ?", concurrent.ID, true).Find(&blockRules).Error; rulesErr == nil {
+					return &concurrent, blockRules, nil
+				}
+			}
+		}
 		return nil, nil, err
 	}
 	if action == RecommendationFeedbackValuable || action == RecommendationFeedbackDeepRead {
@@ -503,19 +568,37 @@ func RecordRecommendationFeedback(userID uint, recommendationItemID uint, action
 	return &feedback, blockRules, nil
 }
 
+func isUniqueConstraintError(err error) bool {
+	message := strings.ToLower(err.Error())
+	return errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(message, "unique constraint") || strings.Contains(message, "duplicate key")
+}
+
 func RevertRecommendationFeedback(userID uint, recommendationItemID uint) error {
 	if db == nil || userID == 0 || recommendationItemID == 0 {
 		return nil
 	}
-	now := time.Now()
+	now := recommendationClock.Now()
 	return db.Transaction(func(tx *gorm.DB) error {
 		var item RecommendationItem
 		if err := tx.Where("id = ? AND user_id = ?", recommendationItemID, userID).First(&item).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&RecommendationFeedback{}).
-			Where("user_id = ? AND recommendation_item_id = ? AND reverted_at IS NULL", userID, recommendationItemID).
-			Update("reverted_at", &now).Error; err != nil {
+		var current RecommendationFeedback
+		result := tx.Where("user_id = ? AND recommendation_item_id = ? AND is_current = ?", userID, recommendationItemID, true).Limit(1).Find(&current)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		if err := tx.Model(&RecommendationFeedback{}).Where("id = ?", current.ID).Updates(map[string]interface{}{
+			"is_current": false, "current_key": nil, "reverted_at": now, "closed_reason": "reverted",
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&UserBlockRule{}).Where("feedback_id = ? AND active = ?", current.ID, true).Updates(map[string]interface{}{
+			"active": false, "updated_at": now,
+		}).Error; err != nil {
 			return err
 		}
 		return tx.Model(&discovery.UserCandidateState{}).Where("user_id = ? AND candidate_id = ?", userID, item.CandidateID).Updates(map[string]interface{}{
@@ -524,10 +607,53 @@ func RevertRecommendationFeedback(userID uint, recommendationItemID uint) error 
 	})
 }
 
-func syncUserCandidateFeedbackState(tx *gorm.DB, userID uint, candidateID uint, action string, now time.Time) error {
-	if action == RecommendationFeedbackBlock {
-		return nil
+func GetCurrentRecommendationFeedback(userID uint, recommendationItemID uint) (*RecommendationFeedback, error) {
+	if db == nil || userID == 0 || recommendationItemID == 0 {
+		return nil, nil
 	}
+	var feedback RecommendationFeedback
+	result := db.Where("user_id = ? AND recommendation_item_id = ? AND is_current = ?", userID, recommendationItemID, true).Limit(1).Find(&feedback)
+	if result.Error != nil || result.RowsAffected == 0 {
+		return nil, result.Error
+	}
+	return &feedback, nil
+}
+
+func ListRecommendationFeedbackHistory(userID uint, recommendationItemID uint) ([]RecommendationFeedback, error) {
+	history := make([]RecommendationFeedback, 0)
+	if db == nil || userID == 0 || recommendationItemID == 0 {
+		return history, nil
+	}
+	err := db.Where("user_id = ? AND recommendation_item_id = ?", userID, recommendationItemID).Order("created_at asc, id asc").Find(&history).Error
+	return history, err
+}
+
+func normalizeFeedbackTargets(targets []RecommendationBlockTarget) []RecommendationBlockTarget {
+	cleaned := make([]RecommendationBlockTarget, 0, len(targets))
+	seen := make(map[string]struct{})
+	for _, target := range targets {
+		target.Type = strings.ToLower(strings.TrimSpace(target.Type))
+		target.Value = strings.TrimSpace(target.Value)
+		if target.Type == "" || target.Value == "" {
+			continue
+		}
+		key := target.Type + "\x00" + strings.ToLower(target.Value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		cleaned = append(cleaned, target)
+	}
+	sort.Slice(cleaned, func(i, j int) bool {
+		if cleaned[i].Type == cleaned[j].Type {
+			return strings.ToLower(cleaned[i].Value) < strings.ToLower(cleaned[j].Value)
+		}
+		return cleaned[i].Type < cleaned[j].Type
+	})
+	return cleaned
+}
+
+func syncUserCandidateFeedbackState(tx *gorm.DB, userID uint, candidateID uint, action string, now time.Time) error {
 	state := discovery.UserCandidateState{UserID: userID, CandidateID: candidateID, CreatedAt: now, UpdatedAt: now}
 	if err := tx.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "user_id"}, {Name: "candidate_id"}}, DoNothing: true,
@@ -542,7 +668,8 @@ func syncUserCandidateFeedbackState(tx *gorm.DB, userID uint, candidateID uint, 
 		updates["opened_at"] = now
 		updates["read_at"] = now
 		updates["deep_read_at"] = now
-	case RecommendationFeedbackValuable, RecommendationFeedbackNotInterested, RecommendationFeedbackDuplicate:
+	case RecommendationFeedbackValuable, RecommendationFeedbackNotInterested, RecommendationFeedbackDuplicate,
+		RecommendationFeedbackBlock, RecommendationFeedbackReduceTopic, RecommendationFeedbackReduceStyle:
 	default:
 		return nil
 	}
@@ -622,13 +749,37 @@ func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, 
 	if db == nil || userID == 0 {
 		return &UserRecommendationProfile{UserID: userID, ProfileVersion: 1}, nil
 	}
-	var feedback []RecommendationFeedback
-	if err := db.Where("user_id = ? AND reverted_at IS NULL", userID).Order("created_at asc").Find(&feedback).Error; err != nil {
+	settings, err := GetRecommendationSettings(userID)
+	if err != nil {
 		return nil, err
 	}
-	candidateIDs := make([]uint, 0, len(feedback))
+	var existing UserRecommendationProfile
+	existingResult := db.Where("user_id = ?", userID).Limit(1).Find(&existing)
+	if existingResult.Error != nil {
+		return nil, existingResult.Error
+	}
+	var feedback []RecommendationFeedback
+	feedbackQuery := db.Where("user_id = ? AND is_current = ? AND reverted_at IS NULL", userID, true)
+	if existing.FeedbackResetAt != nil {
+		feedbackQuery = feedbackQuery.Where("created_at > ?", *existing.FeedbackResetAt)
+	}
+	if err := feedbackQuery.Order("created_at asc").Find(&feedback).Error; err != nil {
+		return nil, err
+	}
+	var engagementStates []discovery.UserCandidateState
+	if err := db.Where("user_id = ? AND (opened_at IS NOT NULL OR deep_read_at IS NOT NULL OR archived_at IS NOT NULL)", userID).Find(&engagementStates).Error; err != nil {
+		return nil, err
+	}
+	candidateIDs := make([]uint, 0, len(feedback)+len(engagementStates))
+	feedbackCandidates := make(map[uint]struct{}, len(feedback))
 	for _, item := range feedback {
 		candidateIDs = append(candidateIDs, item.CandidateID)
+		feedbackCandidates[item.CandidateID] = struct{}{}
+	}
+	for _, state := range engagementStates {
+		if _, hasFeedback := feedbackCandidates[state.CandidateID]; !hasFeedback {
+			candidateIDs = append(candidateIDs, state.CandidateID)
+		}
 	}
 	candidates := make(map[uint]DiscoveryCandidate)
 	if len(candidateIDs) > 0 {
@@ -645,27 +796,59 @@ func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, 
 		return nil, err
 	}
 	topicWeights := make(map[string]float64)
-	sourceWeights := make(map[string]float64)
+	sourceWeights := make(map[string]float64) // Intentionally explicit-only; article feedback never writes here.
 	styleWeights := make(map[string]float64)
 	positiveVectors := make([][]float32, 0)
+	positiveVectorWeights := make([]float64, 0)
 	negativeVectors := make([][]float32, 0)
+	negativeVectorWeights := make([]float64, 0)
 	depthPreference := 0.5
+	if settings.PreferredLength == "short" {
+		depthPreference = 0.3
+	} else if settings.PreferredLength == "long" {
+		depthPreference = 0.75
+	}
+	if settings.PreferredDepth > 0 {
+		depthPreference = settings.PreferredDepth
+	}
+	for _, topic := range parseStringList(settings.PreferredTopics) {
+		topicWeights[topic] = 0.75
+	}
+	now := recommendationClock.Now()
 	for _, event := range feedback {
 		candidate, ok := candidates[event.CandidateID]
 		if !ok {
 			continue
 		}
-		topicDelta, sourceDelta, styleDelta, depthDelta := feedbackDeltas(event.Action)
-		for _, topic := range parseStringList(candidate.Topics) {
-			topicWeights[topic] += topicDelta
+		decay := feedbackDecay(event.CreatedAt, now)
+		topicDelta, _, styleDelta, depthDelta := feedbackDeltas(event.Action)
+		topicDelta *= decay
+		styleDelta *= decay
+		depthDelta *= decay
+		topics := parseStringList(candidate.Topics)
+		styles := []string{candidate.ContentStyle, candidate.ContentType}
+		if event.Action == RecommendationFeedbackReduceTopic || event.Action == RecommendationFeedbackReduceStyle {
+			var metadata recommendationFeedbackMetadata
+			_ = json.Unmarshal([]byte(event.Metadata), &metadata)
+			topics = nil
+			styles = nil
+			for _, target := range metadata.BlockTargets {
+				if event.Action == RecommendationFeedbackReduceTopic && target.Type == UserBlockRuleTopic {
+					topics = append(topics, target.Value)
+				}
+				if event.Action == RecommendationFeedbackReduceStyle && target.Type == UserBlockRuleStyle {
+					styles = append(styles, target.Value)
+				}
+			}
 		}
-		sourceName := firstNonEmpty(candidate.SourceName, sourceHost(candidate.URL))
-		if sourceName != "" {
-			sourceWeights[sourceName] += sourceDelta
+		for _, topic := range topics {
+			if topicDelta != 0 {
+				topicWeights[topic] += topicDelta
+			}
 		}
-		for _, style := range []string{candidate.ContentStyle, candidate.ContentType} {
+		for _, style := range styles {
 			style = strings.TrimSpace(style)
-			if style != "" {
+			if style != "" && styleDelta != 0 {
 				styleWeights[style] += styleDelta
 			}
 		}
@@ -673,27 +856,51 @@ func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, 
 			switch normalizeFeedbackAction(event.Action) {
 			case RecommendationFeedbackValuable, RecommendationFeedbackDeepRead:
 				positiveVectors = append(positiveVectors, vector)
+				positiveVectorWeights = append(positiveVectorWeights, decay)
 			case RecommendationFeedbackNotInterested:
 				negativeVectors = append(negativeVectors, vector)
+				negativeVectorWeights = append(negativeVectorWeights, decay)
 			}
 		}
 		depthPreference += depthDelta
+	}
+	for _, state := range engagementStates {
+		if _, hasFeedback := feedbackCandidates[state.CandidateID]; hasFeedback {
+			continue
+		}
+		strength, occurredAt := engagementPreferenceSignal(state)
+		if strength == 0 || (existing.FeedbackResetAt != nil && !occurredAt.After(*existing.FeedbackResetAt)) {
+			continue
+		}
+		candidate, ok := candidates[state.CandidateID]
+		if !ok {
+			continue
+		}
+		weight := strength * feedbackDecay(occurredAt, now)
+		for _, topic := range parseStringList(candidate.Topics) {
+			topicWeights[topic] += weight
+		}
+		for _, style := range []string{candidate.ContentStyle, candidate.ContentType} {
+			if style = strings.TrimSpace(style); style != "" {
+				styleWeights[style] += weight * 0.4
+			}
+		}
+		if vector := embeddingVectors[state.CandidateID]; len(vector) > 0 {
+			positiveVectors = append(positiveVectors, vector)
+			positiveVectorWeights = append(positiveVectorWeights, weight)
+		}
+		depthPreference += weight * 0.04
 	}
 	depthPreference = clampScore(depthPreference)
 	topicJSON, _ := json.Marshal(topicWeights)
 	sourceJSON, _ := json.Marshal(sourceWeights)
 	styleJSON, _ := json.Marshal(styleWeights)
-	positiveEmbedding := marshalVector(averageVectors(positiveVectors))
-	negativeEmbedding := marshalVector(averageVectors(negativeVectors))
+	positiveEmbedding := marshalVector(weightedAverageVectors(positiveVectors, positiveVectorWeights))
+	negativeEmbedding := marshalVector(weightedAverageVectors(negativeVectors, negativeVectorWeights))
 
-	var existing UserRecommendationProfile
-	result := db.Where("user_id = ?", userID).Limit(1).Find(&existing)
-	if result.Error != nil {
-		return nil, result.Error
-	}
 	version := uint(1)
-	if result.RowsAffected > 0 {
-		version = existing.ProfileVersion + 1
+	if existingResult.RowsAffected > 0 {
+		version = existing.ProfileVersion
 	}
 	profile := UserRecommendationProfile{
 		UserID:            userID,
@@ -703,8 +910,12 @@ func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, 
 		SourceWeights:     string(sourceJSON),
 		StyleWeights:      string(styleJSON),
 		DepthPreference:   depthPreference,
-		ExplorationRate:   DefaultRecommendationSettings(userID).ExplorationRate,
+		ExplorationRate:   settings.ExplorationRate,
 		ProfileVersion:    version,
+		FeedbackResetAt:   existing.FeedbackResetAt,
+	}
+	if existingResult.RowsAffected > 0 && !sameRecommendationProfile(existing, profile) {
+		profile.ProfileVersion++
 	}
 	if err := db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "user_id"}},
@@ -717,12 +928,26 @@ func RebuildUserRecommendationProfile(userID uint) (*UserRecommendationProfile, 
 			"depth_preference":   profile.DepthPreference,
 			"exploration_rate":   profile.ExplorationRate,
 			"profile_version":    profile.ProfileVersion,
+			"feedback_reset_at":  profile.FeedbackResetAt,
 			"updated_at":         time.Now(),
 		}),
 	}).Create(&profile).Error; err != nil {
 		return nil, err
 	}
 	return &profile, nil
+}
+
+func engagementPreferenceSignal(state discovery.UserCandidateState) (float64, time.Time) {
+	if state.ArchivedAt != nil && (state.DeepReadAt == nil || state.ArchivedAt.After(*state.DeepReadAt)) {
+		return 1.2, *state.ArchivedAt
+	}
+	if state.DeepReadAt != nil {
+		return 1.2, *state.DeepReadAt
+	}
+	if state.OpenedAt != nil {
+		return 0.15, *state.OpenedAt
+	}
+	return 0, time.Time{}
 }
 
 func EnrichDiscoveryCandidate(ctx context.Context, candidateID uint, provider EnrichmentProvider) (*DiscoveryCandidate, error) {
@@ -1118,7 +1343,24 @@ func normalizeRecommendationSettings(settings RecommendationSettings) Recommenda
 	if settings.ExplorationRate > 1 {
 		settings.ExplorationRate = 1
 	}
+	settings.PreferredTopics = normalizeJSONList(settings.PreferredTopics)
+	settings.PreferredLanguages = normalizeJSONList(settings.PreferredLanguages)
+	settings.FavoriteSources = normalizeJSONList(settings.FavoriteSources)
+	settings.PreferredLength = strings.ToLower(strings.TrimSpace(settings.PreferredLength))
+	switch settings.PreferredLength {
+	case "", "short", "long":
+	default:
+		settings.PreferredLength = ""
+	}
+	settings.PreferredDepth = clampScore(settings.PreferredDepth)
 	return settings
+}
+
+func normalizeJSONList(raw string) string {
+	values := parseStringList(raw)
+	sort.Slice(values, func(i, j int) bool { return strings.ToLower(values[i]) < strings.ToLower(values[j]) })
+	encoded, _ := json.Marshal(values)
+	return string(encoded)
 }
 
 func clampScore(value float64) float64 {
@@ -1254,16 +1496,106 @@ func boundedWeight(value float64) float64 {
 func feedbackDeltas(action string) (float64, float64, float64, float64) {
 	switch normalizeFeedbackAction(action) {
 	case RecommendationFeedbackValuable:
-		return 1.0, 0.5, 0.4, 0.03
+		return 1.0, 0, 0.4, 0.03
 	case RecommendationFeedbackDeepRead:
-		return 1.8, 0.8, 0.8, 0.18
+		return 1.8, 0, 0.8, 0.18
 	case RecommendationFeedbackNotInterested:
-		return -0.8, -0.4, -0.4, -0.03
+		return -0.8, 0, -0.4, -0.03
 	case RecommendationFeedbackDuplicate:
 		return 0, 0, 0, 0
+	case RecommendationFeedbackReduceTopic:
+		return -1, 0, 0, 0
+	case RecommendationFeedbackReduceStyle:
+		return 0, 0, -1, 0
 	default:
 		return 0, 0, 0, 0
 	}
+}
+
+func feedbackDecay(createdAt time.Time, now time.Time) float64 {
+	if createdAt.IsZero() || !now.After(createdAt) {
+		return 1
+	}
+	const halfLife = 90 * 24 * time.Hour
+	// Daily buckets make rebuilding deterministic within a digest day while
+	// retaining a smooth, auditable half-life across future days.
+	elapsedDays := math.Floor(now.Sub(createdAt).Hours() / 24)
+	return math.Pow(0.5, elapsedDays/(halfLife.Hours()/24))
+}
+
+func weightedAverageVectors(vectors [][]float32, weights []float64) []float32 {
+	if len(vectors) == 0 || len(vectors) != len(weights) || len(vectors[0]) == 0 {
+		return []float32{}
+	}
+	dimension := len(vectors[0])
+	sum := make([]float64, dimension)
+	total := 0.0
+	for index, vector := range vectors {
+		if len(vector) != dimension || weights[index] <= 0 {
+			continue
+		}
+		for position, value := range vector {
+			sum[position] += float64(value) * weights[index]
+		}
+		total += weights[index]
+	}
+	if total == 0 {
+		return []float32{}
+	}
+	result := make([]float32, dimension)
+	for index := range sum {
+		result[index] = float32(sum[index] / total)
+	}
+	return result
+}
+
+func sameRecommendationProfile(left UserRecommendationProfile, right UserRecommendationProfile) bool {
+	return left.PositiveEmbedding == right.PositiveEmbedding &&
+		left.NegativeEmbedding == right.NegativeEmbedding &&
+		left.TopicWeights == right.TopicWeights &&
+		left.SourceWeights == right.SourceWeights &&
+		left.StyleWeights == right.StyleWeights &&
+		left.DepthPreference == right.DepthPreference &&
+		left.ExplorationRate == right.ExplorationRate
+}
+
+func ResetUserRecommendationPreferences(userID uint) (*UserRecommendationProfile, error) {
+	if db == nil || userID == 0 {
+		return &UserRecommendationProfile{UserID: userID, ProfileVersion: 1}, nil
+	}
+	now := recommendationClock.Now()
+	settings, err := GetRecommendationSettings(userID)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Model(&RecommendationSettings{}).Where("user_id = ?", userID).Updates(map[string]interface{}{
+		"preferred_topics": "[]", "preferred_languages": "[]", "preferred_length": "", "preferred_depth": 0,
+		"favorite_sources": "[]", "updated_at": now,
+	}).Error; err != nil {
+		return nil, err
+	}
+	var existing UserRecommendationProfile
+	result := db.Where("user_id = ?", userID).Limit(1).Find(&existing)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	version := uint(1)
+	if result.RowsAffected > 0 {
+		version = existing.ProfileVersion + 1
+	}
+	profile := UserRecommendationProfile{
+		UserID: userID, PositiveEmbedding: "[]", NegativeEmbedding: "[]", TopicWeights: "{}",
+		SourceWeights: "{}", StyleWeights: "{}", DepthPreference: 0.5,
+		ExplorationRate: settings.ExplorationRate,
+		ProfileVersion:  version, FeedbackResetAt: &now,
+	}
+	if err := db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}}, DoUpdates: clause.AssignmentColumns([]string{
+		"positive_embedding", "negative_embedding", "topic_weights", "source_weights", "style_weights", "depth_preference",
+		"exploration_rate", "profile_version", "feedback_reset_at", "updated_at",
+	})}).Create(&profile).Error; err != nil {
+		return nil, err
+	}
+	return &profile, nil
 }
 
 func parseStringList(raw string) []string {
@@ -1470,10 +1802,18 @@ func normalizeFeedbackAction(action string) string {
 		return RecommendationFeedbackNotInterested
 	case RecommendationFeedbackDuplicate:
 		return RecommendationFeedbackDuplicate
+	case RecommendationFeedbackTooRepetitive:
+		return RecommendationFeedbackDuplicate
 	case RecommendationFeedbackDeepRead:
 		return RecommendationFeedbackDeepRead
 	case RecommendationFeedbackBlock:
 		return RecommendationFeedbackBlock
+	case RecommendationFeedbackBlockSource:
+		return RecommendationFeedbackBlock
+	case RecommendationFeedbackReduceTopic:
+		return RecommendationFeedbackReduceTopic
+	case RecommendationFeedbackReduceStyle:
+		return RecommendationFeedbackReduceStyle
 	default:
 		return ""
 	}

@@ -116,6 +116,8 @@ func selectDailyRecommendationCandidatesV3(ctx context.Context, userID uint, set
 	cooldown := configuredRecommendationReexposureCooldown()
 	topicWeights := parseWeightMap(profile.TopicWeights)
 	styleWeights := parseWeightMap(profile.StyleWeights)
+	preferredLanguages := normalizedPreferenceSet(parseStringList(settings.PreferredLanguages))
+	favoriteSources := normalizedPreferenceSet(parseStringList(settings.FavoriteSources))
 	freshDays := settings.CandidateWindowDays
 	if freshDays <= 0 {
 		freshDays = 30
@@ -159,6 +161,22 @@ func selectDailyRecommendationCandidatesV3(ctx context.Context, userID uint, set
 			TopicWeights: topicWeights, StyleWeights: styleWeights, DepthPreference: profile.DepthPreference, Now: now,
 		})
 		score += vectorBoosts[candidate.ID]
+		if _, ok := preferredLanguages[strings.ToLower(strings.TrimSpace(candidate.Language))]; ok {
+			score += 0.05
+		}
+		switch settings.PreferredLength {
+		case "short":
+			if candidate.WordCount > 0 && candidate.WordCount <= 1200 {
+				score += 0.05
+			}
+		case "long":
+			if candidate.WordCount >= 1800 {
+				score += 0.05
+			}
+		}
+		if explicitSourcePreferenceMatches(candidate, host, favoriteSources) {
+			score += 0.08
+		}
 		if exploration {
 			score += 0.02
 		}
@@ -178,6 +196,28 @@ func selectDailyRecommendationCandidatesV3(ctx context.Context, userID uint, set
 	})
 	report.EligibleAfterHard = len(report.Candidates)
 	return report, nil
+}
+
+func normalizedPreferenceSet(values []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value = strings.ToLower(strings.TrimSpace(value)); value != "" {
+			result[value] = struct{}{}
+		}
+	}
+	return result
+}
+
+func explicitSourcePreferenceMatches(candidate DiscoveryCandidate, host string, favorites map[string]struct{}) bool {
+	if len(favorites) == 0 {
+		return false
+	}
+	for _, value := range []string{candidate.SourceName, host} {
+		if _, ok := favorites[strings.ToLower(strings.TrimSpace(value))]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func populateGlobalSelectionExclusions(excluded map[string]int) error {

@@ -24,6 +24,11 @@ type RecommendationSettings struct {
 	GenerationTime      string    `json:"generationTime" gorm:"not null;size:16"`
 	CandidateWindowDays int       `json:"candidateWindowDays" gorm:"not null;default:30"`
 	ExplorationRate     float64   `json:"explorationRate" gorm:"not null;default:0.15"`
+	PreferredTopics     string    `json:"preferredTopics" gorm:"type:text"`
+	PreferredLanguages  string    `json:"preferredLanguages" gorm:"type:text"`
+	PreferredLength     string    `json:"preferredLength" gorm:"size:32"`
+	PreferredDepth      float64   `json:"preferredDepth"`
+	FavoriteSources     string    `json:"favoriteSources" gorm:"type:text"`
 	Enabled             bool      `json:"enabled" gorm:"not null;default:true"`
 	CreatedAt           time.Time `json:"createdAt"`
 	UpdatedAt           time.Time `json:"updatedAt"`
@@ -91,33 +96,39 @@ type RecommendationFeedback struct {
 	CandidateID          uint       `json:"candidateId" gorm:"index;not null"`
 	Action               string     `json:"action" gorm:"index;not null;size:32"`
 	Metadata             string     `json:"metadata" gorm:"type:text"`
+	IsCurrent            bool       `json:"isCurrent" gorm:"index;not null;default:true"`
+	CurrentKey           *string    `json:"-" gorm:"uniqueIndex;size:128"`
+	SupersedesID         *uint      `json:"supersedesId" gorm:"index"`
+	ClosedReason         string     `json:"closedReason" gorm:"size:32"`
 	CreatedAt            time.Time  `json:"createdAt" gorm:"index"`
 	RevertedAt           *time.Time `json:"revertedAt"`
 }
 
 type UserBlockRule struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
-	UserID    uint      `json:"userId" gorm:"index;not null"`
-	RuleType  string    `json:"type" gorm:"index;not null;size:32"`
-	RuleValue string    `json:"value" gorm:"index;not null;size:255"`
-	Active    bool      `json:"active" gorm:"index;not null;default:true"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	UserID     uint      `json:"userId" gorm:"index;not null"`
+	RuleType   string    `json:"type" gorm:"index;not null;size:32"`
+	RuleValue  string    `json:"value" gorm:"index;not null;size:255"`
+	FeedbackID *uint     `json:"feedbackId" gorm:"index"`
+	Active     bool      `json:"active" gorm:"index;not null;default:true"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 type UserRecommendationProfile struct {
-	ID                uint      `json:"id" gorm:"primaryKey"`
-	UserID            uint      `json:"userId" gorm:"uniqueIndex;not null"`
-	PositiveEmbedding string    `json:"positiveEmbedding" gorm:"type:text"`
-	NegativeEmbedding string    `json:"negativeEmbedding" gorm:"type:text"`
-	TopicWeights      string    `json:"topicWeights" gorm:"type:text"`
-	SourceWeights     string    `json:"sourceWeights" gorm:"type:text"`
-	StyleWeights      string    `json:"styleWeights" gorm:"type:text"`
-	DepthPreference   float64   `json:"depthPreference"`
-	ExplorationRate   float64   `json:"explorationRate"`
-	ProfileVersion    uint      `json:"profileVersion" gorm:"not null;default:1"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	ID                uint       `json:"id" gorm:"primaryKey"`
+	UserID            uint       `json:"userId" gorm:"uniqueIndex;not null"`
+	PositiveEmbedding string     `json:"positiveEmbedding" gorm:"type:text"`
+	NegativeEmbedding string     `json:"negativeEmbedding" gorm:"type:text"`
+	TopicWeights      string     `json:"topicWeights" gorm:"type:text"`
+	SourceWeights     string     `json:"sourceWeights" gorm:"type:text"`
+	StyleWeights      string     `json:"styleWeights" gorm:"type:text"`
+	DepthPreference   float64    `json:"depthPreference"`
+	ExplorationRate   float64    `json:"explorationRate"`
+	ProfileVersion    uint       `json:"profileVersion" gorm:"not null;default:1"`
+	FeedbackResetAt   *time.Time `json:"feedbackResetAt" gorm:"index"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
 }
 
 func SetDB(database *gorm.DB) *gorm.DB {

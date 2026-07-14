@@ -14,6 +14,7 @@ import (
 	"DataArk/search"
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -30,58 +31,61 @@ import (
 )
 
 var (
-	checkArchiveConsistency      = search.CheckArchiveConsistency
-	repairArchiveConsistency     = search.RepairArchiveConsistency
-	registerWithToken            = auth.RegisterWithToken
-	loginWithToken               = auth.LoginWithToken
-	queryByKeyword               = search.QueryByKeyword
-	addDocURLTask                = search.AddDocURLTask
-	getArchiveTask               = search.GetArchiveTask
-	getArchiveStatsSnapshot      = archive.GetArchiveStats
-	refreshStatsFromDisk         = archive.RefreshArchiveStatsFromDisk
-	recordSearchEvent            = archive.RecordSearchEvent
-	getKeywordStats              = archive.GetKeywordStats
-	recordArchiveClick           = archive.RecordArchiveClick
-	getArchiveRankings           = archive.GetArchiveRankings
-	getArchiveRecommendations    = archive.GetArchiveRecommendations
-	listDiscoverySources         = discovery.ListDiscoverySources
-	createDiscoverySource        = discovery.CreateDiscoverySource
-	updateDiscoverySource        = discovery.UpdateDiscoverySource
-	deleteDiscoverySource        = discovery.DeleteDiscoverySource
-	fetchDiscoverySourceByID     = discovery.FetchDiscoverySourceByID
-	listDiscoveryCandidates      = discovery.ListDiscoveryCandidatesForUser
-	getDiscoverySiteGraph        = discovery.GetSiteGraph
-	listBackfillCoverage         = discovery.ListBackfillCoverage
-	updateDiscoverySiteStatus    = discovery.UpdateDiscoverySiteOperationalStatus
-	requestDiscoverySiteBackfill = discovery.RequestDiscoverySiteBackfill
-	getDiscoverySiteOperations   = discovery.GetDiscoverySiteOperations
-	getDiscoveryCandidate        = discovery.GetDiscoveryCandidate
-	markCandidateRead            = discovery.MarkUserCandidateRead
-	markCandidateIgnored         = discovery.MarkUserCandidateIgnored
-	markCandidateArchived        = discovery.MarkUserCandidateArchived
-	getRecommendationSettings    = recommendation.GetRecommendationSettings
-	saveRecommendationSettings   = recommendation.SaveRecommendationSettings
-	getRecommendationDaySnapshot = recommendation.GetRecommendationDaySnapshot
-	listRecommendationDays       = recommendation.ListRecommendationDays
-	createRecommendationDay      = recommendation.CreateRecommendationDay
-	generateDailyRecommendations = recommendation.GenerateDailyRecommendations
-	regenerateRecommendations    = recommendation.RegenerateDailyRecommendations
-	recordRecommendationFeedback = recommendation.RecordRecommendationFeedback
-	revertRecommendationFeedback = recommendation.RevertRecommendationFeedback
-	listUserBlockRules           = recommendation.ListUserBlockRules
-	deleteUserBlockRule          = recommendation.DeleteUserBlockRule
-	getCandidateInventory        = recommendation.GetCandidateInventory
-	startDiscoveryScheduler      = discovery.StartDiscoveryScheduler
-	startRecommendationScheduler = recommendation.StartRecommendationScheduler
-	startSharedJobQueue          = startApplicationJobQueue
-	addDocFileToIndex            = search.AddDocFile
-	deleteDocByHTMLPath          = search.DeleteDocByHTMLPath
-	createBackupArchive          = backup.CreateBackup
-	restoreBackupArchive         = backup.RestoreBackup
-	initDatabase                 = bootstrap.InitDB
-	createSearchIndex            = search.CreateDefaultIndex
-	initArchiveQueue             = search.InitArchiveTaskQueue
-	runGinRouter                 = func(router *gin.Engine, addr string) error {
+	checkArchiveConsistency            = search.CheckArchiveConsistency
+	repairArchiveConsistency           = search.RepairArchiveConsistency
+	registerWithToken                  = auth.RegisterWithToken
+	loginWithToken                     = auth.LoginWithToken
+	queryByKeyword                     = search.QueryByKeyword
+	addDocURLTask                      = search.AddDocURLTask
+	getArchiveTask                     = search.GetArchiveTask
+	getArchiveStatsSnapshot            = archive.GetArchiveStats
+	refreshStatsFromDisk               = archive.RefreshArchiveStatsFromDisk
+	recordSearchEvent                  = archive.RecordSearchEvent
+	getKeywordStats                    = archive.GetKeywordStats
+	recordArchiveClick                 = archive.RecordArchiveClick
+	getArchiveRankings                 = archive.GetArchiveRankings
+	getArchiveRecommendations          = archive.GetArchiveRecommendations
+	listDiscoverySources               = discovery.ListDiscoverySources
+	createDiscoverySource              = discovery.CreateDiscoverySource
+	updateDiscoverySource              = discovery.UpdateDiscoverySource
+	deleteDiscoverySource              = discovery.DeleteDiscoverySource
+	fetchDiscoverySourceByID           = discovery.FetchDiscoverySourceByID
+	listDiscoveryCandidates            = discovery.ListDiscoveryCandidatesForUser
+	getDiscoverySiteGraph              = discovery.GetSiteGraph
+	listBackfillCoverage               = discovery.ListBackfillCoverage
+	updateDiscoverySiteStatus          = discovery.UpdateDiscoverySiteOperationalStatus
+	requestDiscoverySiteBackfill       = discovery.RequestDiscoverySiteBackfill
+	getDiscoverySiteOperations         = discovery.GetDiscoverySiteOperations
+	getDiscoveryCandidate              = discovery.GetDiscoveryCandidate
+	markCandidateRead                  = discovery.MarkUserCandidateRead
+	markCandidateIgnored               = discovery.MarkUserCandidateIgnored
+	markCandidateArchived              = discovery.MarkUserCandidateArchived
+	getRecommendationSettings          = recommendation.GetRecommendationSettings
+	saveRecommendationSettings         = recommendation.SaveRecommendationSettings
+	getRecommendationDaySnapshot       = recommendation.GetRecommendationDaySnapshot
+	listRecommendationDays             = recommendation.ListRecommendationDays
+	createRecommendationDay            = recommendation.CreateRecommendationDay
+	generateDailyRecommendations       = recommendation.GenerateDailyRecommendations
+	regenerateRecommendations          = recommendation.RegenerateDailyRecommendations
+	recordRecommendationFeedback       = recommendation.RecordRecommendationFeedback
+	revertRecommendationFeedback       = recommendation.RevertRecommendationFeedback
+	getCurrentRecommendationFeedback   = recommendation.GetCurrentRecommendationFeedback
+	listRecommendationFeedbackHistory  = recommendation.ListRecommendationFeedbackHistory
+	resetUserRecommendationPreferences = recommendation.ResetUserRecommendationPreferences
+	listUserBlockRules                 = recommendation.ListUserBlockRules
+	deleteUserBlockRule                = recommendation.DeleteUserBlockRule
+	getCandidateInventory              = recommendation.GetCandidateInventory
+	startDiscoveryScheduler            = discovery.StartDiscoveryScheduler
+	startRecommendationScheduler       = recommendation.StartRecommendationScheduler
+	startSharedJobQueue                = startApplicationJobQueue
+	addDocFileToIndex                  = search.AddDocFile
+	deleteDocByHTMLPath                = search.DeleteDocByHTMLPath
+	createBackupArchive                = backup.CreateBackup
+	restoreBackupArchive               = backup.RestoreBackup
+	initDatabase                       = bootstrap.InitDB
+	createSearchIndex                  = search.CreateDefaultIndex
+	initArchiveQueue                   = search.InitArchiveTaskQueue
+	runGinRouter                       = func(router *gin.Engine, addr string) error {
 		return router.Run(addr)
 	}
 )
@@ -715,12 +719,17 @@ func UpdateRecommendationSettings(c *gin.Context) {
 		return
 	}
 	var req struct {
-		DailyLimit          int     `json:"dailyLimit"`
-		Timezone            string  `json:"timezone"`
-		GenerationTime      string  `json:"generationTime"`
-		CandidateWindowDays int     `json:"candidateWindowDays"`
-		ExplorationRate     float64 `json:"explorationRate"`
-		Enabled             bool    `json:"enabled"`
+		DailyLimit          int      `json:"dailyLimit"`
+		Timezone            string   `json:"timezone"`
+		GenerationTime      string   `json:"generationTime"`
+		CandidateWindowDays int      `json:"candidateWindowDays"`
+		ExplorationRate     float64  `json:"explorationRate"`
+		PreferredTopics     []string `json:"preferredTopics"`
+		PreferredLanguages  []string `json:"preferredLanguages"`
+		PreferredLength     string   `json:"preferredLength"`
+		PreferredDepth      float64  `json:"preferredDepth"`
+		FavoriteSources     []string `json:"favoriteSources"`
+		Enabled             bool     `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(403, gin.H{"Status": "0", "Message": "请求参数错误"})
@@ -733,6 +742,11 @@ func UpdateRecommendationSettings(c *gin.Context) {
 		GenerationTime:      req.GenerationTime,
 		CandidateWindowDays: req.CandidateWindowDays,
 		ExplorationRate:     req.ExplorationRate,
+		PreferredTopics:     marshalStringList(req.PreferredTopics),
+		PreferredLanguages:  marshalStringList(req.PreferredLanguages),
+		PreferredLength:     req.PreferredLength,
+		PreferredDepth:      req.PreferredDepth,
+		FavoriteSources:     marshalStringList(req.FavoriteSources),
 		Enabled:             req.Enabled,
 	})
 	if err != nil {
@@ -740,6 +754,11 @@ func UpdateRecommendationSettings(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"Status": "1", "Message": "更新推荐设置成功", "Data": settings})
+}
+
+func marshalStringList(values []string) string {
+	encoded, _ := json.Marshal(values)
+	return string(encoded)
 }
 
 func RecordRecommendationItemFeedback(c *gin.Context) {
@@ -785,6 +804,41 @@ func RevertRecommendationItemFeedback(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"Status": "1", "Message": "推荐反馈已撤销"})
+}
+
+func GetRecommendationItemFeedback(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	itemID, ok := parseUintParam(c, "itemId")
+	if !ok {
+		return
+	}
+	feedback, err := getCurrentRecommendationFeedback(userID, itemID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "查询当前反馈失败", "Error": err.Error()})
+		return
+	}
+	history, err := listRecommendationFeedbackHistory(userID, itemID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "查询反馈历史失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询推荐反馈成功", "Data": gin.H{"current": feedback, "history": history}})
+}
+
+func ResetRecommendationPreferences(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	profile, err := resetUserRecommendationPreferences(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "重置推荐偏好失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "推荐偏好已重置", "Data": profile})
 }
 
 func ListRecommendationBlocks(c *gin.Context) {
@@ -1251,7 +1305,9 @@ func WebStarter(debugMode bool) {
 		protected.GET("/recommendations/inventory", GetRecommendationInventory)
 		protected.PUT("/recommendations/settings", UpdateRecommendationSettings)
 		protected.POST("/recommendations/items/:itemId/feedback", RecordRecommendationItemFeedback)
+		protected.GET("/recommendations/items/:itemId/feedback", GetRecommendationItemFeedback)
 		protected.DELETE("/recommendations/items/:itemId/feedback", RevertRecommendationItemFeedback)
+		protected.POST("/recommendations/preferences/reset", ResetRecommendationPreferences)
 		protected.GET("/recommendations/blocks", ListRecommendationBlocks)
 		protected.DELETE("/recommendations/blocks/:id", DeleteRecommendationBlock)
 		protected.POST("/backup", CreateBackup)
