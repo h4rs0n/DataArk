@@ -48,7 +48,7 @@
 - [x] 2026-07-14T03:43:51+08:00 M12：完成推荐 v3 硬候选门禁、文章／用户评分、探索配额、可审计软多样性、冷却／正文更新再推荐和“目标 N、实际 M”。聚焦验证 `go test ./recommendation ./bootstrap -run 'Test(RecommendationV3|GenerateDailyRecommendationsReranker|V3Goose)' -count=1` 通过，race 验证同一测试集通过；验收覆盖 N=10 恰好 10、仅 7 篇合格时 M=7、15% 探索配额、来源 30%／主题 40% 上限、作者→主题→来源固定放宽、同簇硬去重、75 天仅曝光冷却、正文版本更新提前重现和明确反馈不重现。静态评分输入禁止来源、站点、图谱、产出或声誉字段，长尾精品文章分数高于普通文章。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`e5cab43`。
 - [x] 2026-07-14T03:56:53+08:00 M13：完成逐推荐项唯一当前反馈与保留事件历史、幂等重提／改选／撤销、显式来源屏蔽关联、软偏好衰减／重置和可跳过冷启动设置。聚焦验证 `go test ./recommendation ./api ./bootstrap -run 'Test(FeedbackM13|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；验收覆盖重复提交不新增事件或画像版本、改选链和撤销历史、90 天半衰、重复反馈只写聚类复核信号、文章反馈不产生来源权重、显式来源屏蔽逐用户生效并随反馈撤销、打开弱／深读强／纯曝光中性、重置保留事件以及冷启动偏好不跨用户。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`aa82f2f`。
 - [x] 2026-07-14T10:25:41+08:00 M14：完成统一用户本地日期、`draft → published / failed` 生命周期、事务冻结快照、幂等非破坏重试和 append-only `supplemented` 补充。聚焦验证 `go test ./recommendation ./api ./bootstrap -run 'Test(DailyDigestM14|RecoverDueJobs|RegenerateDailyRecommendationsPreserves|GenerateDailyRecommendationsDoesNotEnrich|RecommendationRetryRequiresOwner|RecommendationSupplementRequiresOwner|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；验收覆盖上海／洛杉矶同一时刻的不同本地日期、历史时区冻结、启动恢复 missing／draft／failed 且跳过 published、重复重试字节语义一致、候选变更不改历史、反馈不删除、补充只追加、失败可重试以及 reranker 下线规则降级审计。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`d39e5c1`。
-- [ ] M15：完成来源图谱、抓取健康、历史覆盖、文章评估、反馈状态和日报解释的前端体验。
+- [x] 2026-07-14T10:40:28+08:00 M15：完成推荐中心组件拆分和可见的日报、图谱、抓取、回溯、文章评估、逐用户状态与反馈语义。聚焦验证 `go test ./recommendation ./api ./bootstrap -run 'Test(RecommendationExperienceM15|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；`npm test` 固定范围反馈、追溯契约和无破坏性生成交互，`npm run build` 类型检查与生产构建通过。页面支持 N/M、短缺／降级／探索解释，站点发现路径、端点健康和回溯，推荐项 assessment/provenance 追溯，反馈选中／改选／撤销和来源／主题／风格范围，冷启动设置／重置，以及 owner-only 来源、回溯和补充操作。仓库验证 `go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`9db105f`。
 - [ ] M16：完成运营指标、结构化日志、管理统计和长尾精品贡献指标。
 - [ ] M17：完成端到端验收、PostgreSQL/SQLite 回归、灰度迁移、旧路径清理、部署文档和最终复盘。
 
@@ -104,6 +104,8 @@
 - 2026-07-14：旧反馈撤销按用户／推荐项批量标记全部活动行，屏蔽规则又没有反馈事件引用，无法区分改选、撤销当前项和用户单独删除规则。M13 用 nullable 唯一 `current_key` 约束单一当前事件，并让显式规则引用 `feedback_id`；关闭当前事件只解除该事件仍活动的规则，历史行不删除。
 - 2026-07-14：推荐项虽然已有 `snapshot_*` 列，读取日报时 `attachRecommendationItemCandidates` 仍会把当前候选整行挂回响应，因此候选改标题／摘要／来源后历史页面会变化。M14 对 published／supplemented 日报只从冻结列重建展示候选，当前候选只用于未发布兼容数据。
 - 2026-07-14：旧生成函数在选文前同步运行 `EnrichPendingDiscoveryCandidates`，会把待富化池和可选远程模型调用放进发布临界路径；同时启动恢复看到任意同日期行就跳过，导致 draft／failed 永久滞留。M14 移除同步富化，发布只消费 ready/eligible 池，恢复仅跳过 published／supplemented。
+- 2026-07-14：M14 冻结了标题、摘要和来源，但推荐项没有冻结主题、内容类型、风格、语言和字数；若 M15 直接读取当前候选来提供“少推荐此主题／风格”，历史展示和反馈范围又会随候选变化。M15 通过 `000016` 增量冻结这些展示上下文，旧项从候选一次性回填，后续响应不再动态拼接。
+- 2026-07-14：`/api/authChecker` 过去只返回登录成功文本，不返回当前用户角色，前端无法在渲染前区分 owner 操作；隐藏按钮不能替代后端权限，但缺少角色会让 member 反复收到 403。M15 返回不含密码的认证用户并继续保留全部服务端 `requireOwner` 校验。
 
 ## Decision Log
 
@@ -180,6 +182,10 @@
 - 2026-07-14：日报持久状态使用 `draft`、`published`、`supplemented`、`failed`；选文在事务外完成，但推荐项、展示快照、曝光和发布审计在一个带行锁的事务内提交。失败只保存有限错误且不伪装为空 published；旧 `pending/generated` 在迁移中变为 `draft/published`。拒绝逐项写入后再更新状态，因为中途失败会留下可见半份日报。
 - 2026-07-14：普通生成和 owner 手动重试对 published／supplemented 均直接返回原快照，旧 `RegenerateDailyRecommendations` 仅保留兼容名称，不再删除日报、项目或反馈；应用服务也拒绝向 published 日报普通追加项目。需要补足时只能走独立 owner supplement 路径，按原缺口追加 `supplemental` 项并保留原 rank、ID、发布时间和反馈。
 - 2026-07-14：配置了 reranker 但调用失败或输出无效时，仍以确定性规则顺序发布，并在日报写 `degraded/degradation_reason`；未配置模型是正常规则模式，不标记故障。拒绝把可选模型错误升级为整份日报失败，也拒绝悄然降级而不留下审计。
+- 2026-07-14：M15 将推荐页拆出 `DigestSummary`、`FeedbackControls` 和 `SiteInsightPanel`，主视图负责数据编排和认证身份；拒绝继续把所有展示、反馈和运营逻辑堆在单一模板，也不引入新的前端状态库，因为当前页面级状态尚不需要跨路由共享。
+- 2026-07-14：新增逐用户 `GET /recommendations/items/:itemId/context`，只从认证身份推导 user ID，返回冻结推荐项、当前反馈、用户状态、当时 assessment、全部 provenance 及对应种子最短路径。拒绝让前端自行用任意 candidate/user ID 拼接多接口，因为会扩大越权面并丢失“当时推荐项”边界。
+- 2026-07-14：前端范围反馈分别提交 `block_source`、`reduce_topic`、`reduce_style`，普通反馈使用 `too_repetitive` 等产品动作；当前状态由服务端 GET 回填并可 DELETE 撤销。页面不展示来源质量分，只展示命名明确的抓取健康、图谱、产出和个人收藏／屏蔽。
+- 2026-07-14：仓库没有既有浏览器测试框架且任务禁止依赖互联网下载新工具，M15 使用 Node 内置 test runner 固定组件契约、全部反馈动作、追溯接口和“前端无破坏性 generate 路径”，再以 `vue-tsc + Vite` 验证模板与类型。拒绝为单里程碑引入需要外部安装的测试栈。
 
 ## Outcomes & Retrospective
 
@@ -244,6 +250,12 @@ M3 的验证完全使用内存 SQLite、固定时钟、测试抓取替身和本�
 日报只从 ready/eligible 候选池选择，不再同步抓取或富化。初次发布在单事务内写推荐项快照、版本、理由、曝光和日报审计；失败保留可重试错误且没有半份 published。已发布重试返回完全相同的冻结响应，当前候选标题、摘要、来源或 assessment 变化不会改历史，旧破坏性重建已退化为安全重试且反馈不会删除。候选后到时，owner-only supplement 只追加缺口并记录策略／时间，不修改原项目。可选 reranker 故障使用规则顺序发布并记录降级。
 
 迁移 `000015` 增量加入失败、降级和补充审计并把旧生命周期映射到新状态；SQLite 真实回填、Goose 解析、无模型和故障模型路径均有自动证据，不使用真实网络、用户数据或 LLM 密钥。PostgreSQL 容器执行仍因当前机器缺少 Docker 留到 M17。M15 的主要风险是把图谱、运营、回溯、文章评估、用户反馈和不可变日报的这些后端语义拆成可维护前端组件，同时彻底移除旧全局状态和重建交互。
+
+2026-07-14，M15 已完成。推荐中心不再暴露“重新生成今日”，日报页直接解释目标／实际、生命周期、时区、短缺、规则降级、新鲜／常青／探索和推荐理由；候选后到只能由 owner 触发 append-only 补充。反馈控件读取服务端当前状态，支持四类文章动作、明确来源屏蔽、主题／风格降权和撤销，并在文案中说明历史事件保留。设置页加入可跳过的主题、语言、长度、探索率和来源收藏，以及不删除历史的偏好重置。
+
+发现页继续从认证身份读取个人候选 overlay，不再把共享 `status` 当个人行为；owner 才看到添加／抓取／删除来源和手动回溯。选择一个来源可查看种子最短路径、入出边、深度、端点成功／下次时间／错误和历史覆盖。推荐项追溯 API 与抽屉把冻结项关联到当时 assessment、全部发现入口、逻辑站点和图谱路径，且跨用户 item ID 返回 not found。页面没有来源质量分。
+
+迁移 `000016` 补齐冻结主题／风格／语言等展示上下文；Go、API、前端契约测试、类型检查和生产构建均通过，无真实互联网、用户数据或 LLM。当前环境没有已配置的认证浏览器夹具，因此自动 UI 验证采用组件契约和完整生产构建，没有伪造真实用户会话截图；M17 端到端验收仍需在可启动完整服务时补充浏览器截图／console／network 证据。M16 的主要风险是建立可解释的运营指标和结构化关联日志，同时确保“低命中”只用于统计分组，绝不回写资格、质量或调度下限。
 
 每完成一个里程碑，在本节追加实际结果、与计划差异、遗留问题和下一里程碑风险。最终必须回答：
 
