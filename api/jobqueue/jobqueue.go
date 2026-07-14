@@ -1,6 +1,7 @@
 package jobqueue
 
 import (
+	"DataArk/observability"
 	"context"
 	"database/sql"
 	"errors"
@@ -249,7 +250,9 @@ func (worker *fetchSourceWorker) Work(ctx context.Context, job *river.Job[FetchS
 	if worker.handler == nil {
 		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, FetchSourceJobKind)
 	}
-	return worker.handler(ctx, job.Args.SourceID)
+	err := worker.handler(ctx, job.Args.SourceID)
+	logWorkerEvent("fetch_source", fmt.Sprint(job.ID), observability.Event{SourceID: job.Args.SourceID}, err)
+	return err
 }
 
 type scanBlogrollWorker struct {
@@ -261,7 +264,9 @@ func (worker *scanBlogrollWorker) Work(ctx context.Context, job *river.Job[ScanB
 	if worker.handler == nil {
 		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, ScanBlogrollJobKind)
 	}
-	return worker.handler(ctx, job.Args.SiteID)
+	err := worker.handler(ctx, job.Args.SiteID)
+	logWorkerEvent("scan_blogroll", fmt.Sprint(job.ID), observability.Event{SiteID: job.Args.SiteID}, err)
+	return err
 }
 
 type backfillSiteWorker struct {
@@ -273,7 +278,9 @@ func (worker *backfillSiteWorker) Work(ctx context.Context, job *river.Job[Backf
 	if worker.handler == nil {
 		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, BackfillSiteJobKind)
 	}
-	return worker.handler(ctx, job.Args.SiteID)
+	err := worker.handler(ctx, job.Args.SiteID)
+	logWorkerEvent("backfill_site", fmt.Sprint(job.ID), observability.Event{SiteID: job.Args.SiteID}, err)
+	return err
 }
 
 type processCandidateWorker struct {
@@ -285,7 +292,9 @@ func (worker *processCandidateWorker) Work(ctx context.Context, job *river.Job[P
 	if worker.handler == nil {
 		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, ProcessCandidateJobKind)
 	}
-	return worker.handler(ctx, job.Args.CandidateID, job.Args.ContentVersion)
+	err := worker.handler(ctx, job.Args.CandidateID, job.Args.ContentVersion)
+	logWorkerEvent("process_candidate", fmt.Sprint(job.ID), observability.Event{CandidateID: job.Args.CandidateID}, err)
+	return err
 }
 
 type generateDailyWorker struct {
@@ -297,7 +306,17 @@ func (worker *generateDailyWorker) Work(ctx context.Context, job *river.Job[Gene
 	if worker.handler == nil {
 		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, GenerateDailyJobKind)
 	}
-	return worker.handler(ctx, job.Args.UserID, job.Args.LocalDate)
+	err := worker.handler(ctx, job.Args.UserID, job.Args.LocalDate)
+	logWorkerEvent("generate_daily", fmt.Sprint(job.ID), observability.Event{UserID: job.Args.UserID, LocalDate: job.Args.LocalDate}, err)
+	return err
+}
+
+func logWorkerEvent(name string, jobID string, event observability.Event, err error) {
+	event.Name, event.JobID, event.Status = "job_"+name, jobID, "completed"
+	if err != nil {
+		event.Status, event.ErrorType = "failed", "handler"
+	}
+	observability.Log(event)
 }
 
 func registerWorkers(workers *river.Workers, handlers Handlers) {

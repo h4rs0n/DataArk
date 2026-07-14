@@ -3,6 +3,7 @@ package recommendation
 import (
 	"DataArk/config"
 	"DataArk/discovery"
+	"DataArk/observability"
 	"context"
 	"encoding/json"
 	"errors"
@@ -383,6 +384,7 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 	selection, err := selectDailyRecommendationCandidatesV3(ctx, userID, *settings, profile, selectionLimit)
 	if err != nil {
 		_ = markRecommendationDayFailed(day.ID, err)
+		observability.Log(observability.Event{Name: "recommendation_day_failed", OccurredAt: recommendationClock.Now(), UserID: userID, DayID: day.ID, LocalDate: date, Status: RecommendationDayStatusFailed, ErrorType: "selection"})
 		return nil, err
 	}
 	reranked, rerankModel, rerankPrompt, degradationReason := applyRecommendationReranker(ctx, userID, selectionLimit, selection.Candidates, profile, reranker)
@@ -409,8 +411,10 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 		"updated_at":         now,
 	}); err != nil {
 		_ = markRecommendationDayFailed(day.ID, err)
+		observability.Log(observability.Event{Name: "recommendation_day_failed", OccurredAt: now, UserID: userID, DayID: day.ID, LocalDate: date, Status: RecommendationDayStatusFailed, ErrorType: "publish"})
 		return nil, err
 	}
+	observability.Log(observability.Event{Name: "recommendation_day_published", OccurredAt: now, UserID: userID, DayID: day.ID, LocalDate: date, Status: RecommendationDayStatusPublished, Count: len(items)})
 	return GetRecommendationDaySnapshot(userID, day.RecommendationDate)
 }
 
@@ -427,8 +431,10 @@ func buildRecommendationItems(dayID uint, userID uint, selected []recommendation
 			SnapshotSource: scored.Candidate.SourceName, SnapshotPublishedAt: scored.Candidate.PublishedAt,
 			SnapshotTopics: scored.Candidate.Topics, SnapshotContentType: scored.Candidate.ContentType,
 			SnapshotStyle: scored.Candidate.ContentStyle, SnapshotLanguage: scored.Candidate.Language,
-			SnapshotWordCount: scored.Candidate.WordCount,
-			PoolType:          scored.PoolType, ExplorationReason: scored.ExplorationReason,
+			SnapshotWordCount:       scored.Candidate.WordCount,
+			SnapshotProcessingState: scored.Candidate.ProcessingState, SnapshotEligibilityState: scored.Candidate.EligibilityState,
+			SnapshotDedupeState: scored.Candidate.DedupeState, SnapshotClusterID: scored.Candidate.DuplicateClusterID,
+			PoolType: scored.PoolType, ExplorationReason: scored.ExplorationReason,
 			ContentVersion: scored.Candidate.ContentVersion, ContentUpdated: scored.ContentUpdated,
 			CooldownRepeat: scored.CooldownRepeat, ProfileVersion: profileVersion,
 			Supplemental: supplemental, CreatedAt: now, UpdatedAt: now,
@@ -516,6 +522,9 @@ func SupplementDailyRecommendationsWithReranker(ctx context.Context, userID uint
 	items := buildRecommendationItems(day.ID, userID, selected, day.ActualCount+1, profile.ProfileVersion, true, now)
 	if err := appendRecommendationSupplement(day.ID, userID, day.RequestedCount, items, selection, relaxations, rerankModel, rerankPrompt, degradationReason, now); err != nil {
 		return nil, err
+	}
+	if len(items) > 0 {
+		observability.Log(observability.Event{Name: "recommendation_day_supplemented", OccurredAt: now, UserID: userID, DayID: day.ID, LocalDate: day.RecommendationDate, Status: RecommendationDayStatusSupplemented, Count: len(items)})
 	}
 	return GetRecommendationDaySnapshot(userID, day.RecommendationDate)
 }

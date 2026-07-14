@@ -3,6 +3,7 @@ package discovery
 import (
 	"DataArk/archive"
 	"DataArk/config"
+	"DataArk/observability"
 	"context"
 	"errors"
 	"fmt"
@@ -29,7 +30,13 @@ const (
 )
 
 func RunProcessCandidateJob(ctx context.Context, candidateID uint, contentVersion string) error {
-	return ProcessCandidate(ctx, candidateID, contentVersion)
+	err := ProcessCandidate(ctx, candidateID, contentVersion)
+	event := observability.Event{Name: "candidate_processed", CandidateID: candidateID, Status: DiscoveryProcessingReady}
+	if err != nil {
+		event.Status, event.ErrorType = DiscoveryProcessingFailed, "processing"
+	}
+	observability.Log(event)
+	return err
 }
 
 // ProcessCandidate safely fetches and extracts one logical article. The version

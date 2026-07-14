@@ -79,6 +79,7 @@ var (
 	listUserBlockRules                 = recommendation.ListUserBlockRules
 	deleteUserBlockRule                = recommendation.DeleteUserBlockRule
 	getCandidateInventory              = recommendation.GetCandidateInventory
+	getAdminProductMetrics             = recommendation.GetAdminProductMetrics
 	startDiscoveryScheduler            = discovery.StartDiscoveryScheduler
 	startRecommendationScheduler       = recommendation.StartRecommendationScheduler
 	startSharedJobQueue                = startApplicationJobQueue
@@ -740,6 +741,18 @@ func GetRecommendationInventory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询候选库存成功", "Data": inventory})
 }
 
+func GetAdminProductMetrics(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	metrics, err := getAdminProductMetrics(time.Now())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "查询产品运营指标失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询产品运营指标成功", "Data": metrics})
+}
+
 func UpdateRecommendationSettings(c *gin.Context) {
 	userID, ok := requireCurrentUserID(c)
 	if !ok {
@@ -1352,6 +1365,7 @@ func WebStarter(debugMode bool) {
 		protected.POST("/admin/recommendations/supplement", SupplementRecommendationDay)
 		protected.GET("/recommendations/settings", GetRecommendationSettings)
 		protected.GET("/recommendations/inventory", GetRecommendationInventory)
+		protected.GET("/admin/recommendations/metrics", GetAdminProductMetrics)
 		protected.PUT("/recommendations/settings", UpdateRecommendationSettings)
 		protected.POST("/recommendations/items/:itemId/feedback", RecordRecommendationItemFeedback)
 		protected.GET("/recommendations/items/:itemId/feedback", GetRecommendationItemFeedback)

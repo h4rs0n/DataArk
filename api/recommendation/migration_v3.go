@@ -52,6 +52,10 @@ SET snapshot_title = CASE WHEN snapshot_title IS NULL OR snapshot_title = '' THE
     snapshot_style = CASE WHEN snapshot_style IS NULL OR snapshot_style = '' THEN COALESCE((SELECT content_style FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_style END,
     snapshot_language = CASE WHEN snapshot_language IS NULL OR snapshot_language = '' THEN COALESCE((SELECT language FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_language END,
     snapshot_word_count = CASE WHEN snapshot_word_count IS NULL OR snapshot_word_count = 0 THEN COALESCE((SELECT word_count FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), 0) ELSE snapshot_word_count END,
+    snapshot_processing_state = CASE WHEN snapshot_processing_state IS NULL OR snapshot_processing_state = '' THEN COALESCE((SELECT processing_state FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_processing_state END,
+    snapshot_eligibility_state = CASE WHEN snapshot_eligibility_state IS NULL OR snapshot_eligibility_state = '' THEN COALESCE((SELECT eligibility_state FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_eligibility_state END,
+    snapshot_dedupe_state = CASE WHEN snapshot_dedupe_state IS NULL OR snapshot_dedupe_state = '' THEN COALESCE((SELECT dedupe_state FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_dedupe_state END,
+    snapshot_cluster_id = CASE WHEN snapshot_cluster_id IS NULL OR snapshot_cluster_id = '' THEN COALESCE((SELECT duplicate_cluster_id FROM discovery_candidates WHERE discovery_candidates.id = recommendation_items.candidate_id), '') ELSE snapshot_cluster_id END,
     audit_version = CASE WHEN audit_version IS NULL OR audit_version = 0 THEN 1 ELSE audit_version END`).Error
 }
 
