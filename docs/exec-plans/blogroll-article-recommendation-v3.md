@@ -49,7 +49,7 @@
 - [x] 2026-07-14T03:56:53+08:00 M13：完成逐推荐项唯一当前反馈与保留事件历史、幂等重提／改选／撤销、显式来源屏蔽关联、软偏好衰减／重置和可跳过冷启动设置。聚焦验证 `go test ./recommendation ./api ./bootstrap -run 'Test(FeedbackM13|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；验收覆盖重复提交不新增事件或画像版本、改选链和撤销历史、90 天半衰、重复反馈只写聚类复核信号、文章反馈不产生来源权重、显式来源屏蔽逐用户生效并随反馈撤销、打开弱／深读强／纯曝光中性、重置保留事件以及冷启动偏好不跨用户。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`aa82f2f`。
 - [x] 2026-07-14T10:25:41+08:00 M14：完成统一用户本地日期、`draft → published / failed` 生命周期、事务冻结快照、幂等非破坏重试和 append-only `supplemented` 补充。聚焦验证 `go test ./recommendation ./api ./bootstrap -run 'Test(DailyDigestM14|RecoverDueJobs|RegenerateDailyRecommendationsPreserves|GenerateDailyRecommendationsDoesNotEnrich|RecommendationRetryRequiresOwner|RecommendationSupplementRequiresOwner|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；验收覆盖上海／洛杉矶同一时刻的不同本地日期、历史时区冻结、启动恢复 missing／draft／failed 且跳过 published、重复重试字节语义一致、候选变更不改历史、反馈不删除、补充只追加、失败可重试以及 reranker 下线规则降级审计。仓库验证 `go test ./... -count=1`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`d39e5c1`。
 - [x] 2026-07-14T10:40:28+08:00 M15：完成推荐中心组件拆分和可见的日报、图谱、抓取、回溯、文章评估、逐用户状态与反馈语义。聚焦验证 `go test ./recommendation ./api ./bootstrap -run 'Test(RecommendationExperienceM15|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；`npm test` 固定范围反馈、追溯契约和无破坏性生成交互，`npm run build` 类型检查与生产构建通过。页面支持 N/M、短缺／降级／探索解释，站点发现路径、端点健康和回溯，推荐项 assessment/provenance 追溯，反馈选中／改选／撤销和来源／主题／风格范围，冷启动设置／重置，以及 owner-only 来源、回溯和补充操作。仓库验证 `go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`9db105f`。
-- [ ] M16：完成运营指标、结构化日志、管理统计和长尾精品贡献指标。
+- [x] 2026-07-14T10:53:33+08:00 M16：完成 owner-only 推荐运营指标、受限字段结构化事件和长尾精品贡献统计。聚焦验证 `go test ./recommendation ./api ./observability ./jobqueue ./bootstrap -run 'Test(ObservabilityM16|EventSchema|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；固定数据验证低命中分组、调度下限违规、规则／模型评估率、日报填充／降级／按时发布、探索配额、正反馈、图谱／回溯贡献、首篇精品延迟和三类快照完整性违规，且候选发布后变更不会误报历史日报。仓库验证 `go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`af262a9`。
 - [ ] M17：完成端到端验收、PostgreSQL/SQLite 回归、灰度迁移、旧路径清理、部署文档和最终复盘。
 
 ## Surprises & Discoveries
@@ -106,6 +106,9 @@
 - 2026-07-14：旧生成函数在选文前同步运行 `EnrichPendingDiscoveryCandidates`，会把待富化池和可选远程模型调用放进发布临界路径；同时启动恢复看到任意同日期行就跳过，导致 draft／failed 永久滞留。M14 移除同步富化，发布只消费 ready/eligible 池，恢复仅跳过 published／supplemented。
 - 2026-07-14：M14 冻结了标题、摘要和来源，但推荐项没有冻结主题、内容类型、风格、语言和字数；若 M15 直接读取当前候选来提供“少推荐此主题／风格”，历史展示和反馈范围又会随候选变化。M15 通过 `000016` 增量冻结这些展示上下文，旧项从候选一次性回填，后续响应不再动态拼接。
 - 2026-07-14：`/api/authChecker` 过去只返回登录成功文本，不返回当前用户角色，前端无法在渲染前区分 owner 操作；隐藏按钮不能替代后端权限，但缺少角色会让 member 反复收到 403。M15 返回不含密码的认证用户并继续保留全部服务端 `requireOwner` 校验。
+- 2026-07-14：若完整性指标直接查询推荐项目关联候选的当前 `processing/eligibility/dedupe/cluster`，文章在日报发布后重新处理或重新聚类会把正确历史快照误报为违规。M16 通过 `000017` 在推荐项冻结发布时的四类完整性证据，指标只审计发布事实，当前候选变更不改历史判断。
+- 2026-07-14：现有日志多为自由文本，无法可靠串联 job／fetch／site／source／candidate／user，也无法在编译边界阻止正文、Cookie 或密钥混入。M16 新增字段白名单事件类型，调用方只能提交安全标识、状态、错误类别和计数；没有任意详情字段。
+- 2026-07-14：低命中分组若持久化到来源或候选，会形成被后续资格／调度误用的隐性来源分数。M16 只在管理指标查询时由候选数和 eligible 数派生分组，不新增来源质量列，也不回写任何业务状态。
 
 ## Decision Log
 
@@ -186,6 +189,9 @@
 - 2026-07-14：新增逐用户 `GET /recommendations/items/:itemId/context`，只从认证身份推导 user ID，返回冻结推荐项、当前反馈、用户状态、当时 assessment、全部 provenance 及对应种子最短路径。拒绝让前端自行用任意 candidate/user ID 拼接多接口，因为会扩大越权面并丢失“当时推荐项”边界。
 - 2026-07-14：前端范围反馈分别提交 `block_source`、`reduce_topic`、`reduce_style`，普通反馈使用 `too_repetitive` 等产品动作；当前状态由服务端 GET 回填并可 DELETE 撤销。页面不展示来源质量分，只展示命名明确的抓取健康、图谱、产出和个人收藏／屏蔽。
 - 2026-07-14：仓库没有既有浏览器测试框架且任务禁止依赖互联网下载新工具，M15 使用 Node 内置 test runner 固定组件契约、全部反馈动作、追溯接口和“前端无破坏性 generate 路径”，再以 `vue-tsc + Vite` 验证模板与类型。拒绝为单里程碑引入需要外部安装的测试栈。
+- 2026-07-14：M16 将“低历史命中”定义为至少发现 5 篇候选且 eligible 比例不超过 10%，只用于查询时的长尾统计分组；“正反馈文章”按 distinct 推荐项统计，接受 `valuable`、`deep_read` 或归档状态。拒绝把分组结果保存为来源分数或用于文章门槛。
+- 2026-07-14：结构化事件采用固定 `observability.Event` 字段集合，只允许作业、抓取、站点、来源、候选、用户的稳定 ID，以及事件名、状态、错误类别和计数；拒绝提供 message/details/body 等任意载荷，以便从接口层排除正文、Cookie、认证头、令牌、密码和模型密钥。
+- 2026-07-14：管理指标只通过 owner-only `GET /api/admin/recommendations/metrics` 暴露；日报硬过滤、屏蔽和重复簇完整性以发布时冻结证据审计，目标为零。低命中调度违规按各站点基础最大空闲时间计算，不因低产出获得豁免。
 
 ## Outcomes & Retrospective
 
@@ -256,6 +262,10 @@ M3 的验证完全使用内存 SQLite、固定时钟、测试抓取替身和本�
 发现页继续从认证身份读取个人候选 overlay，不再把共享 `status` 当个人行为；owner 才看到添加／抓取／删除来源和手动回溯。选择一个来源可查看种子最短路径、入出边、深度、端点成功／下次时间／错误和历史覆盖。推荐项追溯 API 与抽屉把冻结项关联到当时 assessment、全部发现入口、逻辑站点和图谱路径，且跨用户 item ID 返回 not found。页面没有来源质量分。
 
 迁移 `000016` 补齐冻结主题／风格／语言等展示上下文；Go、API、前端契约测试、类型检查和生产构建均通过，无真实互联网、用户数据或 LLM。当前环境没有已配置的认证浏览器夹具，因此自动 UI 验证采用组件契约和完整生产构建，没有伪造真实用户会话截图；M17 端到端验收仍需在可启动完整服务时补充浏览器截图／console／network 证据。M16 的主要风险是建立可解释的运营指标和结构化关联日志，同时确保“低命中”只用于统计分组，绝不回写资格、质量或调度下限。
+
+2026-07-14，M16 已完成。owner 管理指标按站点／图谱、抓取运行、候选处理、评估、库存、日报、反馈和长尾精品分层返回原始计数与命名比率，可以从空日报的短缺原因、候选处理状态和到期调度违规区分库存不足、硬过滤、处理积压或调度失败。低命中站点分组仅查询时派生；固定夹具证明它仍可贡献正反馈精品且其最大空闲时间违规可独立报警。Blogroll 扩展、历史回溯、贡献站点数和新站到首篇精品延迟均有可测量证据。
+
+抓取候选、持久作业和日报发布／失败／补充现在输出只含白名单标识与状态的 JSON 事件，完整链路可用 job、fetch、site、source、candidate、user ID 关联，接口没有正文或任意敏感详情入口。推荐项新增发布时处理、资格、去重和 cluster 快照，三类硬规则违规审计不受后续候选变化影响；固定测试中全部完整性违规为零。迁移 `000017` 为纯增量并保留回滚数据；SQLite、Goose、API 权限、race、全仓 Go、前端测试／构建和最终二进制构建均通过。真实 PostgreSQL/River/pgvector 容器验证和认证浏览器证据仍因本机基础设施缺口留给 M17；M17 还需完成跨模块端到端验收、灰度／回滚手册和兼容路径最终盘点。
 
 每完成一个里程碑，在本节追加实际结果、与计划差异、遗留问题和下一里程碑风险。最终必须回答：
 
