@@ -53,7 +53,7 @@
 - [x] 2026-07-14T11:07:27+08:00 M17：完成确定性端到端闭环、SQLite／全仓／race 回归、旧全局个人状态和串行发现辅助路径清理，以及升级、灰度、回滚、权限、故障处理和数据保留手册。聚焦验收 `go test ./discovery ./recommendation ./jobqueue ./bootstrap ./api ./observability -run 'Test(DeterministicSiteWorld|BlogrollGraphFixture|BackfillFinds|ProcessCandidate|LowHitSource|EndToEndM17|DailyDigestM14|ObservabilityM16|RecoverDueJobs|V3Goose|V3SQLiteMigration)' -count=1` 通过；`go test -race ./discovery ./recommendation ./jobqueue/... -count=1`、`go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`658abff`。本机 Docker Desktop WSL 集成未启用且没有 PostgreSQL CLI/Podman，真实 PostgreSQL 迁移、River 进程重启与 pgvector 可选路径无法执行，已作为生产灰度前的必要外部基础设施验证写入运维手册；没有用外网、真实数据或模型密钥替代。
 - [x] 2026-07-14T14:38:44+08:00 M17 外部基础设施补验：在 Docker Desktop WSL 集成恢复后，以独立 Compose 项目、localhost 端口和 `tmpfs` 空数据库运行 `DATAARK_POSTGRES_TEST_DSN=... go test ./bootstrap -run TestPostgresV3MigrationsRiverRestartAndPGVector -count=1 -v`。真实 PostgreSQL 17/pgvector 从零执行 `000001`–`000017`、重复执行、应用 JSONB 写入、向量写读、River 两次运行时启动和两条持久作业均通过；测试发现并修复 `000016` JSONB→TEXT 回填类型错误，以及来源／候选空 JSON 字段的 PostgreSQL 写入错误。聚焦、全仓、race、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 随后全部通过。临时数据库、角色、容器、网络和构建产物已删除；检查点提交：`4fb0364`。
 - [x] 2026-07-15T16:23:49+08:00 M18：为统一内容发现 HTTP client 增加可选 `-discover-socks5-proxy`，空值使用不读取环境代理的直连 transport，非空值只接受带主机和端口的 `socks5://` URL，可选 URL 编码用户名密码；解析、协议或认证错误均失败关闭。聚焦测试 `go test ./discovery ./flag -run 'Test.*(SOCKS5|ParseFlag)' -count=1 -v` 通过本机 SOCKS5 认证、代理转发、错误认证零目标请求和无效配置；全仓 `go test ./... -count=1`、`go test -race ./discovery -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 全部通过。生成资产和二进制已清理，没有真实代理、互联网、用户数据或密钥；实现提交：`d4e4eec`。
-- [ ] M19：以可注册域名作为逻辑站点身份，并把订阅源页面中的主页、Feed、Sitemap 等端点聚合成一个站点展示，同时保留端点调度和溯源。
+- [x] 2026-07-15T16:31:39+08:00 M19：新增可回填的 `discovery_sites.domain_key` 和 Public Suffix List 可注册域名规范化；新图谱目标、手工来源和 Blogroll 扫描按域名复用站点，IP 或 localhost 的非默认端口继续隔离。`ListDiscoverySources` 以域名聚合兼容响应，只显示最早用户入口，同时数据库仍保留全部 homepage、Feed、Sitemap 和 RSSHub 端点。聚焦测试 `go test ./discovery ./bootstrap ./api -run 'Test.*(Domain|Source|V3Goose|V3SQLiteMigration)' -count=1`、全仓 `go test ./... -count=1`、`go test -race ./discovery ./bootstrap ./api -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；迁移计数和 opt-in PostgreSQL 门槛更新为 18。Docker WSL 命令在本里程碑再次报告集成未启用，故 `000018` 真实 PostgreSQL 实跑暂缺；临时 Compose 文件已删除。实现提交待本检查点后回填。
 - [ ] M20：自动发现的观察站点先用一次有界主页请求执行确定性博客预判；只有确认具有博客证据后才发现端点、文章、Blogroll 和历史入口，明确未通过者保留图谱证据但停止后续抓取。
 
 ## Surprises & Discoveries
@@ -121,6 +121,8 @@
 - 2026-07-15：逻辑站点虽已合并协议、默认端口和 `www` 变体，但 `ListDiscoverySources` 返回抓取端点行，因此一个站点的 homepage、Feed、Sitemap 会在“订阅源”重复显示；普通子域名也仍使用不同 `host_key`。端点不能删除或强行合并，因为条件请求、限流、失败退避和溯源都依赖端点身份，修复应发生在逻辑域名身份和列表投影层。
 - 2026-07-15：新 Blogroll 目标目前会同时排入主页抓取和 Blogroll 扫描，且 `observing` 站点会被启动恢复直接扫描；URL 分类器只排除少数社交、登录和购物地址，普通企业站或导航站会先创建 Feed、Sitemap、回溯和图谱工作，之后才可能暴露其不是博客。
 - 2026-07-15：受限命令沙箱禁止测试监听环回端口，最初的 SOCKS5 测试在 `listen tcp6 [::1]:0` 得到 `operation not permitted`；改用显式 `tcp4 127.0.0.1` 后仍按基础设施规则在沙箱外运行，测试通过且没有外网连接。该失败是测试执行权限而不是代理实现错误。
+- 2026-07-15：仓库的 `api/assets.LoadFile` 固定对子目录 `web/assets` 做 `fs.Sub`，但 Git 只跟踪占位 `index.html`、favicon 和图片；清理构建哈希目录后直接执行全仓 Go 测试会使 `assets` 包失败。按正式构建顺序先运行 `npm run build` 和 `make web2api` 后，全仓测试通过。最终检查点仍恢复占位资产，避免提交生成哈希文件。
+- 2026-07-15：准备以独立 `tmpfs` PostgreSQL 验证 `000018` 时，`docker` 再次返回 “WSL integration 未启用”，与用户此前已修复的状态不一致。没有可用容器或本机 PostgreSQL 替代，因此本里程碑保留 Goose 解析、SQLite 双回填和已有 opt-in 门槛更新，把迁移 18 的真实 PostgreSQL 执行作为外部基础设施恢复后的补验。
 
 ## Decision Log
 
@@ -212,10 +214,13 @@
 - 2026-07-15：SOCKS5 使用单一进程级 `-discover-socks5-proxy` URL 配置，支持可选用户名密码并作用于主页、Feed、Sitemap、robots、Blogroll、回溯和文章正文；空值保持现有直连，无效非空值返回配置错误抓取器。理由是发现链路已经统一经过 `ConfiguredHTTPFetcher`，集中配置可避免遗漏，而失败关闭可防止代理拼写错误时意外直连。
 - 2026-07-15：域名身份使用 Public Suffix List 计算的可注册域名，例如 `blog.example.co.uk` 与 `www.example.co.uk` 都归为 `example.co.uk`；IP 和 localhost 测试地址保留非默认端口。数据库新增可回填的非唯一 `domain_key`，新写路径按它复用站点，列表按它聚合，但抓取端点仍逐 URL 保存。理由是直接合并或删除已有站点会牵涉边、回溯、溯源和运营统计的冲突，增量键与读投影可先安全消除用户可见重复并阻止新增重复。
 - 2026-07-15：博客预判只约束 Blogroll 自动发现的 `observing` 站点；owner 显式添加的 `seed` 视为人工确认。观察站点只允许一次主页验证请求，确定性正证据包括声明 Feed、博客生成器或结构化数据、博客语义和文章集合；验证通过转为 `active` 后才排入端点发现和 Blogroll，未通过转为可审计的 `non_blog` 且禁用后续端点。理由是完全不请求页面无法判断其内容，而把唯一预检和后续爬取分开能够显著减少非博客站点流量并保留管理员恢复能力。
+- 2026-07-15：M19 不物理删除或合并已有重复 `discovery_sites`；兼容回填为所有行计算 `domain_key`，把来源端点重新关联到该域名最早站点，新写路径和订阅源投影也选择最早站点。理由是立即合并边、回溯游标、候选溯源和运营统计会遇到多组唯一约束并可能不可逆丢证据；当前增量方案已阻止新增重复并消除用户可见重复，物理合并留给带对账的独立迁移。
 
 ## Outcomes & Retrospective
 
 2026-07-15，M18 已完成。主页、Feed、Sitemap、robots、Blogroll、历史回溯和文章正文原本都经过 `ConfiguredHTTPFetcher`，因此单一 SOCKS5 transport 已覆盖整个内容发现链路而不影响其他服务。代理认证信息只存在于启动配置和 transport，不进入请求、抓取审计或错误摘要；无效配置返回固定哨兵错误并阻止直连。默认空配置显式关闭环境 HTTP 代理，保持“未配置即直连”的可预测语义。M19 接下来只改变逻辑域名身份和订阅源投影，不能合并或删除端点级条件请求与溯源数据。
+
+2026-07-15，M19 已完成本机可执行范围。`blog.example.com`、`www.example.com` 和 `feed.example.com` 现在共享 `example.com` 域名身份和同一个新写逻辑站点，`example.co.uk` 等多段公共后缀按 PSL 正确处理；本机多端口夹具仍是独立站点。旧重复站点不删除，但其来源端点幂等归到最早域名站点，订阅源列表只显示一项，站点 operations 仍能展示所有端点。M20 必须在该域名入口上先验证自动观察站点，且不能让 `observing` 的启动恢复绕过博客门禁。唯一外部缺口是 Docker 再次不可用导致迁移 18 尚未真实 PostgreSQL 实跑；SQLite、Goose 和门槛版本断言已覆盖。
 
 2026-07-13，M0 已完成。仓库现在拥有可推进的时钟边界、带条件验证器和响应大小限制的 HTTP 获取边界、仅接受稳定标识的幂等任务边界，以及覆盖 A→B→C 循环、误识别外链、Feed/Sitemap/归档多重溯源、历史精品、robots、500、超时、同域／跨域重定向、非文章页和双用户隔离数据的本地夹具世界。现有发现重复抓取和推荐日期／日报去重行为被回归测试固定，生产路径没有切流。
 
@@ -1510,6 +1515,8 @@ M18–M20 验收不得使用真实代理、互联网、用户数据或 LLM 密�
 
 M18 代理证据：`api/discovery/fetcher_proxy_test.go` 的 `TestDiscoverySOCKS5ProxyRoutesRequestsWithAuthentication` 用本机 TCP4 SOCKS5 服务验证 URL 编码认证和实际 HTTP 转发；`TestDiscoverySOCKS5ProxyFailsClosed` 验证错误 scheme、缺失端口、缺失主机、畸形 URL 和错误认证均不能触达目标。`api/flag/flag_test.go` 固定命令行到配置的传递，中英文 README 说明代理范围和失败关闭语义。
 
+M19 域名证据：`api/discovery/domain_identity_test.go` 固定可注册域名、GitHub Pages 私有后缀、IP／localhost 端口、三端点单站点展示和旧重复站点双回填；`api/migrations/000018_discovery_domain_identity.sql` 只增加 `domain_key` 与索引并保留 Down 数据；`api/bootstrap/database_v3_test.go` 要求 18 份 Goose 可解析，PostgreSQL opt-in 测试也要求最终 version 18。
+
 ## Plan Revision Note
 
 2026-07-13：创建初始版本。相较于早期“来源质量优先”的可能解释，本计划明确采用“友情链接受控扩展、来源级信号只调度资源、文章级独立质量判断、低命中来源保留非零预算”的产品约束，并把它贯穿数据模型、抓取、历史回溯、推荐、反馈、日报、UI、指标和端到端验收。
@@ -1545,3 +1552,5 @@ M18 代理证据：`api/discovery/fetcher_proxy_test.go` 的 `TestDiscoverySOCKS
 2026-07-15：用户追加 SOCKS5、同域名单站点和博客预判需求，因此在已完成的 v3 计划后新增 M18–M20。此次修订明确代理失败关闭、可注册域名增量键与非破坏聚合、以及“单次主页验证后才扩展”的边界，并记录不覆盖用户本地 Docker Compose 修改的恢复策略。
 
 2026-07-15：完成 M18。此次修订记录统一 SOCKS5 transport、认证与失败关闭测试、全仓验证和沙箱环回端口限制；部署文档只修改中英文 README，未覆盖用户工作区中的 Docker Compose 配置。
+
+2026-07-15：完成 M19 本机范围。此次修订记录 PSL 域名身份、非破坏回填、订阅源聚合、端点保留、迁移 18、全仓验证顺序，以及 Docker WSL 集成再次不可用造成的真实 PostgreSQL 单项缺口。

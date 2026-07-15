@@ -92,10 +92,11 @@ func (service SiteGraphService) ApplyLinks(ctx context.Context, fromSite Discove
 	err := db.Transaction(func(tx *gorm.DB) error {
 		for _, link := range unique {
 			rootURL, hostKey, err := canonicalLegacySite(link.TargetURL)
-			if err != nil || hostKey == fromSite.HostKey {
+			domainKey, domainErr := domainKeyForURL(link.TargetURL)
+			if err != nil || domainErr != nil || domainKey == siteDomainKey(fromSite) {
 				continue
 			}
-			target, created, err := findOrCreateGraphTarget(tx, rootURL, hostKey, link, fromSite.GraphDepth+1, now, service.Classifier)
+			target, created, err := findOrCreateGraphTarget(tx, rootURL, hostKey, domainKey, link, fromSite.GraphDepth+1, now, service.Classifier)
 			if err != nil {
 				return err
 			}
@@ -207,9 +208,9 @@ func (service SiteGraphService) ApplyLinks(ctx context.Context, fromSite Discove
 	return result, errors.Join(enqueueErrors...)
 }
 
-func findOrCreateGraphTarget(tx *gorm.DB, rootURL string, hostKey string, link BlogrollLink, depth int, now time.Time, classifier SiteClassifier) (DiscoverySite, bool, error) {
+func findOrCreateGraphTarget(tx *gorm.DB, rootURL string, hostKey string, domainKey string, link BlogrollLink, depth int, now time.Time, classifier SiteClassifier) (DiscoverySite, bool, error) {
 	var target DiscoverySite
-	err := tx.Where("host_key = ?", hostKey).First(&target).Error
+	err := tx.Where("domain_key = ? OR (domain_key = ? AND host_key = ?)", domainKey, "", hostKey).Order("id").First(&target).Error
 	if err == nil {
 		if depth < target.GraphDepth {
 			target.GraphDepth = depth
@@ -224,7 +225,7 @@ func findOrCreateGraphTarget(tx *gorm.DB, rootURL string, hostKey string, link B
 	}
 	status := classifier.Classify(rootURL)
 	target = DiscoverySite{
-		RootURL: rootURL, HostKey: hostKey, DisplayName: firstNonBlank(link.AnchorText, hostLabel(rootURL)),
+		RootURL: rootURL, HostKey: hostKey, DomainKey: domainKey, DisplayName: firstNonBlank(link.AnchorText, hostLabel(rootURL)),
 		Status: status, DiscoveryMethod: DiscoveryMethodBlogroll, GraphDepth: depth,
 		CrawlAllowed: status != DiscoverySiteStatusNonBlog, RobotsStatus: "unknown",
 		FirstDiscoveredAt: now, LastReferencedAt: &now, CreatedAt: now, UpdatedAt: now,
@@ -244,11 +245,15 @@ func ensureManualSeedSite(tx *gorm.DB, source *DiscoverySource, now time.Time) (
 	if err != nil {
 		return DiscoverySite{}, err
 	}
+	domainKey, err := domainKeyForURL(source.URL)
+	if err != nil {
+		return DiscoverySite{}, err
+	}
 	var site DiscoverySite
-	err = tx.Where("host_key = ?", hostKey).First(&site).Error
+	err = tx.Where("domain_key = ? OR (domain_key = ? AND host_key = ?)", domainKey, "", hostKey).Order("id").First(&site).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		site = DiscoverySite{
-			RootURL: rootURL, HostKey: hostKey, DisplayName: source.Name,
+			RootURL: rootURL, HostKey: hostKey, DomainKey: domainKey, DisplayName: source.Name,
 			Status: DiscoverySiteStatusSeed, DiscoveryMethod: DiscoveryMethodManualSeed,
 			GraphDepth: 0, CrawlAllowed: true, RobotsStatus: "unknown",
 			FirstDiscoveredAt: now, LastReferencedAt: &now, NextGraphScanAt: &now,
@@ -317,13 +322,13 @@ func updateGraphPriority(tx *gorm.DB, siteID uint) error {
 func dedupeBlogrollLinks(links []BlogrollLink) []BlogrollLink {
 	byHost := make(map[string]BlogrollLink)
 	for _, link := range links {
-		_, hostKey, err := canonicalLegacySite(link.TargetURL)
+		domainKey, err := domainKeyForURL(link.TargetURL)
 		if err != nil {
 			continue
 		}
-		existing, found := byHost[hostKey]
+		existing, found := byHost[domainKey]
 		if !found || link.Confidence > existing.Confidence {
-			byHost[hostKey] = link
+			byHost[domainKey] = link
 		}
 	}
 	result := make([]BlogrollLink, 0, len(byHost))

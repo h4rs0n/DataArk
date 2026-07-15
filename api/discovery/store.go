@@ -63,8 +63,40 @@ func ListDiscoverySources() ([]DiscoverySource, error) {
 	if db == nil {
 		return sources, nil
 	}
-	err := db.Order("created_at desc").Find(&sources).Error
-	return sources, err
+	if err := db.Order("id").Find(&sources).Error; err != nil {
+		return nil, err
+	}
+	var sites []DiscoverySite
+	if err := db.Order("id").Find(&sites).Error; err != nil {
+		return nil, err
+	}
+	siteByID := make(map[uint]DiscoverySite, len(sites))
+	for _, site := range sites {
+		siteByID[site.ID] = site
+	}
+	grouped := make([]DiscoverySource, 0, len(sources))
+	seenDomains := make(map[string]struct{}, len(sources))
+	for _, source := range sources {
+		domainKey := ""
+		if source.SiteID != nil {
+			domainKey = siteDomainKey(siteByID[*source.SiteID])
+		}
+		if domainKey == "" {
+			domainKey, _ = domainKeyForURL(source.URL)
+		}
+		if domainKey == "" {
+			domainKey = fmt.Sprintf("source:%d", source.ID)
+		}
+		if _, exists := seenDomains[domainKey]; exists {
+			continue
+		}
+		seenDomains[domainKey] = struct{}{}
+		grouped = append(grouped, source)
+	}
+	sort.SliceStable(grouped, func(i, j int) bool {
+		return grouped[i].CreatedAt.After(grouped[j].CreatedAt)
+	})
+	return grouped, nil
 }
 
 func CreateDiscoverySource(name string, rawURL string, sourceType string, enabled bool) (*DiscoverySource, error) {

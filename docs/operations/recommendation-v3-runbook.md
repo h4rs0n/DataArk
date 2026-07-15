@@ -4,7 +4,7 @@ This runbook covers the Blogroll discovery, article assessment, per-user recomme
 
 ## Upgrade prerequisites
 
-Back up PostgreSQL and the archive directory before changing the running binary. Keep the old binary available, record counts for users, discovery sources, candidates, recommendation days, recommendation items, and feedback, and do not run Down migrations as a rollback mechanism. Migrations `000003` through `000017` are additive or data-preserving: they add logical sites, endpoint and graph evidence, provenance, processing and assessment state, per-user state, immutable digest evidence, and operational metrics. Startup reruns compatibility backfills idempotently.
+Back up PostgreSQL and the archive directory before changing the running binary. Keep the old binary available, record counts for users, discovery sources, candidates, recommendation days, recommendation items, and feedback, and do not run Down migrations as a rollback mechanism. Migrations `000003` through `000018` are additive or data-preserving: they add logical sites, registrable-domain identity, endpoint and graph evidence, provenance, processing and assessment state, per-user state, immutable digest evidence, and operational metrics. Startup reruns compatibility backfills idempotently.
 
 For production PostgreSQL, start the database first and then start one API instance. Startup applies Goose and River migrations before workers accept jobs. Confirm the `vector` extension only when embeddings are enabled; the rules pipeline does not need it. A representative isolated validation is:
 

@@ -54,6 +54,8 @@ make build
 
 
 
+“内容发现－订阅源”按 Public Suffix List 的可注册域名显示一个逻辑站点，例如同一域名的主页、Feed 和 Sitemap 不再重复列出；抓取器内部仍逐端点保存条件请求、退避、健康与溯源。
+
 内容发现需要代理时可设置 `-discover-socks5-proxy "socks5://user:pass@127.0.0.1:1080"`。它只代理主页、Feed、Sitemap、robots、Blogroll、回溯和文章请求；留空时直连，无效配置会拒绝抓取而不会静默绕过代理。用户名或密码中的特殊字符需要使用 URL 编码。
 
 ## 反馈与贡献

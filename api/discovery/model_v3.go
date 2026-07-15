@@ -26,6 +26,7 @@ type DiscoverySite struct {
 	ID                 uint       `json:"id" gorm:"primaryKey"`
 	RootURL            string     `json:"rootUrl" gorm:"not null;size:2048"`
 	HostKey            string     `json:"hostKey" gorm:"uniqueIndex;not null;size:512"`
+	DomainKey          string     `json:"domainKey" gorm:"index;not null;default:'';size:512"`
 	DisplayName        string     `json:"displayName" gorm:"size:255"`
 	Status             string     `json:"status" gorm:"index;not null;default:observing;size:32"`
 	DiscoveryMethod    string     `json:"discoveryMethod" gorm:"index;not null;default:unknown;size:64"`

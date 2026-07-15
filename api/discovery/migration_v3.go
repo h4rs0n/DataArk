@@ -20,6 +20,9 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 		return nil
 	}
 	return database.Transaction(func(tx *gorm.DB) error {
+		if err := backfillDiscoverySiteDomainKeys(tx); err != nil {
+			return err
+		}
 		var sources []DiscoverySource
 		if err := tx.Order("id").Find(&sources).Error; err != nil {
 			return err
@@ -31,10 +34,15 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 			if err != nil {
 				return fmt.Errorf("source %d site identity: %w", source.ID, err)
 			}
+			domainKey, err := domainKeyForURL(source.URL)
+			if err != nil {
+				return fmt.Errorf("source %d domain identity: %w", source.ID, err)
+			}
 			firstSeen := firstNonZeroTime(source.CreatedAt, source.UpdatedAt, time.Now())
 			site := DiscoverySite{
 				RootURL:           rootURL,
 				HostKey:           hostKey,
+				DomainKey:         domainKey,
 				DisplayName:       source.Name,
 				Status:            DiscoverySiteStatusSeed,
 				DiscoveryMethod:   "legacy_source",
@@ -44,13 +52,17 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 				FirstDiscoveredAt: firstSeen,
 				LastReferencedAt:  timePointer(firstNonZeroTime(source.UpdatedAt, firstSeen)),
 			}
-			if err := tx.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "host_key"}},
-				DoNothing: true,
-			}).Create(&site).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("host_key = ?", hostKey).First(&site).Error; err != nil {
+			if err := tx.Where("domain_key = ?", domainKey).Order("id").First(&site).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+				site = DiscoverySite{
+					RootURL: rootURL, HostKey: hostKey, DomainKey: domainKey, DisplayName: source.Name,
+					Status: DiscoverySiteStatusSeed, DiscoveryMethod: "legacy_source", GraphDepth: 0,
+					CrawlAllowed: true, RobotsStatus: "unknown", FirstDiscoveredAt: firstSeen,
+					LastReferencedAt: timePointer(firstNonZeroTime(source.UpdatedAt, firstSeen)),
+				}
+				if createErr := tx.Create(&site).Error; createErr != nil {
+					return createErr
+				}
+			} else if err != nil {
 				return err
 			}
 			siteBySource[source.ID] = site.ID
@@ -131,6 +143,25 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 		}
 		return nil
 	})
+}
+
+func backfillDiscoverySiteDomainKeys(tx *gorm.DB) error {
+	var sites []DiscoverySite
+	if err := tx.Order("id").Find(&sites).Error; err != nil {
+		return err
+	}
+	for _, site := range sites {
+		domainKey, err := domainKeyForURL(site.RootURL)
+		if err != nil {
+			return fmt.Errorf("site %d domain identity: %w", site.ID, err)
+		}
+		if site.DomainKey != domainKey {
+			if err := tx.Model(&DiscoverySite{}).Where("id = ?", site.ID).Update("domain_key", domainKey).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func canonicalLegacySite(rawURL string) (string, string, error) {
