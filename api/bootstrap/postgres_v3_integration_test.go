@@ -94,10 +94,17 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 	assertPostgresScalar(t, database,
 		fmt.Sprintf("SELECT crawl_config::text FROM discovery_sources WHERE id = %d", source.ID), "{}")
 
+	longCandidateURL := "https://discourse.gohugo.io/t/hugo-module-dart-sass-use-works-when-used-directly-but-fails-when-routed-through-another-scss-file/57267"
+	if len(longCandidateURL) <= 128 {
+		t.Fatalf("long PostgreSQL fixture URL length = %d", len(longCandidateURL))
+	}
 	candidate := discovery.DiscoveryCandidate{
 		SourceID:         source.ID,
 		SourceName:       source.Name,
-		URL:              "https://fixture.invalid/postgres-vector",
+		URL:              longCandidateURL,
+		NormalizedURL:    longCandidateURL,
+		CanonicalURL:     longCandidateURL,
+		DedupeKey:        "url:" + discovery.ContentHash(longCandidateURL),
 		Title:            "Synthetic pgvector fixture",
 		Status:           discovery.DiscoveryCandidateStatusNew,
 		ProcessingState:  discovery.DiscoveryProcessingReady,
@@ -105,8 +112,13 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 		LastSeenAt:       now,
 	}
 	if err := database.Create(&candidate).Error; err != nil {
-		t.Fatalf("create vector fixture: %v", err)
+		t.Fatalf("create long-URL vector fixture: %v", err)
 	}
+	assertPostgresScalar(t, database,
+		"SELECT character_maximum_length::text FROM information_schema.columns WHERE table_name = 'discovery_candidates' AND column_name = 'dedupe_key'", "128")
+	assertPostgresScalar(t, database,
+		fmt.Sprintf("SELECT dedupe_key FROM discovery_candidates WHERE id = %d", candidate.ID),
+		"url:"+discovery.ContentHash(longCandidateURL))
 	if err := recommendation.StoreCandidateEmbedding(context.Background(), candidate.ID, "fixture", []float32{0.25, 0.5, 0.75}); err != nil {
 		t.Fatalf("store candidate embedding: %v", err)
 	}

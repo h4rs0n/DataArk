@@ -98,6 +98,61 @@ func TestProcessCandidateExtractsVersionsAndBecomesEligible(t *testing.T) {
 	assertContentVersionCount(t, candidate.ID, 2)
 }
 
+func TestUpsertCandidateHashesLongURLIdentity(t *testing.T) {
+	setupSQLiteDB(t)
+	source := DiscoverySource{
+		Name: "Community", URL: "https://discourse.gohugo.io/latest.rss",
+		Type: DiscoverySourceTypeFeed, EndpointType: DiscoveryEndpointFeed, Enabled: true,
+	}
+	if err := db.Create(&source).Error; err != nil {
+		t.Fatal(err)
+	}
+	rawURL := "https://discourse.gohugo.io/t/hugo-module-dart-sass-use-works-when-used-directly-but-fails-when-routed-through-another-scss-file/57267"
+	if len(rawURL) <= 128 {
+		t.Fatalf("fixture URL length = %d, want more than 128", len(rawURL))
+	}
+
+	first, err := upsertDiscoveryCandidate(source, discoveredCandidate{URL: rawURL, Title: "Long URL", DiscoveryMethod: DiscoveryMethodFeed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := upsertDiscoveryCandidate(source, discoveredCandidate{URL: rawURL, Title: "Long URL", DiscoveryMethod: DiscoveryMethodFeed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Created || second.Created || first.Candidate.ID != second.Candidate.ID {
+		t.Fatalf("long URL writes first=%#v second=%#v", first, second)
+	}
+	normalizedURL, err := NormalizeArticleURL(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantKey := initialCandidateDedupeKey(normalizedURL)
+	if first.Candidate.URL != rawURL || first.Candidate.NormalizedURL != normalizedURL || first.Candidate.DedupeKey != wantKey {
+		t.Fatalf("long URL candidate = %#v, want dedupe key %q", first.Candidate, wantKey)
+	}
+	if len(first.Candidate.DedupeKey) > 128 {
+		t.Fatalf("dedupe key length = %d, want at most 128", len(first.Candidate.DedupeKey))
+	}
+	var count int64
+	if err := db.Model(&DiscoveryCandidate{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("candidate count = %d, want 1", count)
+	}
+	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", first.Candidate.ID).Update("dedupe_key", "").Error; err != nil {
+		t.Fatal(err)
+	}
+	third, err := upsertDiscoveryCandidate(source, discoveredCandidate{URL: rawURL, Title: "Long URL", DiscoveryMethod: DiscoveryMethodFeed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Created || third.Candidate.DedupeKey != wantKey {
+		t.Fatalf("empty dedupe key repair = %#v, want %q", third, wantKey)
+	}
+}
+
 func TestProcessCandidateClassifiesNonArticlesAndShortBodies(t *testing.T) {
 	setupSQLiteDB(t)
 	oldFetch := fetchDiscoveryRequest

@@ -55,6 +55,7 @@
 - [x] 2026-07-15T16:23:49+08:00 M18：为统一内容发现 HTTP client 增加可选 `-discover-socks5-proxy`，空值使用不读取环境代理的直连 transport，非空值只接受带主机和端口的 `socks5://` URL，可选 URL 编码用户名密码；解析、协议或认证错误均失败关闭。聚焦测试 `go test ./discovery ./flag -run 'Test.*(SOCKS5|ParseFlag)' -count=1 -v` 通过本机 SOCKS5 认证、代理转发、错误认证零目标请求和无效配置；全仓 `go test ./... -count=1`、`go test -race ./discovery -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 全部通过。生成资产和二进制已清理，没有真实代理、互联网、用户数据或密钥；实现提交：`d4e4eec`。
 - [x] 2026-07-15T16:31:39+08:00 M19：新增可回填的 `discovery_sites.domain_key` 和 Public Suffix List 可注册域名规范化；新图谱目标、手工来源和 Blogroll 扫描按域名复用站点，IP 或 localhost 的非默认端口继续隔离。`ListDiscoverySources` 以域名聚合兼容响应，只显示最早用户入口，同时数据库仍保留全部 homepage、Feed、Sitemap 和 RSSHub 端点。聚焦测试 `go test ./discovery ./bootstrap ./api -run 'Test.*(Domain|Source|V3Goose|V3SQLiteMigration)' -count=1`、全仓 `go test ./... -count=1`、`go test -race ./discovery ./bootstrap ./api -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；迁移计数和 opt-in PostgreSQL 门槛更新为 18。Docker WSL 命令在本里程碑再次报告集成未启用，故 `000018` 真实 PostgreSQL 实跑暂缺；临时 Compose 文件已删除。实现提交：`176cc60`。
 - [x] 2026-07-15T16:40:03+08:00 M20：新增不调用 LLM 的确定性主页分类器，接受声明 Feed、已知博客生成器、Blog／BlogPosting 结构化数据、文章集合或博客语义文章链接作为正证据。Blogroll 新目标只排一次 homepage；`observing` 强制完整响应，通过后原子转 `active` 并开始端点、文章、Blogroll 和回溯，未通过转 `non_blog`、禁用端点、从订阅源投影隐藏但保留图谱边和 `blog_verification:<reason>`。恢复和手工作业都不能扫描 observing，owner 改为 active 会重新启用并立即安排主页。聚焦测试 `go test ./discovery ./api -run 'Test.*(BlogVerification|BlogrollGraphFixture|RecoverDueJobs|RecoveryDoesNotScan)' -count=1 -v`、完整 discovery、全仓 `go test ./... -count=1`、`go test -race ./discovery ./recommendation ./jobqueue/... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 全部通过。没有真实互联网、用户数据或 LLM；实现提交：`56764c5`。
+- [x] 2026-07-15T17:44:26+08:00 M21：修复长文章 URL 被直接写入 `discovery_candidates.dedupe_key VARCHAR(128)` 导致 PostgreSQL `SQLSTATE 22001` 和来源抓取任务失败的问题。新候选和补空键路径使用 `url:` 加规范化 URL SHA-256，日志样例 URL 完整保留且重复入池仍只有一条候选。聚焦 `go test ./discovery ./bootstrap -run 'Test(UpsertCandidateHashesLongURLIdentity|PostgresV3MigrationsRiverRestartAndPGVector|V3GooseMigrationIsAdditiveAndParseable)' -count=1 -v` 通过；独立 Compose、localhost 和 `tmpfs` 空库上的 opt-in PostgreSQL 门槛从零执行并重复确认 `000001`–`000018`，真实 `VARCHAR(128)` 长 URL 摘要写入、pgvector 和 River 两次重启作业通过，迁移 18 外部缺口关闭。完整 discovery/bootstrap、全仓 Go、race、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 均通过；容器、网络、tmpfs、前端哈希资产和二进制已清理，不需要数据库迁移，也未使用真实互联网、用户数据或 LLM。检查点提交：本里程碑提交。
 
 ## Surprises & Discoveries
 
@@ -123,6 +124,8 @@
 - 2026-07-15：受限命令沙箱禁止测试监听环回端口，最初的 SOCKS5 测试在 `listen tcp6 [::1]:0` 得到 `operation not permitted`；改用显式 `tcp4 127.0.0.1` 后仍按基础设施规则在沙箱外运行，测试通过且没有外网连接。该失败是测试执行权限而不是代理实现错误。
 - 2026-07-15：仓库的 `api/assets.LoadFile` 固定对子目录 `web/assets` 做 `fs.Sub`，但 Git 只跟踪占位 `index.html`、favicon 和图片；清理构建哈希目录后直接执行全仓 Go 测试会使 `assets` 包失败。按正式构建顺序先运行 `npm run build` 和 `make web2api` 后，全仓测试通过。最终检查点仍恢复占位资产，避免提交生成哈希文件。
 - 2026-07-15：准备以独立 `tmpfs` PostgreSQL 验证 `000018` 时，`docker` 再次返回 “WSL integration 未启用”，与用户此前已修复的状态不一致。没有可用容器或本机 PostgreSQL 替代，因此本里程碑保留 Goose 解析、SQLite 双回填和已有 opt-in 门槛更新，把迁移 18 的真实 PostgreSQL 执行作为外部基础设施恢复后的补验。
+- 2026-07-15：真实运行日志暴露 `api/discovery/candidate_store.go` 把规范化文章 URL 直接作为初始 `DedupeKey`，而 `api/discovery/model.go` 与 `000001_recommendation_v2.sql` 明确将该字段限制为 128 字符。SQLite 接受超长 `VARCHAR(n)`，所以现有本地测试未能模拟 PostgreSQL 的 `SQLSTATE 22001`；日志中的 `record not found` 是 GORM 探测不存在候选／端点／回溯状态的预期分支，不是这次任务失败的根因。
+- 2026-07-15：Docker Desktop 恢复后，隔离 PostgreSQL 17/pgvector 实跑确认迁移 18 本身可执行且幂等，`dedupe_key` 的真实元数据仍为 128 字符；以 68 字符摘要写入同一长 URL 后测试通过。因此故障是应用写入值违反既有模型约束，不需要更改生产表或回填历史数据。
 - 2026-07-15：非博客判定发生在 homepage 抓取成功路径中，但既有 `finishDiscoveryFetch` 会对任何成功响应无条件写 `crawl_allowed=true`，从而抵消分类事务。完成状态现在读取站点当前状态，若已为 `non_blog` 只记录成功抓取审计而不重新开放；来源本身保持 disabled，后续调度即使保存了时间也不会入队。
 - 2026-07-15：观察站点若沿用旧 ETag／Last-Modified，服务器可能返回没有正文的 304，分类器无法建立证据。`observing` homepage 现在故意不发送条件验证器，且异常 304 明确返回 `blog verification requires a complete homepage response`；转为 active 后恢复正常条件请求。额外一次完整响应只发生在验证边界。
 
@@ -218,6 +221,7 @@
 - 2026-07-15：博客预判只约束 Blogroll 自动发现的 `observing` 站点；owner 显式添加的 `seed` 视为人工确认。观察站点只允许一次主页验证请求，确定性正证据包括声明 Feed、博客生成器或结构化数据、博客语义和文章集合；验证通过转为 `active` 后才排入端点发现和 Blogroll，未通过转为可审计的 `non_blog` 且禁用后续端点。理由是完全不请求页面无法判断其内容，而把唯一预检和后续爬取分开能够显著减少非博客站点流量并保留管理员恢复能力。
 - 2026-07-15：M19 不物理删除或合并已有重复 `discovery_sites`；兼容回填为所有行计算 `domain_key`，把来源端点重新关联到该域名最早站点，新写路径和订阅源投影也选择最早站点。理由是立即合并边、回溯游标、候选溯源和运营统计会遇到多组唯一约束并可能不可逆丢证据；当前增量方案已阻止新增重复并消除用户可见重复，物理合并留给带对账的独立迁移。
 - 2026-07-15：未通过博客验证的自动目标不出现在 `ListDiscoverySources`，但保留 `DiscoverySite`、入边、验证时间、原因和禁用 homepage，可从来源站点的图谱关系及管理 API 审计；owner 恢复 active 时只重启 homepage，不猜测或预建 Feed/Sitemap。理由是订阅源页面应只显示实际订阅站点，而删除 non_blog 节点会丢失“为什么没有继续”的证据并可能反复发现。
+- 2026-07-15：候选初次入池的 URL 去重身份采用 `url:` 加规范化 URL 的 SHA-256，而不是扩大 `dedupe_key`。该键固定为 68 个 ASCII 字符，仍可确定性比较；正文处理完成后继续由现有重复聚类替换为 cluster ID。保留 128 字符数据库约束可以防止未来再次把任意长文本写入候选和推荐项的索引身份，也避免给 PostgreSQL B-tree 引入超长索引值风险。
 
 ## Outcomes & Retrospective
 
@@ -226,6 +230,8 @@
 2026-07-15，M19 已完成本机可执行范围。`blog.example.com`、`www.example.com` 和 `feed.example.com` 现在共享 `example.com` 域名身份和同一个新写逻辑站点，`example.co.uk` 等多段公共后缀按 PSL 正确处理；本机多端口夹具仍是独立站点。旧重复站点不删除，但其来源端点幂等归到最早域名站点，订阅源列表只显示一项，站点 operations 仍能展示所有端点。M20 必须在该域名入口上先验证自动观察站点，且不能让 `observing` 的启动恢复绕过博客门禁。唯一外部缺口是 Docker 再次不可用导致迁移 18 尚未真实 PostgreSQL 实跑；SQLite、Goose 和门槛版本断言已覆盖。
 
 2026-07-15，M20 已完成。自动 Blogroll 目标不再并行抓主页和扫描图谱，而是严格经过 `observing → active/non_blog`：合成博客通过声明 Feed、Hugo generator、结构化类型、文章集合和语义链接五类正证据，企业导航夹具只收到一次 homepage 请求，零端点探测、候选、Blogroll 或回溯，且再次扫描不会发请求。非博客从订阅源隐藏但边与原因保留，owner 恢复路径可逆。至此新增三项功能全部完成；遗留只剩 M19 已记录的迁移 18 真实 PostgreSQL 补验，原因是 Docker WSL 集成在本轮再次不可用。
+
+2026-07-15，M21 已完成并关闭 M19 的外部验证缺口。长文章 URL 不再占用固定长度身份列，而是用规范化 URL 的 68 字符命名摘要；完整 URL、幂等候选查找、正文后重复聚类和推荐语义保持不变。真实 PostgreSQL 17/pgvector 空库证明全部 18 份迁移、严格 128 字符列、长 URL 写入、River 重启和向量路径一起通过。该修复只需发布新二进制，不改变数据库结构；失败的来源任务重试时会重新发现未写入的长 URL，已成功写入的同批候选仍由 URL 查询幂等复用。
 
 2026-07-13，M0 已完成。仓库现在拥有可推进的时钟边界、带条件验证器和响应大小限制的 HTTP 获取边界、仅接受稳定标识的幂等任务边界，以及覆盖 A→B→C 循环、误识别外链、Feed/Sitemap/归档多重溯源、历史精品、robots、500、超时、同域／跨域重定向、非文章页和双用户隔离数据的本地夹具世界。现有发现重复抓取和推荐日期／日报去重行为被回归测试固定，生产路径没有切流。
 
@@ -1242,6 +1248,12 @@ API 路由可以在现有 `/api/discovery` 和 `/api/recommendation` 下扩展�
 
 扩展确定性 A、B、C 夹具和一个企业导航站：B、C 以 Feed、生成器、结构化数据或文章集合通过，非博客站只收到一次主页请求，零 Feed、Sitemap、Blogroll、回溯请求且没有候选；图谱边和判定原因仍可查询。聚焦验证运行 `go test ./discovery ./api -run 'Test.*(BlogVerification|BlogrollGraphFixture|RecoverDueJobs)' -count=1`，再运行 race、全仓 Go、前端测试与构建和最终二进制构建。
 
+## Milestone M21 — Bounded URL Identity for Candidate Inserts
+
+目标是让任意符合候选 URL 上限的文章链接都能在 PostgreSQL 入池，而不把可变长度 URL 塞进固定 128 字符的去重身份列。`api/discovery/candidate_store.go` 在新候选和补空键路径中使用相同的 `url:` 加 SHA-256 固定长度身份；候选的 `URL`、`NormalizedURL` 和 `CanonicalURL` 仍完整保留原值，正文去重阶段仍把 `DedupeKey` 切换为现有重复簇 ID，因此用户可见 URL 和最终重复语义均不改变。
+
+以运行日志中的长 Hugo 论坛 URL 增加候选入池回归，证明原 URL 超过 128 字符、创建和重复抓取均成功、数据库只有一条候选且初始键不超过约束。扩展 opt-in PostgreSQL 门槛，用同类长 URL 和摘要键真实写入 `VARCHAR(128)`；在独立 `tmpfs` 空库执行全部 Goose、River 和 pgvector 验证，同时补齐 M19 的迁移 18 外部证据。聚焦验证后运行全仓 Go、race、前端测试／构建和最终二进制构建，不使用真实互联网、用户数据或 LLM。
+
 ## Concrete Commands and Working Discipline
 
 每个里程碑开始时，从仓库根目录执行：
@@ -1524,6 +1536,8 @@ M19 域名证据：`api/discovery/domain_identity_test.go` 固定可注册域名
 
 M20 博客门禁证据：`api/discovery/blog_verification_test.go` 的分类表覆盖五类正证据和企业导航负例；`TestBlogVerificationPrecedesAutomaticExpansion` 固定两个图谱边、验证前只有 homepage 作业、博客继续扩展、企业站单请求后 non_blog、订阅源隐藏、重复扫描零请求和 owner 可逆恢复；`TestRecoveryDoesNotScanUnverifiedObservingSites` 固定重启门禁。A/B/C 图谱夹具中的 C 以 Hugo generator 明确证明博客身份，不再依赖默认放行。
 
+M21 长 URL 证据：`api/discovery/candidate_processing_m7_test.go` 用运行日志同形的超过 128 字符 URL 固定候选初始身份、重复入池和完整 URL 保留；`api/bootstrap/postgres_v3_integration_test.go` 在真实 `VARCHAR(128)` 上写入同类摘要键，并继续验证全部 Goose、River 和 pgvector。
+
 ## Plan Revision Note
 
 2026-07-13：创建初始版本。相较于早期“来源质量优先”的可能解释，本计划明确采用“友情链接受控扩展、来源级信号只调度资源、文章级独立质量判断、低命中来源保留非零预算”的产品约束，并把它贯穿数据模型、抓取、历史回溯、推荐、反馈、日报、UI、指标和端到端验收。
@@ -1563,3 +1577,7 @@ M20 博客门禁证据：`api/discovery/blog_verification_test.go` 的分类表�
 2026-07-15：完成 M19 本机范围。此次修订记录 PSL 域名身份、非破坏回填、订阅源聚合、端点保留、迁移 18、全仓验证顺序，以及 Docker WSL 集成再次不可用造成的真实 PostgreSQL 单项缺口。
 
 2026-07-15：完成 M20。此次修订记录确定性博客证据、observing 状态门禁、无条件首次主页、non_blog 审计与订阅源隐藏、重启防绕过、owner 恢复和全仓验证；M18–M20 已无未完成实现项。
+
+2026-07-15：真实运行出现长文章 URL 导致候选 `dedupe_key` 超过 128 字符，因此新增 M21。此次修订记录 PostgreSQL 与 SQLite 长度约束差异、固定长度 URL 身份方案、无迁移修复路径和真实 PostgreSQL 回归要求；`record not found` 探测日志不作为故障处理。
+
+2026-07-15：完成 M21。此次修订记录长 URL 摘要键、幂等回归、真实 PostgreSQL 迁移 18／严格列长度／River／pgvector 证据、全仓验证和生成物清理；此前唯一的外部数据库验证缺口已经关闭。

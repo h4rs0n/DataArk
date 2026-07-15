@@ -27,6 +27,10 @@ const (
 	DiscoveryMethodHomepageLink     = "homepage_link"
 )
 
+func initialCandidateDedupeKey(normalizedURL string) string {
+	return "url:" + ContentHash(normalizedURL)
+}
+
 type candidateWriteResult struct {
 	Candidate DiscoveryCandidate
 	Created   bool
@@ -67,7 +71,7 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 				Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingFetchPending,
 				EligibilityState:   DiscoveryEligibilityUnknown,
 				EnrichmentStatus:   DiscoveryCandidateEnrichmentStatusPending,
-				MetadataConfidence: confidence, DedupeKey: articleURL,
+				MetadataConfidence: confidence, DedupeKey: initialCandidateDedupeKey(articleURL),
 				Score: scoreDiscoveredCandidate(candidate), PublishedAt: candidate.PublishedAt,
 				PublishedConfidence: candidate.PublishedConfidence,
 				LastSeenAt:          now, FirstSeenAt: &now, CreatedAt: now, UpdatedAt: now,
@@ -112,8 +116,8 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 				record.CanonicalURL = articleURL
 			}
 			if record.DedupeKey == "" {
-				updates["dedupe_key"] = articleURL
-				record.DedupeKey = articleURL
+				updates["dedupe_key"] = initialCandidateDedupeKey(articleURL)
+				record.DedupeKey = initialCandidateDedupeKey(articleURL)
 			}
 			if err := tx.Model(&record).Updates(updates).Error; err != nil {
 				return err
