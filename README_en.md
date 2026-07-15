@@ -59,6 +59,8 @@ Recommendation v3 selects only ready, eligible deduplication representatives. It
 
 
 
+Set `-discover-socks5-proxy "socks5://user:pass@127.0.0.1:1080"` when discovery must use a proxy. It covers homepage, feed, sitemap, robots, Blogroll, backfill, and article requests only. An empty value connects directly, while an invalid non-empty value fails closed instead of silently bypassing the proxy. URL-encode special characters in usernames or passwords.
+
 ## Feedback and Contributions
 
 Suggestions and feedback are welcome via Issues, or you can directly submit a PR to participate in project development.

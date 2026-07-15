@@ -13,6 +13,7 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 	oldConfig := []interface{}{
 		config.DEBUG, config.ARCHIVEFILELOACTION, config.MEILIHOST, config.MEILIAPIKey, config.MEILIDumpDir,
 		config.SINGLEFILEWEBSERVICEURL, config.DBHost, config.DBPort, config.DBName, config.DBUser, config.DBPassword,
+		config.DISCOVERYSOCKS5PROXY,
 		config.RECOMMENDATIONENABLED, config.RECOMMENDATIONDAILYLIMIT, config.RECOMMENDATIONTIMEZONE,
 		config.RECOMMENDATIONGENERATIONTIME, config.RECOMMENDATIONCANDIDATEWINDOWDAYS,
 		config.RECOMMENDATIONCANDIDATEPOOLSIZE, config.RECOMMENDATIONRERANKLIMIT,
@@ -33,21 +34,22 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 		config.DBName = oldConfig[8].(string)
 		config.DBUser = oldConfig[9].(string)
 		config.DBPassword = oldConfig[10].(string)
-		config.RECOMMENDATIONENABLED = oldConfig[11].(bool)
-		config.RECOMMENDATIONDAILYLIMIT = oldConfig[12].(int)
-		config.RECOMMENDATIONTIMEZONE = oldConfig[13].(string)
-		config.RECOMMENDATIONGENERATIONTIME = oldConfig[14].(string)
-		config.RECOMMENDATIONCANDIDATEWINDOWDAYS = oldConfig[15].(int)
-		config.RECOMMENDATIONCANDIDATEPOOLSIZE = oldConfig[16].(int)
-		config.RECOMMENDATIONRERANKLIMIT = oldConfig[17].(int)
-		config.RECOMMENDATIONEXPLORATIONRATE = oldConfig[18].(float64)
-		config.LLMBASEURL = oldConfig[19].(string)
-		config.LLMAPIKEY = oldConfig[20].(string)
-		config.LLMCHATMODEL = oldConfig[21].(string)
-		config.LLMEMBEDDINGMODEL = oldConfig[22].(string)
-		config.LLMTIMEOUT = oldConfig[23].(string)
-		config.EMBEDDINGDIMENSION = oldConfig[24].(int)
-		config.RSSHUBBASEURL = oldConfig[25].(string)
+		config.DISCOVERYSOCKS5PROXY = oldConfig[11].(string)
+		config.RECOMMENDATIONENABLED = oldConfig[12].(bool)
+		config.RECOMMENDATIONDAILYLIMIT = oldConfig[13].(int)
+		config.RECOMMENDATIONTIMEZONE = oldConfig[14].(string)
+		config.RECOMMENDATIONGENERATIONTIME = oldConfig[15].(string)
+		config.RECOMMENDATIONCANDIDATEWINDOWDAYS = oldConfig[16].(int)
+		config.RECOMMENDATIONCANDIDATEPOOLSIZE = oldConfig[17].(int)
+		config.RECOMMENDATIONRERANKLIMIT = oldConfig[18].(int)
+		config.RECOMMENDATIONEXPLORATIONRATE = oldConfig[19].(float64)
+		config.LLMBASEURL = oldConfig[20].(string)
+		config.LLMAPIKEY = oldConfig[21].(string)
+		config.LLMCHATMODEL = oldConfig[22].(string)
+		config.LLMEMBEDDINGMODEL = oldConfig[23].(string)
+		config.LLMTIMEOUT = oldConfig[24].(string)
+		config.EMBEDDINGDIMENSION = oldConfig[25].(int)
+		config.RSSHUBBASEURL = oldConfig[26].(string)
 	})
 
 	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
@@ -64,6 +66,7 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 		"-dbname", "dataark",
 		"-dbuser", "user",
 		"-dbpasswd", "pass",
+		"-discover-socks5-proxy", "socks5://proxy-user:proxy-pass@127.0.0.1:1080",
 		"-recommend-enabled",
 		"-recommend-daily-limit", "12",
 		"-recommend-timezone", "UTC",
@@ -91,6 +94,9 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 	}
 	if config.DBHost != "db" || config.DBPort != "5433" || config.DBName != "dataark" || config.DBUser != "user" || config.DBPassword != "pass" {
 		t.Fatalf("unexpected parsed db config: host=%q port=%q name=%q user=%q pass=%q", config.DBHost, config.DBPort, config.DBName, config.DBUser, config.DBPassword)
+	}
+	if config.DISCOVERYSOCKS5PROXY != "socks5://proxy-user:proxy-pass@127.0.0.1:1080" {
+		t.Fatalf("unexpected discovery SOCKS5 proxy: %q", config.DISCOVERYSOCKS5PROXY)
 	}
 	if !config.RECOMMENDATIONENABLED || config.RECOMMENDATIONDAILYLIMIT != 12 || config.RECOMMENDATIONTIMEZONE != "UTC" || config.RECOMMENDATIONGENERATIONTIME != "06:30" {
 		t.Fatalf("unexpected recommendation config: enabled=%v limit=%d timezone=%q time=%q", config.RECOMMENDATIONENABLED, config.RECOMMENDATIONDAILYLIMIT, config.RECOMMENDATIONTIMEZONE, config.RECOMMENDATIONGENERATIONTIME)

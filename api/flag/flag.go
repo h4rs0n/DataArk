@@ -20,6 +20,7 @@ func ParseFlag() {
 	DBPasswordFlag := stdflag.String("dbpasswd", "postgres", "Assign DB password")
 	DiscoveryFetchIntervalFlag := stdflag.String("discover-interval", "6h", "Assign discovery source fetch interval, set 0 to disable")
 	DiscoveryRequestTimeoutFlag := stdflag.String("discover-timeout", "12s", "Assign discovery HTTP request timeout")
+	DiscoverySOCKS5ProxyFlag := stdflag.String("discover-socks5-proxy", "", "Assign optional SOCKS5 proxy URL for discovery HTTP requests")
 	DiscoveryMaxCandidatesFlag := stdflag.Int("discover-max", 50, "Assign max candidates collected per source fetch")
 	DiscoveryUserAgentFlag := stdflag.String("discover-ua", "DataArkDiscovery/1.0", "Assign discovery HTTP User-Agent")
 	DiscoveryHostConcurrencyFlag := stdflag.Int("discover-host-concurrency", 2, "Assign maximum concurrent discovery requests per host")
@@ -73,6 +74,7 @@ func ParseFlag() {
 	config.DBPassword = *DBPasswordFlag
 	config.DISCOVERYFETCHINTERVAL = *DiscoveryFetchIntervalFlag
 	config.DISCOVERYREQUESTTIMEOUT = *DiscoveryRequestTimeoutFlag
+	config.DISCOVERYSOCKS5PROXY = strings.TrimSpace(*DiscoverySOCKS5ProxyFlag)
 	config.DISCOVERYMAXCANDIDATES = *DiscoveryMaxCandidatesFlag
 	config.DISCOVERYUSERAGENT = strings.TrimSpace(*DiscoveryUserAgentFlag)
 	config.DISCOVERYHOSTCONCURRENCY = *DiscoveryHostConcurrencyFlag

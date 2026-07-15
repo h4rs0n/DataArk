@@ -52,6 +52,9 @@
 - [x] 2026-07-14T10:53:33+08:00 M16：完成 owner-only 推荐运营指标、受限字段结构化事件和长尾精品贡献统计。聚焦验证 `go test ./recommendation ./api ./observability ./jobqueue ./bootstrap -run 'Test(ObservabilityM16|EventSchema|V3Goose|V3SQLiteMigration)' -count=1` 通过，race 验证同一测试集通过；固定数据验证低命中分组、调度下限违规、规则／模型评估率、日报填充／降级／按时发布、探索配额、正反馈、图谱／回溯贡献、首篇精品延迟和三类快照完整性违规，且候选发布后变更不会误报历史日报。仓库验证 `go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；检查点提交：`af262a9`。
 - [x] 2026-07-14T11:07:27+08:00 M17：完成确定性端到端闭环、SQLite／全仓／race 回归、旧全局个人状态和串行发现辅助路径清理，以及升级、灰度、回滚、权限、故障处理和数据保留手册。聚焦验收 `go test ./discovery ./recommendation ./jobqueue ./bootstrap ./api ./observability -run 'Test(DeterministicSiteWorld|BlogrollGraphFixture|BackfillFinds|ProcessCandidate|LowHitSource|EndToEndM17|DailyDigestM14|ObservabilityM16|RecoverDueJobs|V3Goose|V3SQLiteMigration)' -count=1` 通过；`go test -race ./discovery ./recommendation ./jobqueue/... -count=1`、`go test ./... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。检查点提交：`658abff`。本机 Docker Desktop WSL 集成未启用且没有 PostgreSQL CLI/Podman，真实 PostgreSQL 迁移、River 进程重启与 pgvector 可选路径无法执行，已作为生产灰度前的必要外部基础设施验证写入运维手册；没有用外网、真实数据或模型密钥替代。
 - [x] 2026-07-14T14:38:44+08:00 M17 外部基础设施补验：在 Docker Desktop WSL 集成恢复后，以独立 Compose 项目、localhost 端口和 `tmpfs` 空数据库运行 `DATAARK_POSTGRES_TEST_DSN=... go test ./bootstrap -run TestPostgresV3MigrationsRiverRestartAndPGVector -count=1 -v`。真实 PostgreSQL 17/pgvector 从零执行 `000001`–`000017`、重复执行、应用 JSONB 写入、向量写读、River 两次运行时启动和两条持久作业均通过；测试发现并修复 `000016` JSONB→TEXT 回填类型错误，以及来源／候选空 JSON 字段的 PostgreSQL 写入错误。聚焦、全仓、race、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 随后全部通过。临时数据库、角色、容器、网络和构建产物已删除；检查点提交：`4fb0364`。
+- [x] 2026-07-15T16:23:49+08:00 M18：为统一内容发现 HTTP client 增加可选 `-discover-socks5-proxy`，空值使用不读取环境代理的直连 transport，非空值只接受带主机和端口的 `socks5://` URL，可选 URL 编码用户名密码；解析、协议或认证错误均失败关闭。聚焦测试 `go test ./discovery ./flag -run 'Test.*(SOCKS5|ParseFlag)' -count=1 -v` 通过本机 SOCKS5 认证、代理转发、错误认证零目标请求和无效配置；全仓 `go test ./... -count=1`、`go test -race ./discovery -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 全部通过。生成资产和二进制已清理，没有真实代理、互联网、用户数据或密钥；实现提交待本检查点后回填。
+- [ ] M19：以可注册域名作为逻辑站点身份，并把订阅源页面中的主页、Feed、Sitemap 等端点聚合成一个站点展示，同时保留端点调度和溯源。
+- [ ] M20：自动发现的观察站点先用一次有界主页请求执行确定性博客预判；只有确认具有博客证据后才发现端点、文章、Blogroll 和历史入口，明确未通过者保留图谱证据但停止后续抓取。
 
 ## Surprises & Discoveries
 
@@ -115,6 +118,9 @@
 - 2026-07-14：M17 再次执行 `docker --version` 时，WSL 只发现 Docker Desktop 转发程序并明确报告 WSL integration 未启用；`psql`、`pg_isready` 和 Podman 均不存在。因此当前机器不能提供真实 PostgreSQL Goose、River 进程重启或 pgvector 证据，这属于基础设施不可用而非测试失败。
 - 2026-07-14：Docker 补验首次在真实 PostgreSQL 执行到 `000016_recommendation_experience_context.sql` 时失败。`discovery_candidates.topics` 是 JSONB，而 `recommendation_items.snapshot_topics` 是 TEXT；`COALESCE(candidate.topics, '')` 会先把空字符串解释为 JSON 并报 `SQLSTATE 22P02`，即使待更新表为空。显式使用 `candidate.topics::text` 后 17 份迁移从零通过。
 - 2026-07-14：真实迁移通过后，GORM 创建尚未富化的来源／候选又暴露 JSONB 空字符串问题：PostgreSQL 中 `crawl_config`、`topics`、`entities` 是 JSONB，但 Go 兼容模型仍以 string 表达。SQLite 接受空字符串，PostgreSQL 拒绝。PostgreSQL `BeforeSave` 现在分别规范为空对象 `{}` 和空数组 `[]`，集成测试通过应用写路径及 `::text` 读回固定该差异。
+- 2026-07-15：逻辑站点虽已合并协议、默认端口和 `www` 变体，但 `ListDiscoverySources` 返回抓取端点行，因此一个站点的 homepage、Feed、Sitemap 会在“订阅源”重复显示；普通子域名也仍使用不同 `host_key`。端点不能删除或强行合并，因为条件请求、限流、失败退避和溯源都依赖端点身份，修复应发生在逻辑域名身份和列表投影层。
+- 2026-07-15：新 Blogroll 目标目前会同时排入主页抓取和 Blogroll 扫描，且 `observing` 站点会被启动恢复直接扫描；URL 分类器只排除少数社交、登录和购物地址，普通企业站或导航站会先创建 Feed、Sitemap、回溯和图谱工作，之后才可能暴露其不是博客。
+- 2026-07-15：受限命令沙箱禁止测试监听环回端口，最初的 SOCKS5 测试在 `listen tcp6 [::1]:0` 得到 `operation not permitted`；改用显式 `tcp4 127.0.0.1` 后仍按基础设施规则在沙箱外运行，测试通过且没有外网连接。该失败是测试执行权限而不是代理实现错误。
 
 ## Decision Log
 
@@ -203,8 +209,13 @@
 - 2026-07-14：真实 PostgreSQL/River/pgvector 验收因当前机器外部基础设施不可用而不伪造通过。生产灰度必须先按 `docs/operations/recommendation-v3-runbook.md` 启动 PostgreSQL、执行启动迁移、重启 API 并核对 River 恢复、快照不变和可选 vector；SQLite 自动证据不能替代该门槛。
 - 2026-07-14：外部数据库门槛使用显式 opt-in 的 `TestPostgresV3MigrationsRiverRestartAndPGVector` 固化，默认无 DSN 时跳过；测试只接受名称以 `dataark_v3_verify` 开头的可丢弃数据库。理由是普通单元测试不能要求 Docker，而发布验证必须真实覆盖 Goose、River 和 pgvector；拒绝复用现有 Compose 数据库或真实用户数据。
 - 2026-07-14：PostgreSQL JSONB 兼容保持现有 Go string API，不在本轮把模型全面改成自定义 JSON 类型；迁移回填显式 `::text`，写入钩子只在 PostgreSQL 把空值规范成合法 JSON。这样是最小、可回滚修复，不改变 SQLite、HTTP JSON 或推荐解析语义；后续若类型化 JSON，应另做兼容迁移。
+- 2026-07-15：SOCKS5 使用单一进程级 `-discover-socks5-proxy` URL 配置，支持可选用户名密码并作用于主页、Feed、Sitemap、robots、Blogroll、回溯和文章正文；空值保持现有直连，无效非空值返回配置错误抓取器。理由是发现链路已经统一经过 `ConfiguredHTTPFetcher`，集中配置可避免遗漏，而失败关闭可防止代理拼写错误时意外直连。
+- 2026-07-15：域名身份使用 Public Suffix List 计算的可注册域名，例如 `blog.example.co.uk` 与 `www.example.co.uk` 都归为 `example.co.uk`；IP 和 localhost 测试地址保留非默认端口。数据库新增可回填的非唯一 `domain_key`，新写路径按它复用站点，列表按它聚合，但抓取端点仍逐 URL 保存。理由是直接合并或删除已有站点会牵涉边、回溯、溯源和运营统计的冲突，增量键与读投影可先安全消除用户可见重复并阻止新增重复。
+- 2026-07-15：博客预判只约束 Blogroll 自动发现的 `observing` 站点；owner 显式添加的 `seed` 视为人工确认。观察站点只允许一次主页验证请求，确定性正证据包括声明 Feed、博客生成器或结构化数据、博客语义和文章集合；验证通过转为 `active` 后才排入端点发现和 Blogroll，未通过转为可审计的 `non_blog` 且禁用后续端点。理由是完全不请求页面无法判断其内容，而把唯一预检和后续爬取分开能够显著减少非博客站点流量并保留管理员恢复能力。
 
 ## Outcomes & Retrospective
+
+2026-07-15，M18 已完成。主页、Feed、Sitemap、robots、Blogroll、历史回溯和文章正文原本都经过 `ConfiguredHTTPFetcher`，因此单一 SOCKS5 transport 已覆盖整个内容发现链路而不影响其他服务。代理认证信息只存在于启动配置和 transport，不进入请求、抓取审计或错误摘要；无效配置返回固定哨兵错误并阻止直连。默认空配置显式关闭环境 HTTP 代理，保持“未配置即直连”的可预测语义。M19 接下来只改变逻辑域名身份和订阅源投影，不能合并或删除端点级条件请求与溯源数据。
 
 2026-07-13，M0 已完成。仓库现在拥有可推进的时钟边界、带条件验证器和响应大小限制的 HTTP 获取边界、仅接受稳定标识的幂等任务边界，以及覆盖 A→B→C 循环、误识别外链、Feed/Sitemap/归档多重溯源、历史精品、robots、500、超时、同域／跨域重定向、非文章页和双用户隔离数据的本地夹具世界。现有发现重复抓取和推荐日期／日报去重行为被回归测试固定，生产路径没有切流。
 
@@ -1197,6 +1208,30 @@ API 路由可以在现有 `/api/discovery` 和 `/api/recommendation` 下扩展�
 - 所有旧兼容字段都有删除或保留理由；
 - `Progress` 全部勾选，`Outcomes & Retrospective` 写明实际结果和遗留事项。
 
+## Milestone M18 — Optional SOCKS5 for Discovery Fetches
+
+目标是让部署者在受限网络中把内容发现流量统一送入 SOCKS5，同时保持默认安装行为不变。新增 `-discover-socks5-proxy`，接受 `socks5://host:port` 或带 URL 编码用户名密码的形式；配置只用于内容发现 HTTP client，不影响数据库、Meilisearch、SingleFile 或可选 LLM。代理 URL 不得写入日志、抓取错误摘要或 API 响应。
+
+在 `api/discovery/fetcher.go` 建立可单测的 HTTP client 构造函数，复用 `http.DefaultTransport` 的安全默认值并替换 `DialContext`。空配置返回直连 transport；非空配置必须验证 scheme、host 和 port，认证由 `golang.org/x/net/proxy` 处理。配置无效时，统一抓取器必须返回稳定的代理配置错误，不能回退直连。更新 `api/config/config.go`、`api/flag/flag.go`、中英文 README 和参数测试。
+
+使用本机测试 HTTP 服务和最小 SOCKS5 测试服务证明请求经过代理、可选认证生效、错误认证失败、无效 URL 不直连。聚焦验证运行 `go test ./discovery ./flag -run 'Test.*(SOCKS5|ParseFlag)' -count=1`，随后运行全仓 Go、race、前端测试与构建和等价仓库构建。测试只监听本机，不访问真实互联网。
+
+## Milestone M19 — One Registrable Domain, One Visible Site
+
+目标是让“内容发现－订阅源”一行代表一个逻辑站点，而不是一行代表一个抓取端点。用 `golang.org/x/net/publicsuffix` 计算可注册域名键；无法计算的保留主机名，IP和 localhost 还保留非默认端口，以维持确定性夹具隔离。新增 Goose 迁移为 `discovery_sites` 增加 `domain_key` 索引，并在兼容回填中安全、幂等地填充现有行。
+
+新图谱目标和手动来源按 `domain_key` 查找已有逻辑站点，阻止不同协议、`www`、普通子域或不同路径继续产生新站点。`ListDiscoverySources` 按站点 `domain_key` 聚合，选择最早创建的用户入口作为兼容代表；站点详情仍返回全部主页、Feed、Sitemap 和 RSSHub 端点，使条件请求、退避、健康和溯源不丢失。现有重复物理站点本里程碑不做破坏性合并，待稳定窗口另行对账。
+
+固定测试覆盖 `blog.example.com`、`www.example.com`、`feed.example.com/rss` 只创建或展示一个站点，`example.co.uk` 的公共后缀边界，以及不同测试端口不误合并。聚焦验证运行 `go test ./discovery ./bootstrap ./api -run 'Test.*(Domain|Source|V3Goose|V3SQLiteMigration)' -count=1`，随后运行仓库级验证。
+
+## Milestone M20 — Blog Verification Before Expansion
+
+目标是让自动观察目标先证明“像博客”，再消耗 Feed 探测、Sitemap、Blogroll、历史回溯和正文抓取预算。增加纯确定性 HTML 分类器，输入只含目标 URL、响应类型和有界主页 HTML；它输出 `blog` 或 `non_blog` 以及稳定证据代码，不调用 LLM，也不访问第二个 URL。
+
+`SiteGraphService.ApplyLinks` 对新 `observing` 目标只创建并排入主页端点，不再立即排入 Blogroll。主页抓取在解析端点或文章前执行分类：通过时原子更新为 `active`、保存验证时间并继续既有 `EndpointDiscoveryService`，随后排入 Blogroll；未通过时更新为 `non_blog`、`crawl_allowed=false`、`operational_pause=non_blog`、保存有限证据并禁用站点端点。启动恢复只为 seed 或 active 站点排 Blogroll，`ScanBlogroll` 也拒绝未验证 observing 站点，避免重启或手工作业绕过门禁。owner 手工 seed 保持直接抓取，owner 仍可通过现有站点状态 API 恢复误判。
+
+扩展确定性 A、B、C 夹具和一个企业导航站：B、C 以 Feed、生成器、结构化数据或文章集合通过，非博客站只收到一次主页请求，零 Feed、Sitemap、Blogroll、回溯请求且没有候选；图谱边和判定原因仍可查询。聚焦验证运行 `go test ./discovery ./api -run 'Test.*(BlogVerification|BlogrollGraphFixture|RecoverDueJobs)' -count=1`，再运行 race、全仓 Go、前端测试与构建和最终二进制构建。
+
 ## Concrete Commands and Working Discipline
 
 每个里程碑开始时，从仓库根目录执行：
@@ -1471,6 +1506,10 @@ M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候�
 
 M17 PostgreSQL 证据：`api/bootstrap/postgres_v3_integration_test.go` 的 `TestPostgresV3MigrationsRiverRestartAndPGVector` 只接受 `dataark_v3_verify*` 可丢弃数据库，真实执行全量 Goose 与 River schema、第二次幂等迁移、来源／候选 JSONB、pgvector 写读和两次 River 运行时。2026-07-14 在独立 PostgreSQL 17/pgvector `tmpfs` 容器上从空库通过，随后临时库和容器被删除。
 
+M18–M20 验收不得使用真实代理、互联网、用户数据或 LLM 密钥。SOCKS5 使用本机协议夹具；域名身份使用固定公共后缀样例；博客判断使用仓库 HTML 夹具和本机 `httptest`。已有 `docker/docker-compose.yml` 含用户未提交修改，本轮不覆盖该文件，部署示例先记录在中英文 README，待用户清理本地配置后再单独同步 Compose。
+
+M18 代理证据：`api/discovery/fetcher_proxy_test.go` 的 `TestDiscoverySOCKS5ProxyRoutesRequestsWithAuthentication` 用本机 TCP4 SOCKS5 服务验证 URL 编码认证和实际 HTTP 转发；`TestDiscoverySOCKS5ProxyFailsClosed` 验证错误 scheme、缺失端口、缺失主机、畸形 URL 和错误认证均不能触达目标。`api/flag/flag_test.go` 固定命令行到配置的传递，中英文 README 说明代理范围和失败关闭语义。
+
 ## Plan Revision Note
 
 2026-07-13：创建初始版本。相较于早期“来源质量优先”的可能解释，本计划明确采用“友情链接受控扩展、来源级信号只调度资源、文章级独立质量判断、低命中来源保留非零预算”的产品约束，并把它贯穿数据模型、抓取、历史回溯、推荐、反馈、日报、UI、指标和端到端验收。
@@ -1502,3 +1541,7 @@ M17 PostgreSQL 证据：`api/bootstrap/postgres_v3_integration_test.go` 的 `Tes
 2026-07-13：完成 M2。此次修订记录共享 River／内存运行时、五类稳定作业参数、启动恢复、并发幂等、失败隔离、发现 ticker 切换及 v2 兼容证据；函数式 handler 注入保持基础设施与领域包无环，为后续抓取、图谱、回溯和文章处理逐项接入留下明确边界。
 
 2026-07-14：在 Docker Desktop WSL 集成恢复后补齐 M17 外部门槛。此次修订记录真实 PostgreSQL 17 的 17 份 Goose 迁移与幂等执行、River 两次运行时、pgvector 写读，以及由实跑发现并修复的 JSONB→TEXT 回填和空 JSON 写入差异；新增 opt-in 发布测试使该门槛可重复且不污染普通无 Docker 测试。
+
+2026-07-15：用户追加 SOCKS5、同域名单站点和博客预判需求，因此在已完成的 v3 计划后新增 M18–M20。此次修订明确代理失败关闭、可注册域名增量键与非破坏聚合、以及“单次主页验证后才扩展”的边界，并记录不覆盖用户本地 Docker Compose 修改的恢复策略。
+
+2026-07-15：完成 M18。此次修订记录统一 SOCKS5 transport、认证与失败关闭测试、全仓验证和沙箱环回端口限制；部署文档只修改中英文 README，未覆盖用户工作区中的 Docker Compose 配置。

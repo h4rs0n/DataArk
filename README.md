@@ -54,6 +54,8 @@ make build
 
 
 
+内容发现需要代理时可设置 `-discover-socks5-proxy "socks5://user:pass@127.0.0.1:1080"`。它只代理主页、Feed、Sitemap、robots、Blogroll、回溯和文章请求；留空时直连，无效配置会拒绝抓取而不会静默绕过代理。用户名或密码中的特殊字符需要使用 URL 编码。
+
 ## 反馈与贡献
 
 欢迎通过 Issue 提交建议与反馈，或直接提交 PR 参与项目共建。
