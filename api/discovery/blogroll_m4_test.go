@@ -117,10 +117,16 @@ func TestBlogrollGraphFixtureIsBoundedObservableAndQualityIndependent(t *testing
 	if _, ok := jobs.keys[fmt.Sprintf("fetch:%d", bEndpoint.ID)]; !ok {
 		t.Fatalf("B endpoint fetch was not scheduled: %#v", jobs.keys)
 	}
-	if _, ok := jobs.keys[fmt.Sprintf("blogroll:%d", b.ID)]; !ok {
-		t.Fatalf("B graph scan was not scheduled: %#v", jobs.keys)
+	if _, ok := jobs.keys[fmt.Sprintf("blogroll:%d", b.ID)]; ok {
+		t.Fatalf("B graph scan bypassed homepage verification: %#v", jobs.keys)
 	}
 
+	if _, err := FetchDiscoverySource(context.Background(), &bEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&b, b.ID).Error; err != nil || b.Status != DiscoverySiteStatusActive {
+		t.Fatalf("B homepage verification = %#v, %v", b, err)
+	}
 	if _, err := ScanBlogroll(context.Background(), b.ID, queue); err != nil {
 		t.Fatal(err)
 	}
@@ -134,6 +140,16 @@ func TestBlogrollGraphFixtureIsBoundedObservableAndQualityIndependent(t *testing
 	}
 	if len(cRootDiscovery.Links) != 0 {
 		t.Fatalf("ordinary C homepage links were classified as blogroll: %#v", cRootDiscovery.Links)
+	}
+	var cEndpoint DiscoverySource
+	if err := db.Where("site_id = ? AND endpoint_type = ?", c.ID, DiscoveryEndpointHomepage).First(&cEndpoint).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FetchDiscoverySource(context.Background(), &cEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&c, c.ID).Error; err != nil || c.Status != DiscoverySiteStatusActive {
+		t.Fatalf("C homepage verification = %#v, %v", c, err)
 	}
 	if _, err := ScanBlogroll(context.Background(), c.ID, queue); err != nil {
 		t.Fatal(err)

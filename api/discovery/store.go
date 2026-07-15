@@ -79,7 +79,11 @@ func ListDiscoverySources() ([]DiscoverySource, error) {
 	for _, source := range sources {
 		domainKey := ""
 		if source.SiteID != nil {
-			domainKey = siteDomainKey(siteByID[*source.SiteID])
+			site := siteByID[*source.SiteID]
+			if site.Status == DiscoverySiteStatusNonBlog {
+				continue
+			}
+			domainKey = siteDomainKey(site)
 		}
 		if domainKey == "" {
 			domainKey, _ = domainKeyForURL(source.URL)
@@ -355,27 +359,55 @@ func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discove
 		}
 		return scoreAndLimitCandidates(candidates), 1, 0, &fetchResult, err
 	case DiscoverySourceTypeSite:
+		site, err := siteForDiscoverySource(*source)
+		if err != nil {
+			return nil, 0, 0, nil, err
+		}
+		etag := source.ETag
+		lastModified := source.LastModified
+		if site.Status == DiscoverySiteStatusObserving {
+			etag = ""
+			lastModified = ""
+		}
 		fetchResult, err := fetchDiscoveryRequest(ctx, FetchRequest{
-			URL: source.URL, ETag: source.ETag, LastModified: source.LastModified, Kind: FetchKindHTML,
+			URL: source.URL, ETag: etag, LastModified: lastModified, Kind: FetchKindHTML,
 		})
 		if err != nil {
 			return nil, 0, 0, nil, err
 		}
 		if fetchResult.NotModified {
+			if site.Status == DiscoverySiteStatusObserving {
+				return nil, 0, 0, &fetchResult, ErrBlogVerificationUnavailable
+			}
 			return nil, 0, 0, &fetchResult, nil
 		}
 		if fetchResult.StatusCode < 200 || fetchResult.StatusCode >= 300 {
 			return nil, 0, 0, &fetchResult, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, fetchResult.StatusCode)
 		}
-		site, err := siteForDiscoverySource(*source)
-		if err != nil {
-			return nil, 0, 0, &fetchResult, err
+		wasObserving := site.Status == DiscoverySiteStatusObserving
+		if wasObserving {
+			verification, verifyErr := VerifyBlogHomepage(fetchResult.Body, fetchResult.FinalURLOr(source.URL), site.RootURL)
+			if verifyErr != nil {
+				return nil, 0, 0, &fetchResult, verifyErr
+			}
+			if err := persistObservedSiteVerification(site, verification, discoveryClock.Now()); err != nil {
+				return nil, 0, 0, &fetchResult, err
+			}
+			if !verification.IsBlog {
+				return nil, 0, 0, &fetchResult, nil
+			}
+			site.Status = DiscoverySiteStatusActive
 		}
 		queue, _ := jobqueue.Default()
 		service := EndpointDiscoveryService{Clock: discoveryClock, Queue: queue}
 		discovered, err := service.DiscoverHomepage(ctx, site, *source, fetchResult.Body, fetchResult.FinalURLOr(source.URL))
 		if err != nil {
 			return nil, 0, 0, &fetchResult, err
+		}
+		if wasObserving && queue != nil {
+			if err := queue.EnqueueScanBlogroll(ctx, site.ID); err != nil {
+				return nil, 0, 0, &fetchResult, err
+			}
 		}
 		return scoreAndLimitCandidates(discovered.Candidates), discovered.FeedsFound + discovered.SitemapsFound, discovered.LinksFound, &fetchResult, nil
 	default:

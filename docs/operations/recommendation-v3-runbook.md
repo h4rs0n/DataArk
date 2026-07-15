@@ -6,6 +6,8 @@ This runbook covers the Blogroll discovery, article assessment, per-user recomme
 
 Back up PostgreSQL and the archive directory before changing the running binary. Keep the old binary available, record counts for users, discovery sources, candidates, recommendation days, recommendation items, and feedback, and do not run Down migrations as a rollback mechanism. Migrations `000003` through `000018` are additive or data-preserving: they add logical sites, registrable-domain identity, endpoint and graph evidence, provenance, processing and assessment state, per-user state, immutable digest evidence, and operational metrics. Startup reruns compatibility backfills idempotently.
 
+Blogroll targets remain `observing` until a single homepage response supplies deterministic blog evidence. They become `active` before endpoint, Blogroll, or backfill expansion. Targets without evidence become `non_blog`, keep their graph edges and `blog_verification:<reason>` operational detail, disable the homepage endpoint, and disappear from the subscriptions projection. If an owner confirms a false negative, change the site status to `active`; this re-enables and immediately schedules its homepage without deleting the original decision evidence from fetch and graph history.
+
 For production PostgreSQL, start the database first and then start one API instance. Startup applies Goose and River migrations before workers accept jobs. Confirm the `vector` extension only when embeddings are enabled; the rules pipeline does not need it. A representative isolated validation is:
 
 ```sh

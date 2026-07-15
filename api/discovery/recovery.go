@@ -31,7 +31,7 @@ next_due_at <= ? OR
 	}
 
 	var sites []DiscoverySite
-	graphStatuses := []string{DiscoverySiteStatusSeed, DiscoverySiteStatusObserving, DiscoverySiteStatusActive}
+	graphStatuses := []string{DiscoverySiteStatusSeed, DiscoverySiteStatusActive}
 	if err := db.Where("status IN ? AND crawl_allowed = ? AND operational_pause = ? AND (next_graph_scan_at IS NULL OR next_graph_scan_at <= ?)", graphStatuses, true, "", now).Order("id").Find(&sites).Error; err != nil {
 		recoveryErrors = append(recoveryErrors, err)
 	} else {

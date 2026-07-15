@@ -81,13 +81,14 @@ func finishDiscoveryFetch(source *DiscoverySource, result *DiscoveryFetchResult,
 	}
 	if source.SiteID != nil {
 		siteUpdates := map[string]interface{}{"last_validated_at": &now}
+		currentStatus := sourceSiteStatus(source.SiteID)
 		if errors.Is(fetchErr, ErrRobotsDisallowed) {
 			siteUpdates["crawl_allowed"] = false
 			siteUpdates["robots_status"] = "disallowed"
 		} else if errors.Is(fetchErr, ErrRobotsUnavailable) {
 			siteUpdates["crawl_allowed"] = false
 			siteUpdates["robots_status"] = "unavailable"
-		} else if fetchErr == nil {
+		} else if fetchErr == nil && currentStatus != DiscoverySiteStatusNonBlog {
 			siteUpdates["crawl_allowed"] = true
 			if robotsStatus != "" {
 				siteUpdates["robots_status"] = robotsStatus

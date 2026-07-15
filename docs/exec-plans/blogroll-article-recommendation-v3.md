@@ -54,7 +54,7 @@
 - [x] 2026-07-14T14:38:44+08:00 M17 外部基础设施补验：在 Docker Desktop WSL 集成恢复后，以独立 Compose 项目、localhost 端口和 `tmpfs` 空数据库运行 `DATAARK_POSTGRES_TEST_DSN=... go test ./bootstrap -run TestPostgresV3MigrationsRiverRestartAndPGVector -count=1 -v`。真实 PostgreSQL 17/pgvector 从零执行 `000001`–`000017`、重复执行、应用 JSONB 写入、向量写读、River 两次运行时启动和两条持久作业均通过；测试发现并修复 `000016` JSONB→TEXT 回填类型错误，以及来源／候选空 JSON 字段的 PostgreSQL 写入错误。聚焦、全仓、race、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 随后全部通过。临时数据库、角色、容器、网络和构建产物已删除；检查点提交：`4fb0364`。
 - [x] 2026-07-15T16:23:49+08:00 M18：为统一内容发现 HTTP client 增加可选 `-discover-socks5-proxy`，空值使用不读取环境代理的直连 transport，非空值只接受带主机和端口的 `socks5://` URL，可选 URL 编码用户名密码；解析、协议或认证错误均失败关闭。聚焦测试 `go test ./discovery ./flag -run 'Test.*(SOCKS5|ParseFlag)' -count=1 -v` 通过本机 SOCKS5 认证、代理转发、错误认证零目标请求和无效配置；全仓 `go test ./... -count=1`、`go test -race ./discovery -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 全部通过。生成资产和二进制已清理，没有真实代理、互联网、用户数据或密钥；实现提交：`d4e4eec`。
 - [x] 2026-07-15T16:31:39+08:00 M19：新增可回填的 `discovery_sites.domain_key` 和 Public Suffix List 可注册域名规范化；新图谱目标、手工来源和 Blogroll 扫描按域名复用站点，IP 或 localhost 的非默认端口继续隔离。`ListDiscoverySources` 以域名聚合兼容响应，只显示最早用户入口，同时数据库仍保留全部 homepage、Feed、Sitemap 和 RSSHub 端点。聚焦测试 `go test ./discovery ./bootstrap ./api -run 'Test.*(Domain|Source|V3Goose|V3SQLiteMigration)' -count=1`、全仓 `go test ./... -count=1`、`go test -race ./discovery ./bootstrap ./api -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过；迁移计数和 opt-in PostgreSQL 门槛更新为 18。Docker WSL 命令在本里程碑再次报告集成未启用，故 `000018` 真实 PostgreSQL 实跑暂缺；临时 Compose 文件已删除。实现提交：`176cc60`。
-- [ ] M20：自动发现的观察站点先用一次有界主页请求执行确定性博客预判；只有确认具有博客证据后才发现端点、文章、Blogroll 和历史入口，明确未通过者保留图谱证据但停止后续抓取。
+- [x] 2026-07-15T16:40:03+08:00 M20：新增不调用 LLM 的确定性主页分类器，接受声明 Feed、已知博客生成器、Blog／BlogPosting 结构化数据、文章集合或博客语义文章链接作为正证据。Blogroll 新目标只排一次 homepage；`observing` 强制完整响应，通过后原子转 `active` 并开始端点、文章、Blogroll 和回溯，未通过转 `non_blog`、禁用端点、从订阅源投影隐藏但保留图谱边和 `blog_verification:<reason>`。恢复和手工作业都不能扫描 observing，owner 改为 active 会重新启用并立即安排主页。聚焦测试 `go test ./discovery ./api -run 'Test.*(BlogVerification|BlogrollGraphFixture|RecoverDueJobs|RecoveryDoesNotScan)' -count=1 -v`、完整 discovery、全仓 `go test ./... -count=1`、`go test -race ./discovery ./recommendation ./jobqueue/... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 全部通过。没有真实互联网、用户数据或 LLM；实现提交待本检查点后回填。
 
 ## Surprises & Discoveries
 
@@ -123,6 +123,8 @@
 - 2026-07-15：受限命令沙箱禁止测试监听环回端口，最初的 SOCKS5 测试在 `listen tcp6 [::1]:0` 得到 `operation not permitted`；改用显式 `tcp4 127.0.0.1` 后仍按基础设施规则在沙箱外运行，测试通过且没有外网连接。该失败是测试执行权限而不是代理实现错误。
 - 2026-07-15：仓库的 `api/assets.LoadFile` 固定对子目录 `web/assets` 做 `fs.Sub`，但 Git 只跟踪占位 `index.html`、favicon 和图片；清理构建哈希目录后直接执行全仓 Go 测试会使 `assets` 包失败。按正式构建顺序先运行 `npm run build` 和 `make web2api` 后，全仓测试通过。最终检查点仍恢复占位资产，避免提交生成哈希文件。
 - 2026-07-15：准备以独立 `tmpfs` PostgreSQL 验证 `000018` 时，`docker` 再次返回 “WSL integration 未启用”，与用户此前已修复的状态不一致。没有可用容器或本机 PostgreSQL 替代，因此本里程碑保留 Goose 解析、SQLite 双回填和已有 opt-in 门槛更新，把迁移 18 的真实 PostgreSQL 执行作为外部基础设施恢复后的补验。
+- 2026-07-15：非博客判定发生在 homepage 抓取成功路径中，但既有 `finishDiscoveryFetch` 会对任何成功响应无条件写 `crawl_allowed=true`，从而抵消分类事务。完成状态现在读取站点当前状态，若已为 `non_blog` 只记录成功抓取审计而不重新开放；来源本身保持 disabled，后续调度即使保存了时间也不会入队。
+- 2026-07-15：观察站点若沿用旧 ETag／Last-Modified，服务器可能返回没有正文的 304，分类器无法建立证据。`observing` homepage 现在故意不发送条件验证器，且异常 304 明确返回 `blog verification requires a complete homepage response`；转为 active 后恢复正常条件请求。额外一次完整响应只发生在验证边界。
 
 ## Decision Log
 
@@ -215,12 +217,15 @@
 - 2026-07-15：域名身份使用 Public Suffix List 计算的可注册域名，例如 `blog.example.co.uk` 与 `www.example.co.uk` 都归为 `example.co.uk`；IP 和 localhost 测试地址保留非默认端口。数据库新增可回填的非唯一 `domain_key`，新写路径按它复用站点，列表按它聚合，但抓取端点仍逐 URL 保存。理由是直接合并或删除已有站点会牵涉边、回溯、溯源和运营统计的冲突，增量键与读投影可先安全消除用户可见重复并阻止新增重复。
 - 2026-07-15：博客预判只约束 Blogroll 自动发现的 `observing` 站点；owner 显式添加的 `seed` 视为人工确认。观察站点只允许一次主页验证请求，确定性正证据包括声明 Feed、博客生成器或结构化数据、博客语义和文章集合；验证通过转为 `active` 后才排入端点发现和 Blogroll，未通过转为可审计的 `non_blog` 且禁用后续端点。理由是完全不请求页面无法判断其内容，而把唯一预检和后续爬取分开能够显著减少非博客站点流量并保留管理员恢复能力。
 - 2026-07-15：M19 不物理删除或合并已有重复 `discovery_sites`；兼容回填为所有行计算 `domain_key`，把来源端点重新关联到该域名最早站点，新写路径和订阅源投影也选择最早站点。理由是立即合并边、回溯游标、候选溯源和运营统计会遇到多组唯一约束并可能不可逆丢证据；当前增量方案已阻止新增重复并消除用户可见重复，物理合并留给带对账的独立迁移。
+- 2026-07-15：未通过博客验证的自动目标不出现在 `ListDiscoverySources`，但保留 `DiscoverySite`、入边、验证时间、原因和禁用 homepage，可从来源站点的图谱关系及管理 API 审计；owner 恢复 active 时只重启 homepage，不猜测或预建 Feed/Sitemap。理由是订阅源页面应只显示实际订阅站点，而删除 non_blog 节点会丢失“为什么没有继续”的证据并可能反复发现。
 
 ## Outcomes & Retrospective
 
 2026-07-15，M18 已完成。主页、Feed、Sitemap、robots、Blogroll、历史回溯和文章正文原本都经过 `ConfiguredHTTPFetcher`，因此单一 SOCKS5 transport 已覆盖整个内容发现链路而不影响其他服务。代理认证信息只存在于启动配置和 transport，不进入请求、抓取审计或错误摘要；无效配置返回固定哨兵错误并阻止直连。默认空配置显式关闭环境 HTTP 代理，保持“未配置即直连”的可预测语义。M19 接下来只改变逻辑域名身份和订阅源投影，不能合并或删除端点级条件请求与溯源数据。
 
 2026-07-15，M19 已完成本机可执行范围。`blog.example.com`、`www.example.com` 和 `feed.example.com` 现在共享 `example.com` 域名身份和同一个新写逻辑站点，`example.co.uk` 等多段公共后缀按 PSL 正确处理；本机多端口夹具仍是独立站点。旧重复站点不删除，但其来源端点幂等归到最早域名站点，订阅源列表只显示一项，站点 operations 仍能展示所有端点。M20 必须在该域名入口上先验证自动观察站点，且不能让 `observing` 的启动恢复绕过博客门禁。唯一外部缺口是 Docker 再次不可用导致迁移 18 尚未真实 PostgreSQL 实跑；SQLite、Goose 和门槛版本断言已覆盖。
+
+2026-07-15，M20 已完成。自动 Blogroll 目标不再并行抓主页和扫描图谱，而是严格经过 `observing → active/non_blog`：合成博客通过声明 Feed、Hugo generator、结构化类型、文章集合和语义链接五类正证据，企业导航夹具只收到一次 homepage 请求，零端点探测、候选、Blogroll 或回溯，且再次扫描不会发请求。非博客从订阅源隐藏但边与原因保留，owner 恢复路径可逆。至此新增三项功能全部完成；遗留只剩 M19 已记录的迁移 18 真实 PostgreSQL 补验，原因是 Docker WSL 集成在本轮再次不可用。
 
 2026-07-13，M0 已完成。仓库现在拥有可推进的时钟边界、带条件验证器和响应大小限制的 HTTP 获取边界、仅接受稳定标识的幂等任务边界，以及覆盖 A→B→C 循环、误识别外链、Feed/Sitemap/归档多重溯源、历史精品、robots、500、超时、同域／跨域重定向、非文章页和双用户隔离数据的本地夹具世界。现有发现重复抓取和推荐日期／日报去重行为被回归测试固定，生产路径没有切流。
 
@@ -1517,6 +1522,8 @@ M18 代理证据：`api/discovery/fetcher_proxy_test.go` 的 `TestDiscoverySOCKS
 
 M19 域名证据：`api/discovery/domain_identity_test.go` 固定可注册域名、GitHub Pages 私有后缀、IP／localhost 端口、三端点单站点展示和旧重复站点双回填；`api/migrations/000018_discovery_domain_identity.sql` 只增加 `domain_key` 与索引并保留 Down 数据；`api/bootstrap/database_v3_test.go` 要求 18 份 Goose 可解析，PostgreSQL opt-in 测试也要求最终 version 18。
 
+M20 博客门禁证据：`api/discovery/blog_verification_test.go` 的分类表覆盖五类正证据和企业导航负例；`TestBlogVerificationPrecedesAutomaticExpansion` 固定两个图谱边、验证前只有 homepage 作业、博客继续扩展、企业站单请求后 non_blog、订阅源隐藏、重复扫描零请求和 owner 可逆恢复；`TestRecoveryDoesNotScanUnverifiedObservingSites` 固定重启门禁。A/B/C 图谱夹具中的 C 以 Hugo generator 明确证明博客身份，不再依赖默认放行。
+
 ## Plan Revision Note
 
 2026-07-13：创建初始版本。相较于早期“来源质量优先”的可能解释，本计划明确采用“友情链接受控扩展、来源级信号只调度资源、文章级独立质量判断、低命中来源保留非零预算”的产品约束，并把它贯穿数据模型、抓取、历史回溯、推荐、反馈、日报、UI、指标和端到端验收。
@@ -1554,3 +1561,5 @@ M19 域名证据：`api/discovery/domain_identity_test.go` 固定可注册域名
 2026-07-15：完成 M18。此次修订记录统一 SOCKS5 transport、认证与失败关闭测试、全仓验证和沙箱环回端口限制；部署文档只修改中英文 README，未覆盖用户工作区中的 Docker Compose 配置。
 
 2026-07-15：完成 M19 本机范围。此次修订记录 PSL 域名身份、非破坏回填、订阅源聚合、端点保留、迁移 18、全仓验证顺序，以及 Docker WSL 集成再次不可用造成的真实 PostgreSQL 单项缺口。
+
+2026-07-15：完成 M20。此次修订记录确定性博客证据、observing 状态门禁、无条件首次主页、non_blog 审计与订阅源隐藏、重启防绕过、owner 恢复和全仓验证；M18–M20 已无未完成实现项。

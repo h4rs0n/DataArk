@@ -34,7 +34,7 @@ func ScanBlogroll(ctx context.Context, siteID uint, queue JobEnqueuer) (Blogroll
 	if err := db.First(&site, siteID).Error; err != nil {
 		return result, err
 	}
-	if !site.CrawlAllowed || site.Status == DiscoverySiteStatusPaused || site.Status == DiscoverySiteStatusBlocked || site.Status == DiscoverySiteStatusNonBlog {
+	if !site.CrawlAllowed || (site.Status != DiscoverySiteStatusSeed && site.Status != DiscoverySiteStatusActive) {
 		return result, nil
 	}
 	clock := discoveryClock

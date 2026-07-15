@@ -202,7 +202,6 @@ func (service SiteGraphService) ApplyLinks(ctx context.Context, fromSite Discove
 			}
 			seen[item.siteID] = struct{}{}
 			enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueFetchSource(ctx, item.sourceID))
-			enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueScanBlogroll(ctx, item.siteID))
 		}
 	}
 	return result, errors.Join(enqueueErrors...)

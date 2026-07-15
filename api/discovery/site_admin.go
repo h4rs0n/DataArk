@@ -70,6 +70,11 @@ func UpdateDiscoverySiteOperationalStatus(siteID uint, status string, reason str
 				Where("site_id = ? AND status <> ?", siteID, BackfillStatusCompleted).
 				Updates(map[string]interface{}{"status": BackfillStatusPaused, "completion_reason": updates["operational_pause"], "next_batch_at": nil, "updated_at": now}).Error
 		}
+		if err := tx.Model(&DiscoverySource{}).
+			Where("site_id = ? AND endpoint_type = ?", siteID, DiscoveryEndpointHomepage).
+			Updates(map[string]interface{}{"enabled": true, "next_due_at": &now, "next_fetch_at": &now}).Error; err != nil {
+			return err
+		}
 		return tx.Model(&DiscoveryBackfillState{}).
 			Where("site_id = ? AND status = ? AND completion_reason IN ?", siteID, BackfillStatusPaused, []string{DiscoveryPauseOwnerPaused, DiscoveryPauseGlobalSafety}).
 			Updates(map[string]interface{}{"status": BackfillStatusPending, "completion_reason": "", "next_batch_at": &now, "updated_at": now}).Error
