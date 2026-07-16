@@ -57,7 +57,7 @@
 - [x] 2026-07-15T16:40:03+08:00 M20：新增不调用 LLM 的确定性主页分类器，接受声明 Feed、已知博客生成器、Blog／BlogPosting 结构化数据、文章集合或博客语义文章链接作为正证据。Blogroll 新目标只排一次 homepage；`observing` 强制完整响应，通过后原子转 `active` 并开始端点、文章、Blogroll 和回溯，未通过转 `non_blog`、禁用端点、从订阅源投影隐藏但保留图谱边和 `blog_verification:<reason>`。恢复和手工作业都不能扫描 observing，owner 改为 active 会重新启用并立即安排主页。聚焦测试 `go test ./discovery ./api -run 'Test.*(BlogVerification|BlogrollGraphFixture|RecoverDueJobs|RecoveryDoesNotScan)' -count=1 -v`、完整 discovery、全仓 `go test ./... -count=1`、`go test -race ./discovery ./recommendation ./jobqueue/... -count=1`、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 全部通过。没有真实互联网、用户数据或 LLM；实现提交：`56764c5`。
 - [x] 2026-07-15T17:44:26+08:00 M21：修复长文章 URL 被直接写入 `discovery_candidates.dedupe_key VARCHAR(128)` 导致 PostgreSQL `SQLSTATE 22001` 和来源抓取任务失败的问题。新候选和补空键路径使用 `url:` 加规范化 URL SHA-256，日志样例 URL 完整保留且重复入池仍只有一条候选。聚焦 `go test ./discovery ./bootstrap -run 'Test(UpsertCandidateHashesLongURLIdentity|PostgresV3MigrationsRiverRestartAndPGVector|V3GooseMigrationIsAdditiveAndParseable)' -count=1 -v` 通过；独立 Compose、localhost 和 `tmpfs` 空库上的 opt-in PostgreSQL 门槛从零执行并重复确认 `000001`–`000018`，真实 `VARCHAR(128)` 长 URL 摘要写入、pgvector 和 River 两次重启作业通过，迁移 18 外部缺口关闭。完整 discovery/bootstrap、全仓 Go、race、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 均通过；容器、网络、tmpfs、前端哈希资产和二进制已清理，不需要数据库迁移，也未使用真实互联网、用户数据或 LLM。检查点提交：本里程碑提交。
 - [x] 2026-07-16T17:58:00+08:00 M22：以 `user_managed` 持久化人工订阅意图，订阅源 API 只投影人工入口并继续按可注册域名去重；人工种子端点使用 2000–2999 第一优先级，Blogroll 端点使用 1000–1999 第二优先级，同层独立入链数不能跨层，恢复查询按优先级降序。迁移 `000019` 幂等标记已有 seed／legacy 每站最早入口，兼容回填标记尚未分配站点的旧来源；聚焦、discovery/bootstrap/API、race、全仓 Go、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过。沙箱内完整 discovery 因禁止 `httptest` 监听端口失败，按规则在沙箱外原命令通过；生成资产与二进制已清理，用户本地文件未改。检查点提交：本里程碑提交。
-- [ ] M23：关闭全部 Sitemap 自动发现、端点创建、直接抓取和默认恢复；增加 owner 对单个已信任人工种子的显式 Sitemap 历史补漏入口、迁移保护、前端操作和离线验收。
+- [x] 2026-07-16T18:12:00+08:00 M23：关闭主页声明、robots 声明、默认路径、旧串行辅助和来源抓取五条 Sitemap 自动路径；来源创建／更新／内部 upsert／直接抓取均失败关闭，恢复和回溯只接受带 `owner_requested_at` 的显式游标。新增 owner-only 单人工种子、同逻辑域 Sitemap 补漏 API 与 UI，解析只写 backfill 和普通 `fetch_pending` 候选，不创建站点或 Sitemap 来源，嵌套最多 50 个且仍走正文／去重／评估门禁。迁移 `000020` 禁用旧 Sitemap 端点并暂停无 owner 证据的旧游标；聚焦、discovery/bootstrap/API、race、全仓 Go、`npm test`、`npm run build`、`make web2api` 和 `GOCACHE=/tmp/dataark-go-cache make api` 通过，README 中英文已更新，生成物已清理。Docker Desktop WSL 桥接连续三次返回 `/usr/bin/docker: Input/output error`，没有容器被创建，因此迁移 20 的真实 PostgreSQL 门槛已扩展但本轮无法执行；SQLite、Goose 解析和编译路径通过且未用互联网、用户数据或 LLM。检查点提交：本里程碑提交。
 
 ## Surprises & Discoveries
 
@@ -133,6 +133,7 @@
 - 2026-07-16：现有 `ListDiscoverySources` 以域名聚合全部物理端点，虽然消除了重复行，却无法知道哪一行是管理员主动添加；删除人工入口后，内部 homepage／Feed 仍可能成为新的列表代表。人工意图必须持久化，不能继续从端点类型、创建顺序或站点状态在每次查询时猜测。
 - 2026-07-16：Sitemap 当前有四条默认入口：主页 `link rel=sitemap`、robots 声明、猜测 `/sitemap.xml` 和旧站点串行辅助函数；发现后还会创建可调度端点、回溯状态并在重启时恢复。仅隐藏 UI 或停止其中一个探测不足以满足默认关闭，升级迁移也必须禁用历史端点并暂停旧状态。
 - 2026-07-16：仓库级 Go 命令必须在 `api/` 模块目录运行；从工作区根执行 `go test ./...` 会得到“directory prefix . does not contain modules”，不会运行任何测试。M22 随后从 `api/` 运行同一模式并全部通过，计划继续保留模块目录这一恢复细节。
+- 2026-07-16：M23 准备以独立 Compose、localhost 和 `tmpfs` 空库验证迁移 20 时，Docker Desktop 的 Windows CLI 包装器连续三次输出 `/mnt/c/Program Files/Docker/Docker/resources/bin/docker: 13: /usr/bin/docker: Input/output error`，连 `docker version` 也无法执行。临时 Compose 文件已删除且没有创建容器、网络或数据库；opt-in PostgreSQL 测试已改为先迁移到 19、插入旧 Sitemap 端点／游标、再迁移到 20 并断言禁用／暂停，待 WSL 桥接恢复即可直接运行。
 
 ## Decision Log
 
@@ -241,6 +242,8 @@
 2026-07-15，M21 已完成并关闭 M19 的外部验证缺口。长文章 URL 不再占用固定长度身份列，而是用规范化 URL 的 68 字符命名摘要；完整 URL、幂等候选查找、正文后重复聚类和推荐语义保持不变。真实 PostgreSQL 17/pgvector 空库证明全部 18 份迁移、严格 128 字符列、长 URL 写入、River 重启和向量路径一起通过。该修复只需发布新二进制，不改变数据库结构；失败的来源任务重试时会重新发现未写入的长 URL，已成功写入的同批候选仍由 URL 查询幂等复用。
 
 2026-07-16，M22 已完成。`discovery_sources` 现在明确区分人工入口和系统端点：人工创建、更新、删除和列表 API 都被 `user_managed` 约束，自动 Blogroll 博客即使已验证 active 也不会冒充人工订阅；主页与 Feed 等内部端点仍可从 operations 查询并继续抓取。两段不重叠的调度优先级使人工内容先入队，同时保留同层图谱入链排序且不引入来源质量。迁移 19 只增列、索引和兼容标记，Down 保留数据；M23 将在此人工信任边界上建立唯一的 Sitemap 显式入口。
+
+2026-07-16，M23 已完成本机可执行范围。默认主页抓取不再读取或探测 Sitemap，旧类型不能通过来源 API、内部 endpoint upsert、调度恢复或直接抓取重新激活；无 owner 请求时间的旧回溯即使保持 pending 也不会入队或执行。唯一入口要求 owner、人工 seed、选中站点和同逻辑域 URL，并把请求时间写入单站游标；显式补漏产生的历史 URL 仍是普通未评估候选，不会绕过推荐门禁。管理 UI 清楚标出两层来源和 Sitemap 默认关闭语义，中英文 README 同步。唯一遗留是 Docker WSL 桥接 I/O 故障阻止迁移 20 真实 PostgreSQL 实跑；发布门槛测试已包含保护性数据升级断言，基础设施恢复后无需再改代码即可补验。
 
 2026-07-13，M0 已完成。仓库现在拥有可推进的时钟边界、带条件验证器和响应大小限制的 HTTP 获取边界、仅接受稳定标识的幂等任务边界，以及覆盖 A→B→C 循环、误识别外链、Feed/Sitemap/归档多重溯源、历史精品、robots、500、超时、同域／跨域重定向、非文章页和双用户隔离数据的本地夹具世界。现有发现重复抓取和推荐日期／日报去重行为被回归测试固定，生产路径没有切流。
 
@@ -1563,6 +1566,8 @@ M20 博客门禁证据：`api/discovery/blog_verification_test.go` 的分类表�
 
 M21 长 URL 证据：`api/discovery/candidate_processing_m7_test.go` 用运行日志同形的超过 128 字符 URL 固定候选初始身份、重复入池和完整 URL 保留；`api/bootstrap/postgres_v3_integration_test.go` 在真实 `VARCHAR(128)` 上写入同类摘要键，并继续验证全部 Goose、River 和 pgvector。
 
+M22–M23 分层与 Sitemap 证据：`api/discovery/domain_identity_test.go` 固定人工订阅投影和内部端点保留，`api/discovery/recovery_test.go` 固定层级排序及无 owner Sitemap 不恢复，`api/discovery/sitemap_policy_test.go` 固定默认零 Sitemap 请求／端点／游标、直接来源失败关闭、同域人工 seed 显式补漏、自动博客拒绝和普通文章门禁。`api/migrations/000019_discovery_subscription_tiers.sql` 与 `000020_sitemap_owner_gap_fill.sql` 分别保存人工意图／层级和旧 Sitemap 停用证据；PostgreSQL opt-in 门槛先停在 19 插入旧数据，再应用 20 断言端点 disabled、游标 paused 和 owner 请求为空。
+
 ## Plan Revision Note
 
 2026-07-13：创建初始版本。相较于早期“来源质量优先”的可能解释，本计划明确采用“友情链接受控扩展、来源级信号只调度资源、文章级独立质量判断、低命中来源保留非零预算”的产品约束，并把它贯穿数据模型、抓取、历史回溯、推荐、反馈、日报、UI、指标和端到端验收。
@@ -1610,3 +1615,5 @@ M21 长 URL 证据：`api/discovery/candidate_processing_m7_test.go` 用运行�
 2026-07-16：用户要求重新设计发现优先级并默认关闭 Sitemap，因此新增 M22–M23。此次修订把订阅列表限定为人工入口，把 Blogroll 定义为第二层自动来源，并把 Sitemap 收紧为 owner 对单个人工种子的显式同域历史补漏；旧计划中自动 Sitemap 发现与回溯的描述由新里程碑取代。
 
 2026-07-16：完成 M22。此次修订记录人工订阅字段、两段式调度层级、迁移 19 兼容代表、恢复排序、列表投影、全仓验证和模块工作目录发现；M23 仍是 Progress 中第一个未完成项，将直接继续。
+
+2026-07-16：完成 M23 本机范围。此次修订记录 Sitemap 默认关闭的全部入口、owner 单站同域补漏、运行时 owner 证据、迁移 20 旧任务停用、普通文章门禁、UI／README、全仓验证和 Docker WSL I/O 基础设施缺口；Progress 已无未完成实现项。

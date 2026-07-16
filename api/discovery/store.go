@@ -109,6 +109,9 @@ func CreateDiscoverySource(name string, rawURL string, sourceType string, enable
 		return nil, err
 	}
 	sourceType = normalizeDiscoverySourceType(sourceType)
+	if sourceType == DiscoverySourceTypeSitemap {
+		return nil, ErrSitemapSourceDisabled
+	}
 	if strings.TrimSpace(name) == "" {
 		name = hostLabel(normalizedURL)
 	}
@@ -175,10 +178,14 @@ func UpdateDiscoverySource(id uint, name string, rawURL string, sourceType strin
 	if err != nil {
 		return nil, err
 	}
+	sourceType = normalizeDiscoverySourceType(sourceType)
+	if sourceType == DiscoverySourceTypeSitemap {
+		return nil, ErrSitemapSourceDisabled
+	}
 	updates := map[string]interface{}{
 		"name":          strings.TrimSpace(name),
 		"url":           normalizedURL,
-		"type":          normalizeDiscoverySourceType(sourceType),
+		"type":          sourceType,
 		"endpoint_type": legacyEndpointType(sourceType),
 		"enabled":       enabled,
 	}
@@ -223,6 +230,9 @@ func FetchDiscoverySourceByID(ctx context.Context, id uint) (*DiscoveryFetchResu
 func FetchDiscoverySource(ctx context.Context, source *DiscoverySource) (*DiscoveryFetchResult, error) {
 	if source == nil {
 		return nil, errors.New("missing discovery source")
+	}
+	if source.EndpointType == DiscoveryEndpointSitemap || normalizeDiscoverySourceType(source.Type) == DiscoverySourceTypeSitemap {
+		return &DiscoveryFetchResult{SourceID: source.ID, SourceError: ErrSitemapSourceDisabled.Error()}, ErrSitemapSourceDisabled
 	}
 	if !discoverySourceOperationallyCrawlable(source) {
 		return &DiscoveryFetchResult{SourceID: source.ID, SourceError: ErrDiscoverySiteNotCrawlable.Error()}, ErrDiscoverySiteNotCrawlable
@@ -306,37 +316,6 @@ func NormalizeDiscoveryURL(rawURL string) (string, error) {
 }
 
 func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discoveredCandidate, int, int, *FetchResult, error) {
-	if source.EndpointType == DiscoveryEndpointSitemap || normalizeDiscoverySourceType(source.Type) == DiscoverySourceTypeSitemap {
-		fetchResult, err := fetchDiscoveryRequest(ctx, FetchRequest{
-			URL: source.URL, ETag: source.ETag, LastModified: source.LastModified, Kind: FetchKindSitemap,
-		})
-		if err != nil {
-			return nil, 0, 0, nil, err
-		}
-		if fetchResult.NotModified {
-			return nil, 0, 0, &fetchResult, nil
-		}
-		if fetchResult.StatusCode < 200 || fetchResult.StatusCode >= 300 {
-			return nil, 0, 0, &fetchResult, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, fetchResult.StatusCode)
-		}
-		site, err := siteForDiscoverySource(*source)
-		if err != nil {
-			return nil, 0, 0, &fetchResult, err
-		}
-		candidates, nested, err := parseSitemapDocument(fetchResult.Body, site.RootURL)
-		if err != nil {
-			return nil, 0, 0, &fetchResult, err
-		}
-		for index := range candidates {
-			candidates[index].SourcePageURL = source.URL
-		}
-		queue, _ := jobqueue.Default()
-		service := EndpointDiscoveryService{Clock: discoveryClock, Queue: queue}
-		if err := service.SaveNestedSitemaps(ctx, site, nested); err != nil {
-			return nil, 0, 0, &fetchResult, err
-		}
-		return scoreAndLimitCandidates(candidates), len(nested), 0, &fetchResult, nil
-	}
 	switch normalizeDiscoverySourceType(source.Type) {
 	case DiscoverySourceTypeFeed, DiscoverySourceTypeRSSHub:
 		fetchResult, err := fetchDiscoveryRequest(ctx, FetchRequest{
@@ -422,10 +401,6 @@ func fetchSiteCandidates(ctx context.Context, rawURL string) ([]discoveredCandid
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	baseURL, err := neturl.Parse(rawURL)
-	if err != nil {
-		return nil, 0, 0, err
-	}
 	feedCandidates := make([]discoveredCandidate, 0)
 	for _, feedURL := range feedURLs {
 		candidates, err := fetchFeedCandidates(ctx, feedURL)
@@ -433,11 +408,9 @@ func fetchSiteCandidates(ctx context.Context, rawURL string) ([]discoveredCandid
 			feedCandidates = append(feedCandidates, candidates...)
 		}
 	}
-	sitemapCandidates, _ := fetchSitemapCandidates(ctx, baseURL)
 	for _, articleURL := range articleURLs {
 		feedCandidates = append(feedCandidates, discoveredCandidate{URL: articleURL, Title: articleURL})
 	}
-	feedCandidates = append(feedCandidates, sitemapCandidates...)
 	return scoreAndLimitCandidates(feedCandidates), len(feedURLs), len(articleURLs), nil
 }
 
@@ -478,46 +451,6 @@ func parseFeedCandidates(body []byte) ([]discoveredCandidate, error) {
 			Summary:     archive.BuildSummary(stripMarkup(summary), 260),
 			PublishedAt: firstFeedTime(item.PublishedParsed, item.UpdatedParsed),
 		})
-	}
-	return candidates, nil
-}
-
-func fetchSitemapCandidates(ctx context.Context, baseURL *neturl.URL) ([]discoveredCandidate, error) {
-	sitemapURL := *baseURL
-	sitemapURL.Path = "/sitemap.xml"
-	sitemapURL.RawQuery = ""
-	sitemapURL.Fragment = ""
-	result, err := fetchDiscoveryRequest(ctx, FetchRequest{URL: sitemapURL.String(), Kind: FetchKindSitemap})
-	if err != nil {
-		return nil, err
-	}
-	if result.StatusCode < 200 || result.StatusCode >= 300 {
-		return nil, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, result.StatusCode)
-	}
-
-	var sitemap struct {
-		URLs []struct {
-			Loc     string `xml:"loc"`
-			LastMod string `xml:"lastmod"`
-		} `xml:"url"`
-		Sitemaps []struct {
-			Loc string `xml:"loc"`
-		} `xml:"sitemap"`
-	}
-	if err := xml.Unmarshal(result.Body, &sitemap); err != nil {
-		return nil, err
-	}
-	candidates := make([]discoveredCandidate, 0)
-	for _, item := range sitemap.URLs {
-		normalizedURL, ok := sameHostArticleURL(item.Loc, baseURL)
-		if !ok {
-			continue
-		}
-		candidate := discoveredCandidate{URL: normalizedURL, Title: normalizedURL}
-		if parsedTime := parseFeedTime(item.LastMod); parsedTime != nil {
-			candidate.PublishedAt = parsedTime
-		}
-		candidates = append(candidates, candidate)
 	}
 	return candidates, nil
 }

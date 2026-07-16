@@ -62,7 +62,7 @@ func TestRecoverDueJobsContinuesAfterIndependentSourceFailure(t *testing.T) {
 	if err := db.Create(&futureSource).Error; err != nil {
 		t.Fatal(err)
 	}
-	backfill := DiscoveryBackfillState{SiteID: site.ID, Strategy: "sitemap", Status: "pending", NextBatchAt: &past}
+	backfill := DiscoveryBackfillState{SiteID: site.ID, Strategy: BackfillStrategyArchive, Status: BackfillStatusPending, NextBatchAt: &past}
 	if err := db.Create(&backfill).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -111,5 +111,28 @@ func TestRecoverDueSourcesUsesSubscriptionTierOrder(t *testing.T) {
 	}
 	if len(queue.fetches) != 2 || queue.fetches[0] != manual.ID || queue.fetches[1] != blogroll.ID {
 		t.Fatalf("tiered fetch recoveries = %#v", queue.fetches)
+	}
+}
+
+func TestRecoverySkipsSitemapWithoutExplicitOwnerRequest(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	site := DiscoverySite{RootURL: "https://legacy.example/", HostKey: "legacy.example", DomainKey: "legacy.example", Status: DiscoverySiteStatusSeed, DiscoveryMethod: DiscoveryMethodManualSeed, CrawlAllowed: true, FirstDiscoveredAt: now}
+	if err := db.Create(&site).Error; err != nil {
+		t.Fatal(err)
+	}
+	state := DiscoveryBackfillState{
+		SiteID: site.ID, Strategy: BackfillStrategySitemap, Status: BackfillStatusPending,
+		Cursor: encodeBackfillCursor(backfillCursor{Pending: []string{"https://legacy.example/sitemap.xml"}}), NextBatchAt: &now,
+	}
+	if err := db.Create(&state).Error; err != nil {
+		t.Fatal(err)
+	}
+	queue := &recoveryRecordingQueue{}
+	if err := RecoverDueJobs(context.Background(), queue, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.backfills) != 0 {
+		t.Fatalf("unrequested sitemap recovery = %#v", queue.backfills)
 	}
 }

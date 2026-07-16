@@ -31,66 +31,67 @@ import (
 )
 
 var (
-	checkArchiveConsistency            = search.CheckArchiveConsistency
-	repairArchiveConsistency           = search.RepairArchiveConsistency
-	registerWithToken                  = auth.RegisterWithToken
-	loginWithToken                     = auth.LoginWithToken
-	queryByKeyword                     = search.QueryByKeyword
-	addDocURLTask                      = search.AddDocURLTask
-	getArchiveTask                     = search.GetArchiveTask
-	getArchiveStatsSnapshot            = archive.GetArchiveStats
-	refreshStatsFromDisk               = archive.RefreshArchiveStatsFromDisk
-	recordSearchEvent                  = archive.RecordSearchEvent
-	getKeywordStats                    = archive.GetKeywordStats
-	recordArchiveClick                 = archive.RecordArchiveClick
-	getArchiveRankings                 = archive.GetArchiveRankings
-	getArchiveRecommendations          = archive.GetArchiveRecommendations
-	listDiscoverySources               = discovery.ListDiscoverySources
-	createDiscoverySource              = discovery.CreateDiscoverySource
-	updateDiscoverySource              = discovery.UpdateDiscoverySource
-	deleteDiscoverySource              = discovery.DeleteDiscoverySource
-	fetchDiscoverySourceByID           = discovery.FetchDiscoverySourceByID
-	listDiscoveryCandidates            = discovery.ListDiscoveryCandidatesForUser
-	getDiscoverySiteGraph              = discovery.GetSiteGraph
-	listBackfillCoverage               = discovery.ListBackfillCoverage
-	updateDiscoverySiteStatus          = discovery.UpdateDiscoverySiteOperationalStatus
-	requestDiscoverySiteBackfill       = discovery.RequestDiscoverySiteBackfill
-	getDiscoverySiteOperations         = discovery.GetDiscoverySiteOperations
-	getDiscoveryCandidate              = discovery.GetDiscoveryCandidate
-	markCandidateRead                  = discovery.MarkUserCandidateRead
-	markCandidateIgnored               = discovery.MarkUserCandidateIgnored
-	markCandidateArchived              = discovery.MarkUserCandidateArchived
-	getRecommendationSettings          = recommendation.GetRecommendationSettings
-	saveRecommendationSettings         = recommendation.SaveRecommendationSettings
-	getRecommendationDaySnapshot       = recommendation.GetRecommendationDaySnapshot
-	recommendationDateForUser          = recommendation.RecommendationDateForUser
-	recommendationNow                  = time.Now
-	listRecommendationDays             = recommendation.ListRecommendationDays
-	createRecommendationDay            = recommendation.CreateRecommendationDay
-	generateDailyRecommendations       = recommendation.GenerateDailyRecommendations
-	regenerateRecommendations          = recommendation.RegenerateDailyRecommendations
-	supplementRecommendations          = recommendation.SupplementDailyRecommendations
-	recordRecommendationFeedback       = recommendation.RecordRecommendationFeedback
-	revertRecommendationFeedback       = recommendation.RevertRecommendationFeedback
-	getCurrentRecommendationFeedback   = recommendation.GetCurrentRecommendationFeedback
-	getRecommendationItemContext       = recommendation.GetRecommendationItemContext
-	listRecommendationFeedbackHistory  = recommendation.ListRecommendationFeedbackHistory
-	resetUserRecommendationPreferences = recommendation.ResetUserRecommendationPreferences
-	listUserBlockRules                 = recommendation.ListUserBlockRules
-	deleteUserBlockRule                = recommendation.DeleteUserBlockRule
-	getCandidateInventory              = recommendation.GetCandidateInventory
-	getAdminProductMetrics             = recommendation.GetAdminProductMetrics
-	startDiscoveryScheduler            = discovery.StartDiscoveryScheduler
-	startRecommendationScheduler       = recommendation.StartRecommendationScheduler
-	startSharedJobQueue                = startApplicationJobQueue
-	addDocFileToIndex                  = search.AddDocFile
-	deleteDocByHTMLPath                = search.DeleteDocByHTMLPath
-	createBackupArchive                = backup.CreateBackup
-	restoreBackupArchive               = backup.RestoreBackup
-	initDatabase                       = bootstrap.InitDB
-	createSearchIndex                  = search.CreateDefaultIndex
-	initArchiveQueue                   = search.InitArchiveTaskQueue
-	runGinRouter                       = func(router *gin.Engine, addr string) error {
+	checkArchiveConsistency             = search.CheckArchiveConsistency
+	repairArchiveConsistency            = search.RepairArchiveConsistency
+	registerWithToken                   = auth.RegisterWithToken
+	loginWithToken                      = auth.LoginWithToken
+	queryByKeyword                      = search.QueryByKeyword
+	addDocURLTask                       = search.AddDocURLTask
+	getArchiveTask                      = search.GetArchiveTask
+	getArchiveStatsSnapshot             = archive.GetArchiveStats
+	refreshStatsFromDisk                = archive.RefreshArchiveStatsFromDisk
+	recordSearchEvent                   = archive.RecordSearchEvent
+	getKeywordStats                     = archive.GetKeywordStats
+	recordArchiveClick                  = archive.RecordArchiveClick
+	getArchiveRankings                  = archive.GetArchiveRankings
+	getArchiveRecommendations           = archive.GetArchiveRecommendations
+	listDiscoverySources                = discovery.ListDiscoverySources
+	createDiscoverySource               = discovery.CreateDiscoverySource
+	updateDiscoverySource               = discovery.UpdateDiscoverySource
+	deleteDiscoverySource               = discovery.DeleteDiscoverySource
+	fetchDiscoverySourceByID            = discovery.FetchDiscoverySourceByID
+	listDiscoveryCandidates             = discovery.ListDiscoveryCandidatesForUser
+	getDiscoverySiteGraph               = discovery.GetSiteGraph
+	listBackfillCoverage                = discovery.ListBackfillCoverage
+	updateDiscoverySiteStatus           = discovery.UpdateDiscoverySiteOperationalStatus
+	requestDiscoverySiteBackfill        = discovery.RequestDiscoverySiteBackfill
+	requestDiscoverySiteSitemapBackfill = discovery.RequestDiscoverySiteSitemapBackfill
+	getDiscoverySiteOperations          = discovery.GetDiscoverySiteOperations
+	getDiscoveryCandidate               = discovery.GetDiscoveryCandidate
+	markCandidateRead                   = discovery.MarkUserCandidateRead
+	markCandidateIgnored                = discovery.MarkUserCandidateIgnored
+	markCandidateArchived               = discovery.MarkUserCandidateArchived
+	getRecommendationSettings           = recommendation.GetRecommendationSettings
+	saveRecommendationSettings          = recommendation.SaveRecommendationSettings
+	getRecommendationDaySnapshot        = recommendation.GetRecommendationDaySnapshot
+	recommendationDateForUser           = recommendation.RecommendationDateForUser
+	recommendationNow                   = time.Now
+	listRecommendationDays              = recommendation.ListRecommendationDays
+	createRecommendationDay             = recommendation.CreateRecommendationDay
+	generateDailyRecommendations        = recommendation.GenerateDailyRecommendations
+	regenerateRecommendations           = recommendation.RegenerateDailyRecommendations
+	supplementRecommendations           = recommendation.SupplementDailyRecommendations
+	recordRecommendationFeedback        = recommendation.RecordRecommendationFeedback
+	revertRecommendationFeedback        = recommendation.RevertRecommendationFeedback
+	getCurrentRecommendationFeedback    = recommendation.GetCurrentRecommendationFeedback
+	getRecommendationItemContext        = recommendation.GetRecommendationItemContext
+	listRecommendationFeedbackHistory   = recommendation.ListRecommendationFeedbackHistory
+	resetUserRecommendationPreferences  = recommendation.ResetUserRecommendationPreferences
+	listUserBlockRules                  = recommendation.ListUserBlockRules
+	deleteUserBlockRule                 = recommendation.DeleteUserBlockRule
+	getCandidateInventory               = recommendation.GetCandidateInventory
+	getAdminProductMetrics              = recommendation.GetAdminProductMetrics
+	startDiscoveryScheduler             = discovery.StartDiscoveryScheduler
+	startRecommendationScheduler        = recommendation.StartRecommendationScheduler
+	startSharedJobQueue                 = startApplicationJobQueue
+	addDocFileToIndex                   = search.AddDocFile
+	deleteDocByHTMLPath                 = search.DeleteDocByHTMLPath
+	createBackupArchive                 = backup.CreateBackup
+	restoreBackupArchive                = backup.RestoreBackup
+	initDatabase                        = bootstrap.InitDB
+	createSearchIndex                   = search.CreateDefaultIndex
+	initArchiveQueue                    = search.InitArchiveTaskQueue
+	runGinRouter                        = func(router *gin.Engine, addr string) error {
 		return router.Run(addr)
 	}
 )
@@ -547,6 +548,28 @@ func RequestDiscoverySiteBackfill(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "历史回溯已排队"})
+}
+
+func RequestDiscoverySiteSitemapBackfill(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	siteID, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		URL string `json:"url" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "请求参数错误"})
+		return
+	}
+	if err := requestDiscoverySiteSitemapBackfill(c.Request.Context(), siteID, req.URL); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "启动 Sitemap 历史补漏失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "Sitemap 历史补漏已排队"})
 }
 
 func GetDiscoverySiteOperations(c *gin.Context) {
@@ -1353,6 +1376,7 @@ func WebStarter(debugMode bool) {
 		protected.GET("/discovery/sites/:id/backfill", GetDiscoveryBackfillCoverage)
 		protected.PUT("/discovery/sites/:id/status", UpdateDiscoverySiteStatus)
 		protected.POST("/discovery/sites/:id/backfill", RequestDiscoverySiteBackfill)
+		protected.POST("/discovery/sites/:id/sitemap-backfill", RequestDiscoverySiteSitemapBackfill)
 		protected.GET("/discovery/sites/:id/operations", GetDiscoverySiteOperations)
 		protected.GET("/discovery/candidates", ListDiscoveryCandidates)
 		protected.POST("/discovery/candidates/:id/read", MarkDiscoveryCandidateRead)

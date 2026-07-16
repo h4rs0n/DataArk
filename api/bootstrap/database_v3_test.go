@@ -264,7 +264,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 19 || migrations[len(migrations)-1].Version != 19 {
+	if len(migrations) != 20 || migrations[len(migrations)-1].Version != 20 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -402,6 +402,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"user_managed", "manual_representatives", "priority = CASE", "Data-preserving rollback"} {
 		if !strings.Contains(string(subscriptionTiers), required) {
 			t.Fatalf("discovery subscription tier migration missing %q", required)
+		}
+	}
+	sitemapGapFill, err := appmigrations.FS.ReadFile("000020_sitemap_owner_gap_fill.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"owner_requested_at", "sitemap_requires_owner_request", "enabled = FALSE", "Data-preserving rollback"} {
+		if !strings.Contains(string(sitemapGapFill), required) {
+			t.Fatalf("sitemap gap-fill migration missing %q", required)
 		}
 	}
 }

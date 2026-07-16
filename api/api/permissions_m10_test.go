@@ -75,12 +75,15 @@ func TestRecommendationSupplementRequiresOwner(t *testing.T) {
 func TestSiteStatusAndManualBackfillRequireOwner(t *testing.T) {
 	oldUpdate := updateDiscoverySiteStatus
 	oldBackfill := requestDiscoverySiteBackfill
+	oldSitemapBackfill := requestDiscoverySiteSitemapBackfill
 	t.Cleanup(func() {
 		updateDiscoverySiteStatus = oldUpdate
 		requestDiscoverySiteBackfill = oldBackfill
+		requestDiscoverySiteSitemapBackfill = oldSitemapBackfill
 	})
 	statusCalls := 0
 	backfillCalls := 0
+	sitemapBackfillCalls := 0
 	updateDiscoverySiteStatus = func(siteID uint, status string, reason string) (*discovery.DiscoverySite, error) {
 		statusCalls++
 		return &discovery.DiscoverySite{ID: siteID, Status: status, OperationalDetails: reason}, nil
@@ -89,20 +92,29 @@ func TestSiteStatusAndManualBackfillRequireOwner(t *testing.T) {
 		backfillCalls++
 		return nil
 	}
+	requestDiscoverySiteSitemapBackfill = func(_ context.Context, siteID uint, rawURL string) error {
+		if siteID != 9 || rawURL != "https://example.com/sitemap.xml" {
+			t.Fatalf("sitemap request = %d %q", siteID, rawURL)
+		}
+		sitemapBackfillCalls++
+		return nil
+	}
 	member := &auth.User{ID: 2, Username: "member", Role: auth.UserRoleMember}
 	owner := &auth.User{ID: 1, Username: "admin", Role: auth.UserRoleOwner}
 	body := []byte(`{"status":"paused","reason":"maintenance"}`)
 
 	memberStatus := performUserPathControllerRequestWithBody(http.MethodPut, "/discovery/sites/:id/status", "/discovery/sites/9/status", body, member, UpdateDiscoverySiteStatus)
 	memberBackfill := performUserPathControllerRequest(http.MethodPost, "/discovery/sites/:id/backfill", "/discovery/sites/9/backfill", member, RequestDiscoverySiteBackfill)
-	if memberStatus.Code != http.StatusForbidden || memberBackfill.Code != http.StatusForbidden || statusCalls != 0 || backfillCalls != 0 {
-		t.Fatalf("member results status=%d backfill=%d calls=%d/%d", memberStatus.Code, memberBackfill.Code, statusCalls, backfillCalls)
+	memberSitemap := performUserPathControllerRequestWithBody(http.MethodPost, "/discovery/sites/:id/sitemap-backfill", "/discovery/sites/9/sitemap-backfill", []byte(`{"url":"https://example.com/sitemap.xml"}`), member, RequestDiscoverySiteSitemapBackfill)
+	if memberStatus.Code != http.StatusForbidden || memberBackfill.Code != http.StatusForbidden || memberSitemap.Code != http.StatusForbidden || statusCalls != 0 || backfillCalls != 0 || sitemapBackfillCalls != 0 {
+		t.Fatalf("member results status=%d backfill=%d sitemap=%d calls=%d/%d/%d", memberStatus.Code, memberBackfill.Code, memberSitemap.Code, statusCalls, backfillCalls, sitemapBackfillCalls)
 	}
 
 	ownerStatus := performUserPathControllerRequestWithBody(http.MethodPut, "/discovery/sites/:id/status", "/discovery/sites/9/status", body, owner, UpdateDiscoverySiteStatus)
 	ownerBackfill := performUserPathControllerRequest(http.MethodPost, "/discovery/sites/:id/backfill", "/discovery/sites/9/backfill", owner, RequestDiscoverySiteBackfill)
-	if ownerStatus.Code != http.StatusOK || ownerBackfill.Code != http.StatusAccepted || statusCalls != 1 || backfillCalls != 1 {
-		t.Fatalf("owner results status=%d backfill=%d calls=%d/%d", ownerStatus.Code, ownerBackfill.Code, statusCalls, backfillCalls)
+	ownerSitemap := performUserPathControllerRequestWithBody(http.MethodPost, "/discovery/sites/:id/sitemap-backfill", "/discovery/sites/9/sitemap-backfill", []byte(`{"url":"https://example.com/sitemap.xml"}`), owner, RequestDiscoverySiteSitemapBackfill)
+	if ownerStatus.Code != http.StatusOK || ownerBackfill.Code != http.StatusAccepted || ownerSitemap.Code != http.StatusAccepted || statusCalls != 1 || backfillCalls != 1 || sitemapBackfillCalls != 1 {
+		t.Fatalf("owner results status=%d backfill=%d sitemap=%d calls=%d/%d/%d", ownerStatus.Code, ownerBackfill.Code, ownerSitemap.Code, statusCalls, backfillCalls, sitemapBackfillCalls)
 	}
 }
 

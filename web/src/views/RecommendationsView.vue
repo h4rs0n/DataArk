@@ -124,7 +124,7 @@
             <div class="section-title">
               <div>
                 <h2>订阅源</h2>
-                <span>RSS、RSSHub 或受限站点发现</span>
+                <span>仅显示管理员主动设置的第一优先级来源；友情链接博客在后台作为第二优先级扩展</span>
               </div>
             </div>
             <form v-if="isOwner" class="source-form" @submit.prevent="saveSource">
@@ -155,7 +155,7 @@
                 <div class="item-main">
                   <h3>{{ source.name }}</h3>
                   <p>{{ source.url }}</p>
-                  <span>{{ source.type }} · {{ source.enabled ? '启用' : '停用' }}</span>
+                  <span>第一优先级 · {{ source.type }} · {{ source.enabled ? '启用' : '停用' }}</span>
                   <small v-if="source.lastError">{{ source.lastError }}</small>
                 </div>
                 <a-space>
@@ -170,7 +170,7 @@
                 </a-space>
               </article>
             </div>
-            <SiteInsightPanel :source="selectedSource" :graph="siteGraph" :operations="siteOperations" :backfills="siteBackfills" :is-owner="isOwner" @reload="reloadSiteInsight" @backfill="requestBackfill" />
+            <SiteInsightPanel :source="selectedSource" :graph="siteGraph" :operations="siteOperations" :backfills="siteBackfills" :is-owner="isOwner" @reload="reloadSiteInsight" @backfill="requestBackfill" @sitemap-backfill="requestSitemapBackfill" />
           </section>
 
           <section class="panel">
@@ -419,6 +419,7 @@ interface DiscoverySource {
   nextDueAt?: string
   nextFetchAt?: string
   lastSuccessAt?: string
+  userManaged?: boolean
 }
 
 interface DiscoveryCandidate {
@@ -846,6 +847,16 @@ const requestBackfill = async (siteId: number) => {
     await reloadSiteInsight(siteId)
     Message.success('历史回溯已排队')
   } catch (error) { Message.error(error instanceof Error ? error.message : '启动回溯失败') }
+}
+
+const requestSitemapBackfill = async (siteId: number, url: string) => {
+  try {
+    await requestJSON(`/api/discovery/sites/${siteId}/sitemap-backfill`, {
+      method: 'POST', headers: authHeaders(true), body: JSON.stringify({ url }),
+    })
+    await reloadSiteInsight(siteId)
+    Message.success('Sitemap 历史补漏已排队')
+  } catch (error) { Message.error(error instanceof Error ? error.message : '启动 Sitemap 补漏失败') }
 }
 
 const deleteBlockRule = async (ruleId: number) => {

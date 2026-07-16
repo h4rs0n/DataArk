@@ -128,6 +128,7 @@ type DiscoveryBackfillState struct {
 	LastSuccessAt    *time.Time     `json:"lastSuccessAt"`
 	LastBatchAt      *time.Time     `json:"lastBatchAt"`
 	NextBatchAt      *time.Time     `json:"nextBatchAt" gorm:"index"`
+	OwnerRequestedAt *time.Time     `json:"ownerRequestedAt" gorm:"index"`
 	CompletionReason string         `json:"completionReason" gorm:"size:128"`
 	CreatedAt        time.Time      `json:"createdAt"`
 	UpdatedAt        time.Time      `json:"updatedAt"`

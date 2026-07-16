@@ -19,13 +19,14 @@ import (
 )
 
 const (
-	BackfillStrategySitemap = "sitemap"
-	BackfillStrategyArchive = "archive"
-	BackfillStatusPending   = "pending"
-	BackfillStatusRunning   = "running"
-	BackfillStatusCompleted = "completed"
-	BackfillStatusPaused    = "paused"
-	DiscoveryMethodArchive  = "archive"
+	BackfillStrategySitemap          = "sitemap"
+	BackfillStrategyArchive          = "archive"
+	BackfillStatusPending            = "pending"
+	BackfillStatusRunning            = "running"
+	BackfillStatusCompleted          = "completed"
+	BackfillStatusPaused             = "paused"
+	BackfillPauseSitemapOwnerRequest = "sitemap_requires_owner_request"
+	DiscoveryMethodArchive           = "archive"
 )
 
 type backfillCursor struct {
@@ -66,11 +67,8 @@ func RunBackfillSite(ctx context.Context, siteID uint, queue JobEnqueuer) (*Disc
 		}
 		return nil, nil
 	}
-	if err := initializeSiteBackfills(site, now); err != nil {
-		return nil, err
-	}
 	var states []DiscoveryBackfillState
-	if err := db.Where("site_id = ? AND status NOT IN ? AND (next_batch_at IS NULL OR next_batch_at <= ?)", siteID, []string{BackfillStatusCompleted, BackfillStatusPaused}, now).Find(&states).Error; err != nil {
+	if err := db.Where("site_id = ? AND status NOT IN ? AND (next_batch_at IS NULL OR next_batch_at <= ?) AND (strategy <> ? OR owner_requested_at IS NOT NULL)", siteID, []string{BackfillStatusCompleted, BackfillStatusPaused}, now, BackfillStrategySitemap).Find(&states).Error; err != nil {
 		return nil, err
 	}
 	if len(states) == 0 {
@@ -245,19 +243,6 @@ func ensureBackfillState(siteID uint, strategy string, urls []string, now time.T
 	return state, scheduled, err
 }
 
-func initializeSiteBackfills(site DiscoverySite, now time.Time) error {
-	var sitemapSources []DiscoverySource
-	if err := db.Where("site_id = ? AND endpoint_type = ?", site.ID, DiscoveryEndpointSitemap).Find(&sitemapSources).Error; err != nil {
-		return err
-	}
-	urls := make([]string, 0, len(sitemapSources))
-	for _, source := range sitemapSources {
-		urls = append(urls, source.URL)
-	}
-	_, _, err := ensureBackfillState(site.ID, BackfillStrategySitemap, urls, now)
-	return err
-}
-
 func fetchBackfillPage(ctx context.Context, strategy string, rawURL string) (FetchResult, error) {
 	kind := FetchKindHTML
 	if strategy == BackfillStrategySitemap {
@@ -329,14 +314,7 @@ func isHistoricalNavigation(path string, anchor string) bool {
 func sourceForBackfill(site DiscoverySite, strategy string, currentURL string) (DiscoverySource, error) {
 	var source DiscoverySource
 	if strategy == BackfillStrategySitemap {
-		err := db.Where("site_id = ? AND endpoint_type = ? AND url = ?", site.ID, DiscoveryEndpointSitemap, currentURL).First(&source).Error
-		if err == nil {
-			return source, nil
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return source, err
-		}
-		return source, db.Where("site_id = ? AND endpoint_type = ?", site.ID, DiscoveryEndpointSitemap).First(&source).Error
+		return source, db.Where("site_id = ? AND endpoint_type = ?", site.ID, DiscoveryEndpointHomepage).First(&source).Error
 	}
 	return source, db.Where("site_id = ? AND endpoint_type = ?", site.ID, DiscoveryEndpointHomepage).First(&source).Error
 }

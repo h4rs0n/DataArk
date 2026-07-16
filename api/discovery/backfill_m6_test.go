@@ -39,6 +39,9 @@ func TestBackfillFindsSitemapAndArchiveOnlyHistoricalArticles(t *testing.T) {
 	if _, err := (EndpointDiscoveryService{Clock: clock, Queue: queue}).DiscoverHomepage(context.Background(), site, *homepage, page.Body, page.FinalURL); err != nil {
 		t.Fatal(err)
 	}
+	if err := requestDiscoverySiteSitemapBackfill(context.Background(), site.ID, world.B.URL+"/sitemap.xml", queue); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := RunBackfillSite(context.Background(), site.ID, queue); err != nil {
 		t.Fatal(err)
 	}

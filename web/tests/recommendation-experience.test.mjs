@@ -4,6 +4,7 @@ import test from 'node:test'
 
 const view = await readFile(new URL('../src/views/RecommendationsView.vue', import.meta.url), 'utf8')
 const feedback = await readFile(new URL('../src/components/recommendations/FeedbackControls.vue', import.meta.url), 'utf8')
+const siteInsight = await readFile(new URL('../src/components/recommendations/SiteInsightPanel.vue', import.meta.url), 'utf8')
 
 test('recommendation experience exposes scoped reversible feedback', () => {
   for (const action of ['valuable', 'not_interested', 'too_repetitive', 'deep_read', 'block_source', 'reduce_topic', 'reduce_style']) {
@@ -22,4 +23,11 @@ test('recommendation experience shows digest and discovery audit context', () =>
 test('frontend has no destructive daily regeneration interaction', () => {
   assert.doesNotMatch(view, /admin\/recommendations\/generate/)
   assert.match(view, /admin\/recommendations\/supplement/)
+})
+
+test('discovery UI separates manual subscriptions and explicit sitemap gap fill', () => {
+  assert.match(view, /仅显示管理员主动设置的第一优先级来源/)
+  assert.match(view, /\/sitemap-backfill/)
+  assert.match(siteInsight, /Sitemap 默认关闭/)
+  assert.match(siteInsight, /sitemapBackfill/)
 })

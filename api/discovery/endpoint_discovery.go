@@ -37,7 +37,6 @@ type EndpointDiscoveryResult struct {
 
 type endpointLinkSet struct {
 	feeds      []string
-	sitemaps   []string
 	historical []string
 	candidates []discoveredCandidate
 }
@@ -55,7 +54,6 @@ func (service EndpointDiscoveryService) DiscoverHomepage(ctx context.Context, si
 	result.Candidates = append(result.Candidates, links.candidates...)
 	result.LinksFound = len(links.candidates)
 	feedURLs := append([]string(nil), links.feeds...)
-	sitemapURLs := append([]string(nil), links.sitemaps...)
 
 	if len(feedURLs) == 0 {
 		for _, rawURL := range commonEndpointURLs(site.RootURL, []string{"/feed.xml", "/feed", "/rss.xml", "/atom.xml", "/index.xml"}) {
@@ -69,19 +67,6 @@ func (service EndpointDiscoveryService) DiscoverHomepage(ctx context.Context, si
 		}
 	}
 
-	robotsURL := originURL(site.RootURL) + "/robots.txt"
-	if response, fetchErr := fetchDiscoveryRequest(ctx, FetchRequest{URL: robotsURL, Kind: FetchKindRobots}); fetchErr == nil && response.StatusCode == http.StatusOK {
-		sitemapURLs = append(sitemapURLs, sitemapURLsFromRobots(response.Body)...)
-	}
-	if len(sitemapURLs) == 0 {
-		defaultSitemap := originURL(site.RootURL) + "/sitemap.xml"
-		response, fetchErr := fetchDiscoveryRequest(ctx, FetchRequest{URL: defaultSitemap, Kind: FetchKindSitemap})
-		if fetchErr == nil && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
-			if _, _, parseErr := parseSitemapDocument(response.Body, site.RootURL); parseErr == nil {
-				sitemapURLs = append(sitemapURLs, defaultSitemap)
-			}
-		}
-	}
 	if rssHubURL := configuredRSSHubEndpoint(homepageSource.CrawlConfig); rssHubURL != "" {
 		feedURLs = append(feedURLs, rssHubURL)
 	}
@@ -103,22 +88,7 @@ func (service EndpointDiscoveryService) DiscoverHomepage(ctx context.Context, si
 			enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueFetchSource(ctx, endpoint.ID))
 		}
 	}
-	for _, rawURL := range uniqueNormalizedURLs(sitemapURLs) {
-		endpoint, created, saveErr := upsertSiteEndpoint(site, rawURL, DiscoverySourceTypeSitemap, DiscoveryEndpointSitemap, clock.Now())
-		if saveErr != nil {
-			return result, saveErr
-		}
-		result.SitemapsFound++
-		if created && service.Queue != nil {
-			enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueFetchSource(ctx, endpoint.ID))
-		}
-	}
 	backfillDue := false
-	if _, created, stateErr := ensureBackfillState(site.ID, BackfillStrategySitemap, sitemapURLs, clock.Now()); stateErr != nil {
-		return result, stateErr
-	} else {
-		backfillDue = backfillDue || created
-	}
 	if _, created, stateErr := ensureBackfillState(site.ID, BackfillStrategyArchive, links.historical, clock.Now()); stateErr != nil {
 		return result, stateErr
 	} else {
@@ -128,32 +98,6 @@ func (service EndpointDiscoveryService) DiscoverHomepage(ctx context.Context, si
 		enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueBackfillSite(ctx, site.ID))
 	}
 	return result, errors.Join(enqueueErrors...)
-}
-
-func (service EndpointDiscoveryService) SaveNestedSitemaps(ctx context.Context, site DiscoverySite, urls []string) error {
-	clock := service.Clock
-	if clock == nil {
-		clock = SystemClock{}
-	}
-	var enqueueErrors []error
-	for index, rawURL := range uniqueNormalizedURLs(urls) {
-		if index >= maxNestedSitemaps {
-			break
-		}
-		endpoint, created, err := upsertSiteEndpoint(site, rawURL, DiscoverySourceTypeSitemap, DiscoveryEndpointSitemap, clock.Now())
-		if err != nil {
-			return err
-		}
-		if created && service.Queue != nil {
-			enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueFetchSource(ctx, endpoint.ID))
-		}
-	}
-	if _, scheduled, err := ensureBackfillState(site.ID, BackfillStrategySitemap, urls, clock.Now()); err != nil {
-		return err
-	} else if scheduled && service.Queue != nil {
-		enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueBackfillSite(ctx, site.ID))
-	}
-	return errors.Join(enqueueErrors...)
 }
 
 func discoverHomepageEndpoints(body []byte, pageURL string, siteRootURL string) (endpointLinkSet, error) {
@@ -170,7 +114,6 @@ func discoverHomepageEndpoints(body []byte, pageURL string, siteRootURL string) 
 		return endpointLinkSet{}, err
 	}
 	feeds := make(map[string]struct{})
-	sitemaps := make(map[string]struct{})
 	historical := make(map[string]struct{})
 	candidates := make(map[string]discoveredCandidate)
 	var walk func(*html.Node)
@@ -182,11 +125,8 @@ func discoverHomepageEndpoints(body []byte, pageURL string, siteRootURL string) 
 				rel := strings.ToLower(attrValue(node, "rel"))
 				linkType := strings.ToLower(attrValue(node, "type"))
 				if resolved, ok := resolveWebURL(href, baseURL); ok {
-					switch {
-					case strings.Contains(rel, "alternate") && isFeedMediaType(linkType):
+					if strings.Contains(rel, "alternate") && isFeedMediaType(linkType) {
 						feeds[resolved.String()] = struct{}{}
-					case strings.Contains(rel, "sitemap"):
-						sitemaps[resolved.String()] = struct{}{}
 					}
 				}
 			case "a":
@@ -211,7 +151,7 @@ func discoverHomepageEndpoints(body []byte, pageURL string, siteRootURL string) 
 		}
 	}
 	walk(document)
-	result := endpointLinkSet{feeds: sortedKeys(feeds), sitemaps: sortedKeys(sitemaps), historical: sortedKeys(historical), candidates: make([]discoveredCandidate, 0, len(candidates))}
+	result := endpointLinkSet{feeds: sortedKeys(feeds), historical: sortedKeys(historical), candidates: make([]discoveredCandidate, 0, len(candidates))}
 	for _, candidate := range candidates {
 		result.candidates = append(result.candidates, candidate)
 	}
@@ -272,6 +212,9 @@ func parseSitemapDocument(body []byte, siteRootURL string) ([]discoveredCandidat
 	}
 	nested := make([]string, 0, len(sitemap.Sitemaps))
 	for _, item := range sitemap.Sitemaps {
+		if len(nested) >= maxNestedSitemaps {
+			break
+		}
 		if resolved, ok := resolveWebURL(item.Loc, baseURL); ok && sameLogicalHost(resolved, baseURL) {
 			nested = append(nested, resolved.String())
 		}
@@ -281,6 +224,9 @@ func parseSitemapDocument(body []byte, siteRootURL string) ([]discoveredCandidat
 
 func upsertSiteEndpoint(site DiscoverySite, rawURL string, sourceType string, endpointType string, now time.Time) (DiscoverySource, bool, error) {
 	var endpoint DiscoverySource
+	if sourceType == DiscoverySourceTypeSitemap || endpointType == DiscoveryEndpointSitemap {
+		return endpoint, false, ErrSitemapSourceDisabled
+	}
 	normalizedURL, err := NormalizeDiscoveryURL(rawURL)
 	if err != nil {
 		return endpoint, false, err
@@ -332,25 +278,6 @@ func commonEndpointURLs(rootURL string, paths []string) []string {
 		result = append(result, candidate.String())
 	}
 	return result
-}
-
-func originURL(rawURL string) string {
-	parsed, err := neturl.Parse(rawURL)
-	if err != nil {
-		return strings.TrimRight(rawURL, "/")
-	}
-	return parsed.Scheme + "://" + parsed.Host
-}
-
-func sitemapURLsFromRobots(body []byte) []string {
-	result := make([]string, 0)
-	for _, line := range strings.Split(string(body), "\n") {
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), "sitemap") {
-			result = append(result, strings.TrimSpace(parts[1]))
-		}
-	}
-	return uniqueNormalizedURLs(result)
 }
 
 func uniqueNormalizedURLs(values []string) []string {

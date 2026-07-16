@@ -6,6 +6,7 @@ import (
 	appdatabase "DataArk/database"
 	"DataArk/discovery"
 	"DataArk/jobqueue"
+	appmigrations "DataArk/migrations"
 	"DataArk/recommendation"
 	"context"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pressly/goose/v3"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -67,6 +69,37 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 	); err != nil {
 		t.Fatalf("auto-migrate legacy schema: %v", err)
 	}
+	goose.SetBaseFS(appmigrations.FS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpTo(sqlDB, ".", 19); err != nil {
+		t.Fatalf("migrate through subscription tiers: %v", err)
+	}
+	legacyNow := time.Now().UTC()
+	legacySite := discovery.DiscoverySite{
+		RootURL: "https://legacy-sitemap.invalid/", HostKey: "legacy-sitemap.invalid", DomainKey: "legacy-sitemap.invalid",
+		DisplayName: "Legacy sitemap", Status: discovery.DiscoverySiteStatusSeed, DiscoveryMethod: discovery.DiscoveryMethodManualSeed,
+		CrawlAllowed: true, FirstDiscoveredAt: legacyNow,
+	}
+	if err := database.Create(&legacySite).Error; err != nil {
+		t.Fatalf("create pre-migration sitemap site: %v", err)
+	}
+	legacySitemap := discovery.DiscoverySource{
+		Name: "Legacy sitemap", URL: legacySite.RootURL + "sitemap.xml", Type: discovery.DiscoverySourceTypeSitemap,
+		EndpointType: discovery.DiscoveryEndpointSitemap, SiteID: &legacySite.ID, UserManaged: true, Enabled: true,
+		NextDueAt: &legacyNow, NextFetchAt: &legacyNow,
+	}
+	if err := database.Create(&legacySitemap).Error; err != nil {
+		t.Fatalf("create pre-migration sitemap endpoint: %v", err)
+	}
+	legacyBackfill := discovery.DiscoveryBackfillState{
+		SiteID: legacySite.ID, Strategy: discovery.BackfillStrategySitemap, Cursor: `{\"pending\":[\"https://legacy-sitemap.invalid/sitemap.xml\"],\"visited\":[]}`,
+		Status: discovery.BackfillStatusPending, NextBatchAt: &legacyNow,
+	}
+	if err := database.Create(&legacyBackfill).Error; err != nil {
+		t.Fatalf("create pre-migration sitemap backfill: %v", err)
+	}
 	for attempt := 1; attempt <= 2; attempt++ {
 		if err := appdatabase.RunDatabaseMigrations(database); err != nil {
 			t.Fatalf("production migrations attempt %d: %v", attempt, err)
@@ -77,11 +110,17 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 	}
 
 	assertPostgresScalar(t, database,
-		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "19")
+		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "20")
 	assertPostgresScalar(t, database,
 		"SELECT extname FROM pg_extension WHERE extname = 'vector'", "vector")
 	assertPostgresScalar(t, database,
 		"SELECT to_regclass('public.river_job')::text", "river_job")
+	assertPostgresScalar(t, database,
+		fmt.Sprintf("SELECT enabled::text || ':' || user_managed::text FROM discovery_sources WHERE id = %d", legacySitemap.ID), "false:false")
+	assertPostgresScalar(t, database,
+		fmt.Sprintf("SELECT status || ':' || completion_reason FROM discovery_backfill_states WHERE id = %d", legacyBackfill.ID), "paused:sitemap_requires_owner_request")
+	assertPostgresScalar(t, database,
+		fmt.Sprintf("SELECT (owner_requested_at IS NULL)::text FROM discovery_backfill_states WHERE id = %d", legacyBackfill.ID), "true")
 
 	now := time.Now().UTC()
 	source := discovery.DiscoverySource{

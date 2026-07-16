@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestEndpointDiscoveryCreatesHomepageFeedAndSitemapAndSchedulesNewEndpoints(t *testing.T) {
+func TestEndpointDiscoveryCreatesHomepageAndFeedButLeavesSitemapDisabled(t *testing.T) {
 	setupSQLiteDB(t)
 	world := newDeterministicSiteWorld(t)
 	clock := &advancingClock{now: time.Date(2026, 7, 13, 16, 0, 0, 0, time.UTC)}
@@ -40,14 +40,14 @@ func TestEndpointDiscoveryCreatesHomepageFeedAndSitemapAndSchedulesNewEndpoints(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.FeedsFound != 1 || result.SitemapsFound != 1 || result.LinksFound != 1 {
+	if result.FeedsFound != 1 || result.SitemapsFound != 0 || result.LinksFound != 1 {
 		t.Fatalf("endpoint discovery = %#v", result)
 	}
 	var endpoints []DiscoverySource
 	if err := db.Where("site_id = ?", site.ID).Order("endpoint_type").Find(&endpoints).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(endpoints) != 3 {
+	if len(endpoints) != 2 {
 		t.Fatalf("site endpoints = %#v", endpoints)
 	}
 	for _, endpoint := range endpoints {
@@ -73,7 +73,7 @@ func TestEndpointDiscoveryCreatesHomepageFeedAndSitemapAndSchedulesNewEndpoints(
 	}
 }
 
-func TestFeedAndSitemapShareCandidatePreserveProvenanceAndDoNotRepeatProcessing(t *testing.T) {
+func TestFeedPreservesMetadataAndDoesNotRepeatProcessing(t *testing.T) {
 	setupSQLiteDB(t)
 	if err := db.AutoMigrate(&DiscoveryArticleAssessment{}); err != nil {
 		t.Fatal(err)
@@ -94,8 +94,6 @@ func TestFeedAndSitemapShareCandidatePreserveProvenanceAndDoNotRepeatProcessing(
 				return FetchResult{StatusCode: http.StatusNotModified, ETag: `"feed-v1"`, NotModified: true}, nil
 			}
 			return FetchResult{StatusCode: http.StatusOK, ETag: `"feed-v1"`, Body: []byte(`<?xml version="1.0"?><rss version="2.0"><channel><item><title>Trusted Feed Title</title><link>https://shared.example/posts/one</link></item></channel></rss>`)}, nil
-		case strings.Contains(request.URL, "sitemap.xml"):
-			return FetchResult{StatusCode: http.StatusOK, Body: []byte(`<?xml version="1.0"?><urlset><url><loc>https://shared.example/posts/one</loc><lastmod>2026-07-12</lastmod></url></urlset>`)}, nil
 		default:
 			return FetchResult{}, fmt.Errorf("unexpected URL %s", request.URL)
 		}
@@ -119,29 +117,20 @@ func TestFeedAndSitemapShareCandidatePreserveProvenanceAndDoNotRepeatProcessing(
 	if err != nil {
 		t.Fatal(err)
 	}
-	sitemap, _, err := upsertSiteEndpoint(site, site.RootURL+"sitemap.xml", DiscoverySourceTypeSitemap, DiscoveryEndpointSitemap, clock.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
 	first, err := FetchDiscoverySource(context.Background(), &feed)
 	if err != nil || first.Stored != 1 {
 		t.Fatalf("feed fetch = %#v, %v", first, err)
 	}
 	clock.Advance(time.Minute)
-	second, err := FetchDiscoverySource(context.Background(), &sitemap)
-	if err != nil || second.Stored != 0 || second.Discovered != 1 {
-		t.Fatalf("sitemap fetch = %#v, %v", second, err)
-	}
-	clock.Advance(time.Minute)
-	third, err := FetchDiscoverySource(context.Background(), &feed)
-	if err != nil || third.Stored != 0 {
-		t.Fatalf("repeat feed fetch = %#v, %v", third, err)
+	second, err := FetchDiscoverySource(context.Background(), &feed)
+	if err != nil || second.Stored != 0 {
+		t.Fatalf("repeat feed fetch = %#v, %v", second, err)
 	}
 	feedMode = "not_modified"
 	clock.Advance(time.Minute)
-	fourth, err := FetchDiscoverySource(context.Background(), &feed)
-	if err != nil || fourth.Stored != 0 || fourth.Discovered != 0 {
-		t.Fatalf("304 feed fetch = %#v, %v", fourth, err)
+	third, err := FetchDiscoverySource(context.Background(), &feed)
+	if err != nil || third.Stored != 0 || third.Discovered != 0 {
+		t.Fatalf("304 feed fetch = %#v, %v", third, err)
 	}
 
 	var candidates []DiscoveryCandidate
@@ -162,7 +151,7 @@ func TestFeedAndSitemapShareCandidatePreserveProvenanceAndDoNotRepeatProcessing(
 	if err := db.Order("discovery_method").Find(&provenance).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(provenance) != 2 || provenance[0].DiscoveryMethod == provenance[1].DiscoveryMethod {
+	if len(provenance) != 1 || provenance[0].DiscoveryMethod != DiscoveryMethodFeed {
 		t.Fatalf("candidate provenance = %#v", provenance)
 	}
 	var assessments int64
@@ -173,12 +162,12 @@ func TestFeedAndSitemapShareCandidatePreserveProvenanceAndDoNotRepeatProcessing(
 	if err := db.Order("id").Find(&runs).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(runs) != 4 || runs[1].DuplicateCount != 1 || runs[2].DuplicateCount != 1 || !runs[3].NotModified {
+	if len(runs) != 3 || runs[1].DuplicateCount != 1 || !runs[2].NotModified {
 		t.Fatalf("fetch runs = %#v", runs)
 	}
 }
 
-func TestSitemapIndexCreatesBoundedChildEndpoint(t *testing.T) {
+func TestSitemapIndexParserKeepsOnlySameSiteChildren(t *testing.T) {
 	setupSQLiteDB(t)
 	now := time.Date(2026, 7, 13, 16, 0, 0, 0, time.UTC)
 	site := DiscoverySite{RootURL: "https://index.example/", HostKey: "index.example", DisplayName: "Index", Status: DiscoverySiteStatusObserving, DiscoveryMethod: "test", CrawlAllowed: true, RobotsStatus: "unknown", FirstDiscoveredAt: now, CreatedAt: now}
@@ -189,16 +178,8 @@ func TestSitemapIndexCreatesBoundedChildEndpoint(t *testing.T) {
 	if err != nil || len(candidates) != 0 || len(nested) != 1 {
 		t.Fatalf("sitemap index candidates=%#v nested=%#v err=%v", candidates, nested, err)
 	}
-	jobs := &recordedJobs{keys: make(map[string]struct{})}
-	queue := recordingJobEnqueuer{store: jobs}
-	if err := (EndpointDiscoveryService{Clock: &advancingClock{now: now}, Queue: queue}).SaveNestedSitemaps(context.Background(), site, nested); err != nil {
-		t.Fatal(err)
-	}
-	var endpoint DiscoverySource
-	if err := db.Where("site_id = ? AND endpoint_type = ?", site.ID, DiscoveryEndpointSitemap).First(&endpoint).Error; err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := jobs.keys[fmt.Sprintf("fetch:%d", endpoint.ID)]; !ok {
-		t.Fatalf("nested sitemap was not scheduled: %#v", jobs.keys)
+	var sitemapEndpoints int64
+	if err := db.Model(&DiscoverySource{}).Where("endpoint_type = ?", DiscoveryEndpointSitemap).Count(&sitemapEndpoints).Error; err != nil || sitemapEndpoints != 0 {
+		t.Fatalf("parser created sitemap endpoints: %d, %v", sitemapEndpoints, err)
 	}
 }

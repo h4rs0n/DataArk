@@ -43,7 +43,7 @@ next_due_at <= ? OR
 	}
 
 	var backfills []DiscoveryBackfillState
-	if err := db.Where("status NOT IN ? AND (next_batch_at IS NULL OR next_batch_at <= ?)", []string{"completed", "paused"}, now).Order("id").Find(&backfills).Error; err != nil {
+	if err := db.Where("status NOT IN ? AND (next_batch_at IS NULL OR next_batch_at <= ?) AND (strategy <> ? OR owner_requested_at IS NOT NULL)", []string{"completed", "paused"}, now, BackfillStrategySitemap).Order("id").Find(&backfills).Error; err != nil {
 		recoveryErrors = append(recoveryErrors, err)
 	} else {
 		for _, backfill := range backfills {

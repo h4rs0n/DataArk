@@ -117,7 +117,7 @@ func TestBlogVerificationPrecedesAutomaticExpansion(t *testing.T) {
 	if companySite.Status != DiscoverySiteStatusNonBlog || companySite.CrawlAllowed || companySite.OperationalPause != DiscoveryPauseNonBlog || companySite.OperationalDetails != "blog_verification:"+BlogVerificationNoEvidence {
 		t.Fatalf("non-blog classification = %#v", companySite)
 	}
-	if requests["https://company.example.net/"] != 1 || len(requests) != 3 {
+	if requests["https://company.example.net/"] != 1 || len(requests) != 2 {
 		t.Fatalf("request boundary = %#v", requests)
 	}
 	var companyHomepage DiscoverySource
