@@ -61,6 +61,56 @@ func TestDiscoverySourcesReuseAndListOneRegistrableDomain(t *testing.T) {
 	if listed[0].ID != first.ID && listed[1].ID != first.ID {
 		t.Fatalf("earliest user endpoint is not the domain representative: %#v", listed)
 	}
+	for _, source := range listed {
+		if !source.UserManaged || source.Priority < DiscoveryPriorityManual {
+			t.Fatalf("manual subscription tier = %#v", source)
+		}
+	}
+}
+
+func TestDiscoverySourceListExcludesInternalAndBlogrollEndpoints(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
+	manual, err := CreateDiscoverySource("Manual Feed", "https://notes.example.com/feed.xml", DiscoverySourceTypeFeed, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manual.SiteID == nil {
+		t.Fatal("manual source has no site")
+	}
+	manualSite := DiscoverySite{}
+	if err := db.First(&manualSite, *manual.SiteID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := upsertSiteEndpoint(manualSite, "https://notes.example.com/atom.xml", DiscoverySourceTypeFeed, DiscoveryEndpointFeed, now); err != nil {
+		t.Fatal(err)
+	}
+	blogrollSite := DiscoverySite{
+		RootURL: "https://friend.example.net/", HostKey: "friend.example.net", DomainKey: "example.net",
+		DisplayName: "Friend", Status: DiscoverySiteStatusActive, DiscoveryMethod: DiscoveryMethodBlogroll,
+		GraphDepth: 1, CrawlAllowed: true, FirstDiscoveredAt: now,
+	}
+	if err := db.Create(&blogrollSite).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ensureHomepageEndpoint(db, blogrollSite, now); err != nil {
+		t.Fatal(err)
+	}
+
+	listed, err := ListDiscoverySources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != manual.ID || !listed[0].UserManaged {
+		t.Fatalf("manual-only source projection = %#v", listed)
+	}
+	var internal []DiscoverySource
+	if err := db.Where("user_managed = ?", false).Order("id").Find(&internal).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(internal) != 3 {
+		t.Fatalf("internal endpoints were not retained = %#v", internal)
+	}
 }
 
 func TestDomainBackfillGroupsExistingDuplicateSitesWithoutDeletingEndpoints(t *testing.T) {
@@ -74,7 +124,7 @@ func TestDomainBackfillGroupsExistingDuplicateSitesWithoutDeletingEndpoints(t *t
 		if err := db.Create(&sites[index]).Error; err != nil {
 			t.Fatal(err)
 		}
-		source := DiscoverySource{Name: sites[index].HostKey, URL: sites[index].RootURL + "feed.xml", Type: DiscoverySourceTypeFeed, EndpointType: DiscoveryEndpointFeed, SiteID: &sites[index].ID, Enabled: true, CreatedAt: now.Add(time.Duration(index) * time.Minute)}
+		source := DiscoverySource{Name: sites[index].HostKey, URL: sites[index].RootURL + "feed.xml", Type: DiscoverySourceTypeFeed, EndpointType: DiscoveryEndpointFeed, SiteID: &sites[index].ID, UserManaged: index == 0, Enabled: true, CreatedAt: now.Add(time.Duration(index) * time.Minute)}
 		if err := db.Create(&source).Error; err != nil {
 			t.Fatal(err)
 		}

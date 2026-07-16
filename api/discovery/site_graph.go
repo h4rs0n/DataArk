@@ -22,6 +22,9 @@ const (
 	DiscoveryMethodBlogroll    = "blogroll"
 	DiscoveryMethodManualSeed  = "manual_seed"
 	DiscoveryEndpointHomepage  = "homepage"
+	DiscoveryPriorityBlogroll  = 1000
+	DiscoveryPriorityManual    = 2000
+	maxDiscoveryPriorityBoost  = 999
 	defaultGraphRescanInterval = 7 * 24 * time.Hour
 	failedGraphRescanInterval  = 24 * time.Hour
 )
@@ -286,7 +289,7 @@ func ensureHomepageEndpoint(tx *gorm.DB, site DiscoverySite, now time.Time) (Dis
 	var source DiscoverySource
 	err := tx.Where("url = ?", site.RootURL).First(&source).Error
 	if err == nil {
-		updates := map[string]interface{}{"site_id": site.ID, "endpoint_type": DiscoveryEndpointHomepage}
+		updates := map[string]interface{}{"site_id": site.ID, "endpoint_type": DiscoveryEndpointHomepage, "priority": discoveryPriorityForSite(site)}
 		if site.CrawlAllowed {
 			updates["enabled"] = true
 			if source.NextDueAt == nil {
@@ -304,7 +307,7 @@ func ensureHomepageEndpoint(tx *gorm.DB, site DiscoverySite, now time.Time) (Dis
 	}
 	source = DiscoverySource{
 		Name: site.DisplayName, URL: site.RootURL, Type: DiscoverySourceTypeSite, SiteID: &site.ID,
-		EndpointType: DiscoveryEndpointHomepage, Enabled: site.CrawlAllowed,
+		EndpointType: DiscoveryEndpointHomepage, Priority: discoveryPriorityForSite(site), Enabled: site.CrawlAllowed,
 		NextFetchAt: &now, NextDueAt: &now,
 	}
 	return source, tx.Create(&source).Error
@@ -315,7 +318,22 @@ func updateGraphPriority(tx *gorm.DB, siteID uint) error {
 	if err := tx.Model(&DiscoverySiteEdge{}).Where("to_site_id = ? AND active = ?", siteID, true).Distinct("from_site_id").Count(&inbound).Error; err != nil {
 		return err
 	}
-	return tx.Model(&DiscoverySource{}).Where("site_id = ?", siteID).Update("priority", inbound).Error
+	var site DiscoverySite
+	if err := tx.Select("discovery_method").First(&site, siteID).Error; err != nil {
+		return err
+	}
+	boost := int(inbound)
+	if boost > maxDiscoveryPriorityBoost {
+		boost = maxDiscoveryPriorityBoost
+	}
+	return tx.Model(&DiscoverySource{}).Where("site_id = ?", siteID).Update("priority", discoveryPriorityForSite(site)+boost).Error
+}
+
+func discoveryPriorityForSite(site DiscoverySite) int {
+	if site.DiscoveryMethod == DiscoveryMethodManualSeed || site.DiscoveryMethod == "legacy_source" || site.Status == DiscoverySiteStatusSeed {
+		return DiscoveryPriorityManual
+	}
+	return DiscoveryPriorityBlogroll
 }
 
 func dedupeBlogrollLinks(links []BlogrollLink) []BlogrollLink {

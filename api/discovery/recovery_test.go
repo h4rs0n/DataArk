@@ -92,3 +92,24 @@ func TestRecoverDueJobsContinuesAfterIndependentSourceFailure(t *testing.T) {
 		t.Fatalf("candidate recoveries = %#v", queue.candidates)
 	}
 }
+
+func TestRecoverDueSourcesUsesSubscriptionTierOrder(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Minute)
+	blogroll := DiscoverySource{Name: "Blogroll", URL: "https://friend.example/feed", Type: DiscoverySourceTypeFeed, EndpointType: DiscoveryEndpointFeed, Priority: DiscoveryPriorityBlogroll, Enabled: true, NextDueAt: &past}
+	manual := DiscoverySource{Name: "Manual", URL: "https://manual.example/feed", Type: DiscoverySourceTypeFeed, EndpointType: DiscoveryEndpointFeed, UserManaged: true, Priority: DiscoveryPriorityManual, Enabled: true, NextDueAt: &past}
+	if err := db.Create(&blogroll).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&manual).Error; err != nil {
+		t.Fatal(err)
+	}
+	queue := &recoveryRecordingQueue{}
+	if err := RecoverDueJobs(context.Background(), queue, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.fetches) != 2 || queue.fetches[0] != manual.ID || queue.fetches[1] != blogroll.ID {
+		t.Fatalf("tiered fetch recoveries = %#v", queue.fetches)
+	}
+}

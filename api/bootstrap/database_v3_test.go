@@ -264,7 +264,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 18 || migrations[len(migrations)-1].Version != 18 {
+	if len(migrations) != 19 || migrations[len(migrations)-1].Version != 19 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -393,6 +393,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"domain_key", "idx_discovery_sites_domain_key", "Public Suffix List", "Data-preserving rollback"} {
 		if !strings.Contains(string(domainIdentity), required) {
 			t.Fatalf("discovery domain identity migration missing %q", required)
+		}
+	}
+	subscriptionTiers, err := appmigrations.FS.ReadFile("000019_discovery_subscription_tiers.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"user_managed", "manual_representatives", "priority = CASE", "Data-preserving rollback"} {
+		if !strings.Contains(string(subscriptionTiers), required) {
+			t.Fatalf("discovery subscription tier migration missing %q", required)
 		}
 	}
 }

@@ -295,7 +295,8 @@ func upsertSiteEndpoint(site DiscoverySite, rawURL string, sourceType string, en
 			endpoint = DiscoverySource{
 				Name: firstNonBlank(site.DisplayName, hostLabel(normalizedURL)), URL: normalizedURL,
 				Type: sourceType, SiteID: &site.ID, EndpointType: endpointType,
-				Enabled: true, NextFetchAt: &now, NextDueAt: &now,
+				Priority: discoveryPriorityForSite(site),
+				Enabled:  true, NextFetchAt: &now, NextDueAt: &now,
 				CreatedAt: now, UpdatedAt: now,
 			}
 			if err := tx.Create(&endpoint).Error; err != nil {
@@ -307,7 +308,7 @@ func upsertSiteEndpoint(site DiscoverySite, rawURL string, sourceType string, en
 		if findErr != nil {
 			return findErr
 		}
-		updates := map[string]interface{}{"site_id": site.ID, "type": sourceType, "endpoint_type": endpointType, "enabled": true}
+		updates := map[string]interface{}{"site_id": site.ID, "type": sourceType, "endpoint_type": endpointType, "priority": discoveryPriorityForSite(site), "enabled": true}
 		if endpoint.NextDueAt == nil {
 			updates["next_due_at"] = &now
 			updates["next_fetch_at"] = &now

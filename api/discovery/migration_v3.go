@@ -30,6 +30,7 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 		siteBySource := make(map[uint]uint, len(sources))
 		for index := range sources {
 			source := &sources[index]
+			wasLegacySource := source.SiteID == nil
 			rootURL, hostKey, err := canonicalLegacySite(source.URL)
 			if err != nil {
 				return fmt.Errorf("source %d site identity: %w", source.ID, err)
@@ -69,6 +70,10 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 			updates := map[string]interface{}{
 				"site_id":       site.ID,
 				"endpoint_type": legacyEndpointType(source.Type),
+				"priority":      discoveryPriorityForSite(site),
+			}
+			if wasLegacySource {
+				updates["user_managed"] = true
 			}
 			if source.NextDueAt == nil && source.NextFetchAt != nil {
 				updates["next_due_at"] = source.NextFetchAt

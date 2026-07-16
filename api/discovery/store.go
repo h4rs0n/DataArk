@@ -63,7 +63,7 @@ func ListDiscoverySources() ([]DiscoverySource, error) {
 	if db == nil {
 		return sources, nil
 	}
-	if err := db.Order("id").Find(&sources).Error; err != nil {
+	if err := db.Where("user_managed = ?", true).Order("id").Find(&sources).Error; err != nil {
 		return nil, err
 	}
 	var sites []DiscoverySite
@@ -117,6 +117,8 @@ func CreateDiscoverySource(name string, rawURL string, sourceType string, enable
 		URL:          normalizedURL,
 		Type:         sourceType,
 		EndpointType: legacyEndpointType(sourceType),
+		UserManaged:  true,
+		Priority:     DiscoveryPriorityManual,
 		Enabled:      enabled,
 	}
 	if enabled {
@@ -166,7 +168,7 @@ func UpdateDiscoverySource(id uint, name string, rawURL string, sourceType strin
 		return nil, gorm.ErrRecordNotFound
 	}
 	var source DiscoverySource
-	if err := db.First(&source, id).Error; err != nil {
+	if err := db.Where("user_managed = ?", true).First(&source, id).Error; err != nil {
 		return nil, err
 	}
 	normalizedURL, err := NormalizeDiscoveryURL(rawURL)
@@ -193,7 +195,7 @@ func DeleteDiscoverySource(id uint) error {
 	if db == nil {
 		return nil
 	}
-	return db.Delete(&DiscoverySource{}, id).Error
+	return db.Where("user_managed = ?", true).Delete(&DiscoverySource{}, id).Error
 }
 
 func GetDiscoveryCandidate(id uint) (*DiscoveryCandidate, error) {

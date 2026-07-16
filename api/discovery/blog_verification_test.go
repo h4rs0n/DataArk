@@ -131,8 +131,8 @@ func TestBlogVerificationPrecedesAutomaticExpansion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(visible) != 1 || visible[0].SiteID == nil || *visible[0].SiteID != blogSite.ID {
-		t.Fatalf("visible verified subscriptions = %#v", visible)
+	if len(visible) != 0 {
+		t.Fatalf("automatically verified blogs appeared as manual subscriptions = %#v", visible)
 	}
 	before := requests["https://company.example.net/"]
 	if scan, err := ScanBlogroll(context.Background(), companySite.ID, queue); err != nil || scan.PagesScanned != 0 {

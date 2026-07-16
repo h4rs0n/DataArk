@@ -21,7 +21,7 @@ func RecoverDueJobs(ctx context.Context, queue JobEnqueuer, now time.Time) error
 next_due_at <= ? OR
 (next_due_at IS NULL AND next_fetch_at <= ?) OR
 (next_due_at IS NULL AND next_fetch_at IS NULL)
-)`, true, now, now).Where("site_id IS NULL OR site_id IN (?)", activeSiteIDs).Order("id").Find(&sources).Error; err != nil {
+)`, true, now, now).Where("site_id IS NULL OR site_id IN (?)", activeSiteIDs).Order("priority DESC, id").Find(&sources).Error; err != nil {
 		return err
 	}
 	for _, source := range sources {

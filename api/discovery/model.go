@@ -16,6 +16,7 @@ type DiscoverySource struct {
 	Type          string     `json:"type" gorm:"not null;size:32"`
 	SiteID        *uint      `json:"siteId" gorm:"index"`
 	EndpointType  string     `json:"endpointType" gorm:"index;not null;default:legacy;size:32"`
+	UserManaged   bool       `json:"userManaged" gorm:"index;not null;default:false"`
 	Priority      int        `json:"priority" gorm:"not null;default:0"`
 	Enabled       bool       `json:"enabled" gorm:"not null;default:true"`
 	ETag          string     `json:"etag" gorm:"column:etag;size:1024"`
