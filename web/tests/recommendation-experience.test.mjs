@@ -31,3 +31,15 @@ test('discovery UI separates manual subscriptions and explicit sitemap gap fill'
   assert.match(siteInsight, /Sitemap 默认关闭/)
   assert.match(siteInsight, /sitemapBackfill/)
 })
+
+test('owner UI exposes the manual crawl queue in a dedicated tab', () => {
+  assert.match(view, /爬取任务队列/)
+  assert.match(view, /执行待处理任务/)
+  assert.match(view, /\/api\/admin\/discovery\/crawl-queue\?limit=50/)
+  assert.match(view, /\/api\/admin\/discovery\/crawl-queue\/run/)
+  assert.match(view, /<a-tab-pane v-if="isOwner" key="queue" title="任务队列">/)
+  assert.ok(view.indexOf('key="queue"') > view.indexOf('key="discovery"'))
+  assert.match(view, /activeTab\.value !== 'queue'/)
+  assert.match(view, /watch\(activeTab, \(tab\) =>/)
+  assert.match(view, /crawlQueue\.value\.state === 'running' \? 2000 : 10000/)
+})

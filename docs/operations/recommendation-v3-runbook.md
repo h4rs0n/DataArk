@@ -8,7 +8,7 @@ Back up PostgreSQL and the archive directory before changing the running binary.
 
 Blogroll targets remain `observing` until a single homepage response supplies deterministic blog evidence. They become `active` before endpoint, Blogroll, or backfill expansion. Targets without evidence become `non_blog`, keep their graph edges and `blog_verification:<reason>` operational detail, disable the homepage endpoint, and disappear from the subscriptions projection. If an owner confirms a false negative, change the site status to `active`; this re-enables and immediately schedules its homepage without deleting the original decision evidence from fetch and graph history.
 
-For production PostgreSQL, start the database first and then start one API instance. Startup applies Goose and River migrations before workers accept jobs. Confirm the `vector` extension only when embeddings are enabled; the rules pipeline does not need it. A representative isolated validation is:
+For production PostgreSQL, start the database first and then start one API instance. Startup applies Goose and River migrations, pauses the `discovery_crawl` queue before workers accept jobs, moves unfinished discovery work left in River's historical `default` queue into the paused queue, recovers interrupted crawl rows as waiting, and stages due discovery work without executing it. Daily recommendation generation remains on River's default queue. Confirm the `vector` extension only when embeddings are enabled; the rules pipeline does not need it. A representative isolated validation is:
 
 ```sh
 cd docker
@@ -18,7 +18,7 @@ docker compose restart dataarkapi
 docker compose logs --no-color dataarkapi
 ```
 
-After the restart, verify that migrations are current, interrupted River work resumes once, published digests are unchanged, and no secret is printed in structured `dataark_event` records. Never place production tokens, passwords, private Feed bodies, or user content in fixtures, Compose files, command history, or this runbook.
+After the restart, verify that migrations are current, interrupted discovery work is visible but does not resume automatically, published digests are unchanged, and no secret is printed in structured `dataark_event` records. Sign in as owner, inspect **Recommendation Center → Content Discovery → Crawl Task Queue**, and explicitly run the pending batch when ready. Never place production tokens, passwords, private Feed bodies, or user content in fixtures, Compose files, command history, or this runbook.
 
 Before a production rollout, run the repository's opt-in database gate against a disposable empty database whose name begins with `dataark_v3_verify`:
 
@@ -65,7 +65,7 @@ Use `GET /api/admin/recommendations/metrics`, site graph/operations/backfill end
 
 - Source failure: inspect the latest fetch runs, HTTP/error category, validator, next due time, and failure backoff. A failure for one endpoint must not stop other jobs. Resume by fixing reachability and waiting for or re-requesting the owner fetch; do not reset candidate data.
 - robots denial or unavailability: an explicit denial stops the disallowed request. An unavailable robots file is conservative and retryable. Do not bypass robots to restore throughput; correct the site/endpoint or wait for the bounded retry.
-- Processing backlog: compare discovered/fetch-pending/ready/review/failed counts and River pending jobs. Restarting the API should re-enqueue due versions idempotently. Persistent article-type, language, or short-body cases belong in review, not forced eligible.
+- Processing backlog: compare discovered/fetch-pending/ready/review/failed counts and the owner-only crawl queue panel. Restarting the API should stage due versions idempotently while keeping the queue paused; click **Run pending tasks** to execute them. Persistent article-type, language, or short-body cases belong in review, not forced eligible.
 - Inventory shortage: inspect fresh/evergreen/exploration inventory days and the digest's excluded counts. Hard eligibility, user blocks, cooldown, and duplicate identity are never relaxed. Increase legitimate discovery/backfill coverage or use owner supplement after new eligible items arrive; do not insert ineligible fillers.
 - Model degradation: an absent model is normal deterministic mode. A configured assessor/reranker failure records degradation while rules continue. Remove or repair model configuration, then allow future assessments/digests to use it; never rewrite already-published snapshots.
 - Missing, draft, or failed digest: startup and the scheduler recover the user/local-date job. Owner safe retry may be used. Published or supplemented days are returned unchanged. A later inventory increase may be handled only by append-only supplement.

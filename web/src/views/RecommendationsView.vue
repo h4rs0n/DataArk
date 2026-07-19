@@ -217,6 +217,48 @@
           </section>
         </a-tab-pane>
 
+        <a-tab-pane v-if="isOwner" key="queue" title="任务队列">
+          <section class="panel">
+            <div class="section-title">
+              <div>
+                <h2>爬取任务队列</h2>
+                <span>自动发现只登记任务；点击后单次执行当前到期任务及其派生任务</span>
+              </div>
+              <a-space wrap>
+                <span class="queue-state" :class="`queue-state-${crawlQueue.state}`">{{ crawlQueueStateLabel }}</span>
+                <a-button :loading="crawlQueueLoading" @click="loadCrawlQueue()">
+                  <template #icon><icon-refresh /></template>
+                  刷新
+                </a-button>
+                <a-button type="primary" :loading="runningCrawlQueue" :disabled="!crawlQueue.canRun || crawlQueue.state === 'running'" @click="runCrawlQueue">
+                  执行待处理任务
+                </a-button>
+              </a-space>
+            </div>
+
+            <div class="queue-summary">
+              <div><strong>{{ crawlQueue.counts.pending }}</strong><span>等待执行</span></div>
+              <div><strong>{{ crawlQueue.counts.running }}</strong><span>正在运行</span></div>
+              <div><strong>{{ crawlQueue.counts.succeeded24h }}</strong><span>近 24 小时成功</span></div>
+              <div><strong>{{ crawlQueue.counts.failed24h }}</strong><span>近 24 小时失败</span></div>
+            </div>
+
+            <a-empty v-if="crawlQueue.tasks.length === 0" description="暂无爬取任务" />
+            <div v-else class="queue-task-list">
+              <article v-for="task in crawlQueue.tasks" :key="task.id" class="queue-task-row">
+                <div>
+                  <strong>{{ crawlTaskKindLabel(task.kind) }}</strong>
+                  <span>{{ crawlTaskTargetLabel(task) }}</span>
+                </div>
+                <span class="task-status" :class="`task-status-${task.status}`">{{ crawlTaskStatusLabel(task.status) }}</span>
+                <span>尝试 {{ task.attempts }} 次</span>
+                <span>{{ crawlTaskTimeLabel(task) }}</span>
+                <small v-if="task.error" class="queue-task-error">{{ task.error }}</small>
+              </article>
+            </div>
+          </section>
+        </a-tab-pane>
+
         <a-tab-pane key="settings" title="推荐设置">
           <section class="panel settings-grid">
             <form class="settings-form" @submit.prevent="saveSettings">
@@ -364,7 +406,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message, Notification } from '@arco-design/web-vue'
 import DigestSummary from '@/components/recommendations/DigestSummary.vue'
@@ -500,6 +542,41 @@ interface BlockTarget {
   value: string
 }
 
+type CrawlTaskStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+
+interface CrawlQueueTask {
+  id: string
+  kind: string
+  targetType: string
+  targetId: number
+  contentVersion?: string
+  status: CrawlTaskStatus
+  attempts: number
+  scheduledAt?: string
+  startedAt?: string
+  finishedAt?: string
+  error?: string
+  createdAt: string
+}
+
+interface CrawlQueueSnapshot {
+  mode: 'manual'
+  state: 'idle' | 'waiting' | 'running'
+  canRun: boolean
+  updatedAt: string
+  counts: { pending: number; running: number; succeeded24h: number; failed24h: number }
+  tasks: CrawlQueueTask[]
+}
+
+const emptyCrawlQueue = (): CrawlQueueSnapshot => ({
+  mode: 'manual',
+  state: 'idle',
+  canRun: false,
+  updatedAt: '',
+  counts: { pending: 0, running: 0, succeeded24h: 0, failed24h: 0 },
+  tasks: [],
+})
+
 const router = useRouter()
 const activeTab = ref('today')
 const loading = ref(false)
@@ -509,6 +586,8 @@ const savingSource = ref(false)
 const fetchingSourceId = ref<number | null>(null)
 const archivingCandidateId = ref<number | null>(null)
 const feedbackLoadingId = ref<number | null>(null)
+const crawlQueueLoading = ref(false)
+const runningCrawlQueue = ref(false)
 const rankingWindow = ref<'7d' | 'all'>('7d')
 const keywordWindow = ref<'7d' | 'all'>('7d')
 const candidateStatus = ref('new')
@@ -518,6 +597,7 @@ const archiveRecommendations = ref<ArchiveRecommendationItem[]>([])
 const keywords = ref<KeywordItem[]>([])
 const sources = ref<DiscoverySource[]>([])
 const candidates = ref<DiscoveryCandidate[]>([])
+const crawlQueue = ref<CrawlQueueSnapshot>(emptyCrawlQueue())
 const historyDays = ref<RecommendationDay[]>([])
 const blockRules = ref<BlockRule[]>([])
 const feedbackByItem = reactive<Record<number, { action: string } | undefined>>({})
@@ -550,6 +630,13 @@ const preferredLanguagesText = ref('')
 const favoriteSourcesText = ref('')
 const impactDialog = reactive<{ visible: boolean; item: RecommendationItem | null; scope: BlockRuleType }>({ visible: false, item: null, scope: 'source' })
 const selectedImpactValue = ref('')
+let crawlQueueTimer: ReturnType<typeof window.setTimeout> | null = null
+
+const crawlQueueStateLabel = computed(() => ({
+  idle: '队列空闲',
+  waiting: '等待手动执行',
+  running: '正在执行',
+}[crawlQueue.value.state]))
 
 const todayStatusText = computed(() => {
   const day = todaySnapshot.value.day
@@ -601,6 +688,50 @@ const loadToday = async () => {
 const loadIdentity = async () => {
   const user = await requestJSON<{ role?: string }>('/api/authChecker', { headers: authHeaders() })
   isOwner.value = user?.role === 'owner'
+}
+
+const clearCrawlQueueTimer = () => {
+  if (crawlQueueTimer !== null) {
+    window.clearTimeout(crawlQueueTimer)
+    crawlQueueTimer = null
+  }
+}
+
+const scheduleCrawlQueueRefresh = () => {
+  clearCrawlQueueTimer()
+  if (!isOwner.value || activeTab.value !== 'queue') return
+  const delay = crawlQueue.value.state === 'running' ? 2000 : 10000
+  crawlQueueTimer = window.setTimeout(() => { void loadCrawlQueue(true) }, delay)
+}
+
+const loadCrawlQueue = async (silent = false) => {
+  if (!isOwner.value) return
+  const wasRunning = crawlQueue.value.state === 'running'
+  try {
+    if (!silent) crawlQueueLoading.value = true
+    crawlQueue.value = await requestJSON<CrawlQueueSnapshot>('/api/admin/discovery/crawl-queue?limit=50', { headers: authHeaders() })
+    if (wasRunning && crawlQueue.value.state !== 'running') {
+      await Promise.all([loadSources(), loadCandidates()])
+    }
+  } catch (error) {
+    if (!silent) Message.error(error instanceof Error ? error.message : '加载爬取任务队列失败')
+  } finally {
+    crawlQueueLoading.value = false
+    scheduleCrawlQueueRefresh()
+  }
+}
+
+const runCrawlQueue = async () => {
+  try {
+    runningCrawlQueue.value = true
+    crawlQueue.value = await requestJSON<CrawlQueueSnapshot>('/api/admin/discovery/crawl-queue/run', { method: 'POST', headers: authHeaders() })
+    Message.success('爬取任务队列已开始执行')
+  } catch (error) {
+    Message.error(error instanceof Error ? error.message : '启动爬取任务队列失败')
+  } finally {
+    runningCrawlQueue.value = false
+    scheduleCrawlQueueRefresh()
+  }
 }
 
 const loadItemFeedback = async (item: RecommendationItem) => {
@@ -673,6 +804,7 @@ const loadAll = async () => {
       loadSources(),
       loadCandidates(),
     ])
+    if (activeTab.value === 'queue' && isOwner.value) await loadCrawlQueue()
   } catch (error) {
     Notification.error({ title: '加载失败', content: error instanceof Error ? error.message : '推荐中心加载失败', position: 'topRight' })
   } finally {
@@ -965,7 +1097,40 @@ function blockRuleTypeLabel(type: string): string {
   return type
 }
 
+function crawlTaskKindLabel(kind: string): string {
+  return ({
+    discovery_fetch_source: '订阅源抓取',
+    discovery_scan_blogroll: 'Blogroll 扫描',
+    discovery_backfill_site: '历史回溯',
+    discovery_process_candidate: '文章正文处理',
+  } as Record<string, string>)[kind] || kind
+}
+
+function crawlTaskStatusLabel(status: CrawlTaskStatus): string {
+  return ({ pending: '等待', running: '运行中', succeeded: '成功', failed: '失败' } as Record<CrawlTaskStatus, string>)[status]
+}
+
+function crawlTaskTargetLabel(task: CrawlQueueTask): string {
+  const type = ({ source: '来源', site: '站点', candidate: '候选文章' } as Record<string, string>)[task.targetType] || '目标'
+  const version = task.contentVersion ? ` · 正文 v${task.contentVersion}` : ''
+  return `${type} #${task.targetId || '-'}${version}`
+}
+
+function crawlTaskTimeLabel(task: CrawlQueueTask): string {
+  const value = task.finishedAt || task.startedAt || task.scheduledAt || task.createdAt
+  return value ? formatDateTime(value) : '暂无时间'
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'queue' && isOwner.value) {
+    void loadCrawlQueue()
+    return
+  }
+  clearCrawlQueueTimer()
+})
+
 onMounted(loadAll)
+onBeforeUnmount(clearCrawlQueueTimer)
 </script>
 
 <style scoped>
@@ -1205,6 +1370,83 @@ onMounted(loadAll)
   border-bottom: 1px solid #e5e6eb;
 }
 
+.queue-state {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #f2f3f5;
+  color: #4e5969;
+  font-size: 13px;
+}
+
+.queue-state-running {
+  background: #e8f3ff;
+  color: #165dff;
+}
+
+.queue-state-waiting {
+  background: #fff7e8;
+  color: #d46b08;
+}
+
+.queue-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.queue-summary > div {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: #f7f8fa;
+}
+
+.queue-summary strong {
+  font-size: 24px;
+}
+
+.queue-summary span,
+.queue-task-row span,
+.queue-task-row small {
+  color: #86909c;
+  font-size: 12px;
+}
+
+.queue-task-list {
+  display: grid;
+  gap: 8px;
+}
+
+.queue-task-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) 90px 90px minmax(150px, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+}
+
+.queue-task-row > div {
+  display: grid;
+  gap: 4px;
+}
+
+.task-status {
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #f2f3f5;
+}
+
+.task-status-running { background: #e8f3ff; color: #165dff !important; }
+.task-status-succeeded { background: #e8ffea; color: #00a854 !important; }
+.task-status-failed { background: #ffece8; color: #f53f3f !important; }
+.queue-task-error { grid-column: 1 / -1; color: #f53f3f !important; overflow-wrap: anywhere; }
+
 .source-form {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) minmax(280px, 2fr) minmax(110px, 130px) auto;
@@ -1277,6 +1519,11 @@ onMounted(loadAll)
   .settings-grid,
   .source-form {
     grid-template-columns: 1fr;
+  }
+
+  .queue-summary,
+  .queue-task-row {
+    grid-template-columns: 1fr 1fr;
   }
 
   .section-title {

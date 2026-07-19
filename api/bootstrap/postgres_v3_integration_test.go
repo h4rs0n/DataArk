@@ -188,6 +188,58 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 	}
 	assertPostgresScalar(t, database,
 		"SELECT count(*)::text FROM river_job WHERE kind = 'recommendation_generate_daily' AND state = 'completed'", "2")
+
+	legacyArgs := `{"source_id":4343}`
+	interruptedArgs := `{"source_id":4344}`
+	if err := database.Exec(`
+INSERT INTO river_job (state, attempt, max_attempts, attempted_at, attempted_by, args, kind, queue)
+VALUES
+	('available', 0, 25, NULL, NULL, CAST(? AS jsonb), ?, 'default'),
+	('running', 1, 25, ?, ARRAY['legacy-worker'], CAST(? AS jsonb), ?, 'default')`,
+		legacyArgs, jobqueue.FetchSourceJobKind, time.Now().Add(-time.Minute), interruptedArgs, jobqueue.FetchSourceJobKind,
+	).Error; err != nil {
+		t.Fatalf("insert legacy default-queue discovery jobs: %v", err)
+	}
+
+	var crawlExecutions atomic.Int32
+	crawlStop, err := jobqueue.Start(context.Background(), database, jobqueue.Handlers{
+		FetchSource: func(context.Context, uint) error {
+			crawlExecutions.Add(1)
+			return nil
+		},
+	}, func(ctx context.Context, queue jobqueue.JobEnqueuer) error {
+		return queue.EnqueueFetchSource(ctx, 4242)
+	})
+	if err != nil {
+		t.Fatalf("start manually gated River runtime: %v", err)
+	}
+	time.Sleep(250 * time.Millisecond)
+	if crawlExecutions.Load() != 0 {
+		crawlStop()
+		t.Fatalf("startup crawl executions = %d, want 0", crawlExecutions.Load())
+	}
+	assertPostgresScalar(t, database,
+		"SELECT count(*)::text FROM river_job WHERE queue = 'default' AND kind = 'discovery_fetch_source' AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')", "0")
+	assertPostgresScalar(t, database,
+		"SELECT count(*)::text FROM river_job WHERE queue = 'discovery_crawl' AND kind = 'discovery_fetch_source' AND state = 'running'", "0")
+	controller, available := jobqueue.CrawlControl()
+	if !available {
+		crawlStop()
+		t.Fatal("manual crawl controller unavailable")
+	}
+	snapshot, err := controller.Snapshot(context.Background(), 50)
+	if err != nil || snapshot.State != "waiting" || snapshot.Counts.Pending < 3 || snapshot.Counts.Running != 0 {
+		crawlStop()
+		t.Fatalf("paused PostgreSQL snapshot = %#v err=%v", snapshot, err)
+	}
+	if _, err := controller.Run(context.Background()); err != nil {
+		crawlStop()
+		t.Fatalf("run PostgreSQL crawl queue: %v", err)
+	}
+	waitForPostgresCondition(t, 10*time.Second, func() bool { return crawlExecutions.Load() == 3 })
+	crawlStop()
+	assertPostgresScalar(t, database,
+		"SELECT count(*)::text FROM river_job WHERE kind = 'discovery_fetch_source' AND state = 'completed'", "3")
 }
 
 func assertPostgresScalar(t *testing.T, database *gorm.DB, query string, want string) {

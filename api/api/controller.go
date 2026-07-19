@@ -81,17 +81,35 @@ var (
 	deleteUserBlockRule                 = recommendation.DeleteUserBlockRule
 	getCandidateInventory               = recommendation.GetCandidateInventory
 	getAdminProductMetrics              = recommendation.GetAdminProductMetrics
-	startDiscoveryScheduler             = discovery.StartDiscoveryScheduler
-	startRecommendationScheduler        = recommendation.StartRecommendationScheduler
-	startSharedJobQueue                 = startApplicationJobQueue
-	addDocFileToIndex                   = search.AddDocFile
-	deleteDocByHTMLPath                 = search.DeleteDocByHTMLPath
-	createBackupArchive                 = backup.CreateBackup
-	restoreBackupArchive                = backup.RestoreBackup
-	initDatabase                        = bootstrap.InitDB
-	createSearchIndex                   = search.CreateDefaultIndex
-	initArchiveQueue                    = search.InitArchiveTaskQueue
-	runGinRouter                        = func(router *gin.Engine, addr string) error {
+	getDiscoveryCrawlQueue              = func(ctx context.Context, limit int) (*jobqueue.CrawlQueueSnapshot, error) {
+		controller, available := jobqueue.CrawlControl()
+		if !available {
+			return nil, errors.New("discovery crawl queue is unavailable")
+		}
+		return controller.Snapshot(ctx, limit)
+	}
+	runDiscoveryCrawlQueue = func(ctx context.Context) (*jobqueue.CrawlQueueSnapshot, error) {
+		queue, queueAvailable := jobqueue.Default()
+		controller, controllerAvailable := jobqueue.CrawlControl()
+		if !queueAvailable || !controllerAvailable {
+			return nil, errors.New("discovery crawl queue is unavailable")
+		}
+		if err := discovery.RecoverDueJobs(ctx, queue, time.Now()); err != nil {
+			return nil, err
+		}
+		return controller.Run(ctx)
+	}
+	startDiscoveryScheduler      = discovery.StartDiscoveryScheduler
+	startRecommendationScheduler = recommendation.StartRecommendationScheduler
+	startSharedJobQueue          = startApplicationJobQueue
+	addDocFileToIndex            = search.AddDocFile
+	deleteDocByHTMLPath          = search.DeleteDocByHTMLPath
+	createBackupArchive          = backup.CreateBackup
+	restoreBackupArchive         = backup.RestoreBackup
+	initDatabase                 = bootstrap.InitDB
+	createSearchIndex            = search.CreateDefaultIndex
+	initArchiveQueue             = search.InitArchiveTaskQueue
+	runGinRouter                 = func(router *gin.Engine, addr string) error {
 		return router.Run(addr)
 	}
 )
@@ -586,6 +604,30 @@ func GetDiscoverySiteOperations(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询站点运营状态成功", "Data": operations})
+}
+
+func GetDiscoveryCrawlQueue(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	snapshot, err := getDiscoveryCrawlQueue(c.Request.Context(), queryInt(c, "limit", 50))
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "查询爬取任务队列失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询爬取任务队列成功", "Data": snapshot})
+}
+
+func RunDiscoveryCrawlQueue(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	snapshot, err := runDiscoveryCrawlQueue(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "启动爬取任务队列失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "爬取任务队列已开始执行", "Data": snapshot})
 }
 
 func ListDiscoveryCandidates(c *gin.Context) {
@@ -1378,6 +1420,8 @@ func WebStarter(debugMode bool) {
 		protected.POST("/discovery/sites/:id/backfill", RequestDiscoverySiteBackfill)
 		protected.POST("/discovery/sites/:id/sitemap-backfill", RequestDiscoverySiteSitemapBackfill)
 		protected.GET("/discovery/sites/:id/operations", GetDiscoverySiteOperations)
+		protected.GET("/admin/discovery/crawl-queue", GetDiscoveryCrawlQueue)
+		protected.POST("/admin/discovery/crawl-queue/run", RunDiscoveryCrawlQueue)
 		protected.GET("/discovery/candidates", ListDiscoveryCandidates)
 		protected.POST("/discovery/candidates/:id/read", MarkDiscoveryCandidateRead)
 		protected.POST("/discovery/candidates/:id/archive", ArchiveDiscoveryCandidate)
