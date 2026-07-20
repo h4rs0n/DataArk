@@ -249,11 +249,12 @@ func TestV3SQLiteMigrationPreservesAndBackfillsLegacyData(t *testing.T) {
 	if err := database.Create(&secondDay).Error; err != nil {
 		t.Fatal(err)
 	}
-	secondItem := recommendation.RecommendationItem{DayID: secondDay.ID, UserID: 1, CandidateID: 20, DedupeKey: "legacy-key", Rank: 1}
+	secondDayID := secondDay.ID
+	secondItem := recommendation.RecommendationItem{DayID: &secondDayID, UserID: 1, CandidateID: 20, DedupeKey: "legacy-key", Rank: 1}
 	if err := database.Create(&secondItem).Error; err != nil {
 		t.Fatalf("cross-day candidate cooldown history must be representable: %v", err)
 	}
-	if err := database.Create(&recommendation.RecommendationItem{DayID: secondDay.ID, UserID: 1, CandidateID: 20, Rank: 2}).Error; err == nil {
+	if err := database.Create(&recommendation.RecommendationItem{DayID: &secondDayID, UserID: 1, CandidateID: 20, Rank: 2}).Error; err == nil {
 		t.Fatal("same day/candidate should remain unique")
 	}
 }
@@ -264,7 +265,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 21 || migrations[len(migrations)-1].Version != 21 {
+	if len(migrations) != 22 || migrations[len(migrations)-1].Version != 22 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -420,6 +421,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"CREATE TABLE IF NOT EXISTS discovery_domain_blacklist_entries", "ADD COLUMN IF NOT EXISTS crawl_host", "VALUES ('csdn.net'", "processing_state = 'domain_blocked'"} {
 		if !strings.Contains(string(blacklistBody), required) {
 			t.Fatalf("blacklist migration missing %q", required)
+		}
+	}
+	feedBody, err := appmigrations.FS.ReadFile("000022_discovery_personalized_feed.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"CREATE TABLE IF NOT EXISTS recommendation_feed_batches", "ALTER COLUMN day_id DROP NOT NULL", "feed_batch_id", "recommendation_items_exactly_one_parent", "Data-preserving rollback"} {
+		if !strings.Contains(string(feedBody), required) {
+			t.Fatalf("discovery personalized feed migration missing %q", required)
 		}
 	}
 }

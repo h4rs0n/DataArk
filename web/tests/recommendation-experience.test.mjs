@@ -4,6 +4,7 @@ import test from 'node:test'
 
 const view = await readFile(new URL('../src/views/RecommendationsView.vue', import.meta.url), 'utf8')
 const feedback = await readFile(new URL('../src/components/recommendations/FeedbackControls.vue', import.meta.url), 'utf8')
+const recommendationCard = await readFile(new URL('../src/components/recommendations/RecommendationArticleCard.vue', import.meta.url), 'utf8')
 const siteInsight = await readFile(new URL('../src/components/recommendations/SiteInsightPanel.vue', import.meta.url), 'utf8')
 
 test('recommendation experience exposes scoped reversible feedback', () => {
@@ -33,17 +34,27 @@ test('discovery UI separates manual subscriptions and explicit sitemap gap fill'
 })
 
 test('candidate article titles open the source in a safe new tab', () => {
-  assert.match(view, /class="candidate-title-link"/)
-  assert.match(view, /:href="candidate\.url"/)
-  assert.match(view, /target="_blank"/)
-  assert.match(view, /rel="noopener noreferrer"/)
+  assert.match(view + recommendationCard, /class="candidate-title-link"/)
+  assert.match(view + recommendationCard, /:href="(?:candidate|item\.candidate)\.url"/)
+  assert.match(view + recommendationCard, /target="_blank"/)
+  assert.match(view + recommendationCard, /rel="noopener noreferrer"/)
   assert.match(view, /@click="markCandidateRead\(candidate\)"/)
 })
 
 test('today recommendation titles open the source in a safe new tab', () => {
-  assert.match(view, /:href="item\.candidate\.url"/)
-  assert.match(view, /@click="markCandidateRead\(item\.candidate\)"/)
-  assert.match(view, /item\.candidate\.title \|\| `候选文章 \$\{item\.candidateId\}`/)
+  assert.match(recommendationCard, /:href="item\.candidate\.url"/)
+  assert.match(recommendationCard, /\$emit\('mark-read', item\.candidate\)/)
+  assert.match(recommendationCard, /item\.candidate\.title \|\| `候选文章 \$\{item\.candidateId\}`/)
+})
+
+test('unread discovery candidates use a refreshable personalized feed', () => {
+  assert.match(view, /candidateStatus === 'new' \? '猜你喜欢'/)
+  assert.match(view, /\/api\/recommendations\/discovery-feed/)
+  assert.match(view, /\/api\/recommendations\/discovery-feed\/refresh/)
+  assert.match(view, /换一换/)
+  assert.match(view, /当前仅有.*篇符合推荐条件/s)
+  assert.ok((view.match(/<RecommendationArticleCard/g) || []).length >= 2)
+  for (const label of ['原文', '入库', '查看发现路径']) assert.match(recommendationCard, new RegExp(label))
 })
 
 test('owner UI exposes the manual crawl queue in a dedicated tab', () => {

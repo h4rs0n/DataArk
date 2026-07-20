@@ -12,6 +12,7 @@ func V3Models() []interface{} {
 	return []interface{}{
 		&RecommendationSettings{},
 		&RecommendationDay{},
+		&RecommendationFeedBatch{},
 		&RecommendationItem{},
 		&RecommendationFeedback{},
 		&UserBlockRule{},

@@ -58,7 +58,7 @@ func TestObservabilityM16MetricsExplainOperationsAndLongTailGems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := AddRecommendationItem(&RecommendationItem{DayID: day.ID, UserID: 930, CandidateID: gem.ID, Rank: 1, PoolType: "exploration", CreatedAt: now})
+	item, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(day.ID), UserID: 930, CandidateID: gem.ID, Rank: 1, PoolType: "exploration", CreatedAt: now})
 	if err != nil {
 		t.Fatal(err)
 	}

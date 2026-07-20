@@ -30,6 +30,7 @@ func setupSQLiteDB(t *testing.T) {
 		&discovery.DiscoverySourceScheduleDecision{},
 		&RecommendationSettings{},
 		&RecommendationDay{},
+		&RecommendationFeedBatch{},
 		&RecommendationItem{},
 		&RecommendationFeedback{},
 		&UserBlockRule{},

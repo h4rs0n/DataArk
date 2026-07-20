@@ -295,7 +295,7 @@ func AddRecommendationItem(item *RecommendationItem) (*RecommendationItem, error
 	if db == nil {
 		return item, nil
 	}
-	if item.UserID == 0 || item.DayID == 0 || item.CandidateID == 0 {
+	if item.UserID == 0 || item.DayID == nil || *item.DayID == 0 || item.FeedBatchID != nil || item.CandidateID == 0 {
 		return nil, errors.New("missing recommendation item identity")
 	}
 	var day RecommendationDay
@@ -422,7 +422,7 @@ func buildRecommendationItems(dayID uint, userID uint, selected []recommendation
 	items := make([]RecommendationItem, 0, len(selected))
 	for index, scored := range selected {
 		item := RecommendationItem{
-			DayID: dayID, UserID: userID, CandidateID: scored.Candidate.ID,
+			DayID: uintPointer(dayID), UserID: userID, CandidateID: scored.Candidate.ID,
 			DedupeKey: strings.TrimSpace(scored.Candidate.DedupeKey), AssessmentID: scored.Candidate.CurrentAssessmentID,
 			Rank: firstRank + index, RetrievalScore: scored.RetrievalScore, RerankScore: scored.RerankScore,
 			FinalScore: scored.FinalScore, Reason: scored.Reason, ReasonMetadata: buildReasonMetadata(scored),
@@ -445,6 +445,10 @@ func buildRecommendationItems(dayID uint, userID uint, selected []recommendation
 		items = append(items, item)
 	}
 	return items
+}
+
+func uintPointer(value uint) *uint {
+	return &value
 }
 
 func publishRecommendationDay(dayID uint, userID uint, items []RecommendationItem, updates map[string]interface{}) error {

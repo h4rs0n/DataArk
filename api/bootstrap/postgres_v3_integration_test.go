@@ -110,11 +110,13 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 	}
 
 	assertPostgresScalar(t, database,
-		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "20")
+		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "22")
 	assertPostgresScalar(t, database,
 		"SELECT extname FROM pg_extension WHERE extname = 'vector'", "vector")
 	assertPostgresScalar(t, database,
 		"SELECT to_regclass('public.river_job')::text", "river_job")
+	assertPostgresScalar(t, database,
+		"SELECT to_regclass('public.recommendation_feed_batches')::text", "recommendation_feed_batches")
 	assertPostgresScalar(t, database,
 		fmt.Sprintf("SELECT enabled::text || ':' || user_managed::text FROM discovery_sources WHERE id = %d", legacySitemap.ID), "false:false")
 	assertPostgresScalar(t, database,

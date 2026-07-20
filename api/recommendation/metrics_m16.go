@@ -348,14 +348,15 @@ func computeIntegrityMetrics(metrics *AdminProductMetrics, candidates map[uint]D
 			metrics.Integrity.ActiveBlockViolations++
 		}
 		cluster := strings.TrimSpace(firstNonEmpty(item.SnapshotClusterID, candidate.DuplicateClusterID))
-		if cluster != "" {
-			if clustersByDay[item.DayID] == nil {
-				clustersByDay[item.DayID] = map[string]bool{}
+		if cluster != "" && item.DayID != nil {
+			dayID := *item.DayID
+			if clustersByDay[dayID] == nil {
+				clustersByDay[dayID] = map[string]bool{}
 			}
-			if clustersByDay[item.DayID][cluster] {
+			if clustersByDay[dayID][cluster] {
 				metrics.Integrity.DuplicateClusterViolations++
 			}
-			clustersByDay[item.DayID][cluster] = true
+			clustersByDay[dayID][cluster] = true
 		}
 	}
 }

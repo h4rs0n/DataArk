@@ -74,13 +74,13 @@ func TestRecommendationDayAndItemDeduplication(t *testing.T) {
 		t.Fatalf("duplicate day created: first=%d second=%d", day.ID, reused.ID)
 	}
 
-	if _, err := AddRecommendationItem(&RecommendationItem{DayID: day.ID, UserID: 3, CandidateID: 11, DedupeKey: "hash-1", Rank: 1}); err != nil {
+	if _, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(day.ID), UserID: 3, CandidateID: 11, DedupeKey: "hash-1", Rank: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AddRecommendationItem(&RecommendationItem{DayID: day.ID, UserID: 3, CandidateID: 11, DedupeKey: "hash-2", Rank: 2}); !errors.Is(err, ErrDuplicateRecommendationItem) {
+	if _, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(day.ID), UserID: 3, CandidateID: 11, DedupeKey: "hash-2", Rank: 2}); !errors.Is(err, ErrDuplicateRecommendationItem) {
 		t.Fatalf("duplicate candidate err = %v, want ErrDuplicateRecommendationItem", err)
 	}
-	if _, err := AddRecommendationItem(&RecommendationItem{DayID: day.ID, UserID: 3, CandidateID: 12, DedupeKey: "hash-1", Rank: 2}); !errors.Is(err, ErrDuplicateRecommendationItem) {
+	if _, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(day.ID), UserID: 3, CandidateID: 12, DedupeKey: "hash-1", Rank: 2}); !errors.Is(err, ErrDuplicateRecommendationItem) {
 		t.Fatalf("duplicate dedupe key err = %v, want ErrDuplicateRecommendationItem", err)
 	}
 
@@ -110,7 +110,7 @@ func TestRecommendationFeedbackAndBlockRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := AddRecommendationItem(&RecommendationItem{DayID: day.ID, UserID: 5, CandidateID: 21, DedupeKey: "topic-1", Rank: 1})
+	item, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(day.ID), UserID: 5, CandidateID: 21, DedupeKey: "topic-1", Rank: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestGenerateDailyRecommendationsFiltersHistoryAndBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AddRecommendationItem(&RecommendationItem{DayID: oldDay.ID, UserID: 9, CandidateID: dupe.ID, DedupeKey: dupe.DedupeKey, Rank: 1}); err != nil {
+	if _, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(oldDay.ID), UserID: 9, CandidateID: dupe.ID, DedupeKey: dupe.DedupeKey, Rank: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&UserBlockRule{UserID: 9, RuleType: UserBlockRuleTopic, RuleValue: "Kubernetes", Active: true}).Error; err != nil {
@@ -335,7 +335,7 @@ func TestGenerateDailyRecommendationsUsesFeedbackProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := AddRecommendationItem(&RecommendationItem{DayID: oldDay.ID, UserID: 10, CandidateID: liked.ID, DedupeKey: liked.DedupeKey, Rank: 1})
+	item, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(oldDay.ID), UserID: 10, CandidateID: liked.ID, DedupeKey: liked.DedupeKey, Rank: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

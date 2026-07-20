@@ -18,7 +18,7 @@ func createFeedbackItem(t *testing.T, userID uint, url string, topics []string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := AddRecommendationItem(&RecommendationItem{DayID: day.ID, UserID: userID, CandidateID: candidate.ID, Rank: 1})
+	item, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(day.ID), UserID: userID, CandidateID: candidate.ID, Rank: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

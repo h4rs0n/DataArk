@@ -43,45 +43,21 @@
 
             <a-empty v-if="todaySnapshot.items.length === 0" description="暂无今日推荐" />
             <div v-else class="recommendation-list">
-              <article v-for="item in todaySnapshot.items" :key="item.id" class="recommendation-card">
-                <div class="item-main">
-                  <div class="item-meta">
-                    <span>#{{ item.rank }}</span>
-                    <span>{{ item.candidate.sourceName || sourceHost(item.candidate.url) }}</span>
-                    <span v-if="item.candidate.publishedAt">{{ formatDateTime(item.candidate.publishedAt) }}</span>
-                  </div>
-                  <h3>
-                    <a
-                      class="candidate-title-link"
-                      :href="item.candidate.url"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      @click="markCandidateRead(item.candidate)"
-                    >
-                      {{ item.candidate.title || `候选文章 ${item.candidateId}` }}
-                    </a>
-                  </h3>
-                  <p>{{ item.candidate.summary || item.candidate.url }}</p>
-                  <div class="topic-row">
-                    <span v-for="topic in parseList(item.candidate.topics).slice(0, 4)" :key="topic">{{ topic }}</span>
-                    <span v-if="item.poolType">{{ item.poolType }}</span>
-                    <span v-if="item.explorationReason">探索：{{ item.explorationReason }}</span>
-                  </div>
-                  <small>{{ item.reason || '基于内容质量和反馈画像推荐' }}</small>
-                </div>
-                <div class="item-actions">
-                  <a-button @click="openCandidate(item.candidate)">
-                    <template #icon><icon-link /></template>
-                    原文
-                  </a-button>
-                  <a-button type="primary" :loading="archivingCandidateId === item.candidateId" @click="archiveCandidate(item.candidateId)">
-                    <template #icon><icon-storage /></template>
-                    入库
-                  </a-button>
-                  <a-button size="small" @click="openItemContext(item)">查看发现路径</a-button>
-                  <FeedbackControls :item-id="item.id" :current-action="feedbackByItem[item.id]?.action" :loading="feedbackLoadingId === item.id" @select="(action) => sendFeedback(item, action)" @scope="(scope) => openImpactDialog(item, scope)" @revert="revertFeedback(item)" />
-                </div>
-              </article>
+              <RecommendationArticleCard
+                v-for="item in todaySnapshot.items"
+                :key="item.id"
+                :item="item"
+                :archiving="archivingCandidateId === item.candidateId"
+                :current-action="feedbackByItem[item.id]?.action"
+                :feedback-loading="feedbackLoadingId === item.id"
+                @open="openCandidate"
+                @archive="archiveCandidate"
+                @context="openItemContext"
+                @mark-read="markCandidateRead"
+                @feedback="(action) => sendFeedback(item, action)"
+                @scope="(scope) => openImpactDialog(item, scope)"
+                @revert="revertFeedback(item)"
+              />
             </div>
           </section>
         </a-tab-pane>
@@ -186,8 +162,8 @@
           <section class="panel">
             <div class="section-title">
               <div>
-                <h2>候选文章</h2>
-                <span>采集后进入 enrichment 和日报生成流程</span>
+                <h2>{{ candidateStatus === 'new' ? '猜你喜欢' : '候选文章' }}</h2>
+                <span>{{ candidateStatus === 'new' ? '根据阅读与反馈偏好，每次推荐最多 10 篇符合条件的文章' : '查看已经阅读、忽略或加入归档队列的候选文章' }}</span>
               </div>
               <label class="inline-field" for="candidate-status">
                 <span>状态</span>
@@ -199,7 +175,36 @@
                 </select>
               </label>
             </div>
-            <a-empty v-if="candidates.length === 0" description="暂无候选文章" />
+            <a-spin v-if="candidateStatus === 'new'" :loading="discoveryFeedLoading" class="discovery-feed-spin">
+              <a-empty v-if="discoveryFeed.items.length === 0" description="暂无符合推荐条件的文章" />
+              <div v-else class="recommendation-list">
+                <RecommendationArticleCard
+                  v-for="item in discoveryFeed.items"
+                  :key="item.id"
+                  :item="item"
+                  :archiving="archivingCandidateId === item.candidateId"
+                  :current-action="feedbackByItem[item.id]?.action"
+                  :feedback-loading="feedbackLoadingId === item.id"
+                  @open="openCandidate"
+                  @archive="archiveCandidate"
+                  @context="openItemContext"
+                  @mark-read="markCandidateRead"
+                  @feedback="(action) => sendFeedback(item, action)"
+                  @scope="(scope) => openImpactDialog(item, scope)"
+                  @revert="revertFeedback(item)"
+                />
+              </div>
+              <p v-if="discoveryFeed.batch && discoveryFeed.batch.actualCount < discoveryFeed.batch.requestedCount" class="feed-shortage">
+                当前仅有 {{ discoveryFeed.batch.actualCount }} 篇符合推荐条件
+              </p>
+              <div class="feed-refresh-row">
+                <a-button type="primary" :loading="refreshingDiscoveryFeed" @click="refreshDiscoveryFeedBatch">
+                  <template #icon><icon-refresh /></template>
+                  换一换
+                </a-button>
+              </div>
+            </a-spin>
+            <a-empty v-else-if="candidates.length === 0" description="暂无候选文章" />
             <div v-else class="item-list">
               <article v-for="candidate in candidates" :key="candidate.id" class="compact-card">
                 <div class="item-main">
@@ -477,7 +482,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message, Notification } from '@arco-design/web-vue'
 import DigestSummary from '@/components/recommendations/DigestSummary.vue'
-import FeedbackControls from '@/components/recommendations/FeedbackControls.vue'
+import RecommendationArticleCard from '@/components/recommendations/RecommendationArticleCard.vue'
 import SiteInsightPanel from '@/components/recommendations/SiteInsightPanel.vue'
 import { groupCrawlQueueTasks } from '@/utils/crawlQueueGrouping.mjs'
 import {
@@ -584,6 +589,23 @@ interface RecommendationSnapshot {
   items: RecommendationItem[]
 }
 
+interface RecommendationFeedBatch {
+  id: number
+  userId: number
+  status: string
+  requestedCount: number
+  actualCount: number
+  policyVersion: string
+  profileVersion: number
+  shortageReasons: string
+  createdAt: string
+}
+
+interface RecommendationFeedSnapshot {
+  batch: RecommendationFeedBatch | null
+  items: RecommendationItem[]
+}
+
 interface RecommendationSettings {
   dailyLimit: number
   timezone: string
@@ -667,6 +689,8 @@ const savingSource = ref(false)
 const fetchingSourceId = ref<number | null>(null)
 const archivingCandidateId = ref<number | null>(null)
 const feedbackLoadingId = ref<number | null>(null)
+const discoveryFeedLoading = ref(false)
+const refreshingDiscoveryFeed = ref(false)
 const crawlQueueLoading = ref(false)
 const runningCrawlQueue = ref(false)
 const blacklistLoading = ref(false)
@@ -681,6 +705,7 @@ const archiveRecommendations = ref<ArchiveRecommendationItem[]>([])
 const keywords = ref<KeywordItem[]>([])
 const sources = ref<DiscoverySource[]>([])
 const candidates = ref<DiscoveryCandidate[]>([])
+const discoveryFeed = ref<RecommendationFeedSnapshot>({ batch: null, items: [] })
 const crawlQueue = ref<CrawlQueueSnapshot>(emptyCrawlQueue())
 const domainBlacklist = ref<DomainBlacklistEntry[]>([])
 const historyDays = ref<RecommendationDay[]>([])
@@ -924,7 +949,39 @@ const loadSources = async () => {
   sources.value = (await requestJSON<DiscoverySource[]>('/api/discovery/sources', { headers: authHeaders() })) ?? []
 }
 
+const loadDiscoveryFeed = async () => {
+  try {
+    discoveryFeedLoading.value = true
+    let snapshot = await requestJSON<RecommendationFeedSnapshot>('/api/recommendations/discovery-feed', { headers: authHeaders() })
+    if (!snapshot?.batch) {
+      snapshot = await requestJSON<RecommendationFeedSnapshot>('/api/recommendations/discovery-feed/refresh', { method: 'POST', headers: authHeaders() })
+    }
+    discoveryFeed.value = { batch: snapshot?.batch ?? null, items: snapshot?.items ?? [] }
+    await Promise.all(discoveryFeed.value.items.map(loadItemFeedback))
+  } finally {
+    discoveryFeedLoading.value = false
+  }
+}
+
+const refreshDiscoveryFeedBatch = async () => {
+  try {
+    refreshingDiscoveryFeed.value = true
+    const snapshot = await requestJSON<RecommendationFeedSnapshot>('/api/recommendations/discovery-feed/refresh', { method: 'POST', headers: authHeaders() })
+    discoveryFeed.value = { batch: snapshot?.batch ?? null, items: snapshot?.items ?? [] }
+    await Promise.all(discoveryFeed.value.items.map(loadItemFeedback))
+    Message.success('已换一批猜你喜欢')
+  } catch (error) {
+    Message.error(error instanceof Error ? error.message : '换一换失败')
+  } finally {
+    refreshingDiscoveryFeed.value = false
+  }
+}
+
 const loadCandidates = async () => {
+  if (candidateStatus.value === 'new') {
+    await loadDiscoveryFeed()
+    return
+  }
   candidates.value = (await requestJSON<DiscoveryCandidate[]>(`/api/discovery/candidates?status=${candidateStatus.value}&limit=80`, { headers: authHeaders() })) ?? []
 }
 
@@ -1387,6 +1444,25 @@ onBeforeUnmount(clearCrawlQueueTimer)
 .history-detail {
   display: grid;
   gap: 12px;
+}
+
+.discovery-feed-spin {
+  display: block;
+  width: 100%;
+  min-height: 180px;
+}
+
+.feed-shortage {
+  margin: 14px 0 0;
+  color: #86909c;
+  font-size: 13px;
+  text-align: center;
+}
+
+.feed-refresh-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
 }
 
 .recommendation-card,

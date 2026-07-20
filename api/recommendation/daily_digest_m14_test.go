@@ -76,7 +76,7 @@ func TestDailyDigestM14PublishedSnapshotIsImmutableAndByteStable(t *testing.T) {
 	if !bytes.Equal(firstJSON, retriedJSON) || retried.Items[0].Candidate.Title != "Frozen title" {
 		t.Fatalf("snapshot changed:\nfirst=%s\nretry=%s", firstJSON, retriedJSON)
 	}
-	if _, err := AddRecommendationItem(&RecommendationItem{DayID: first.Day.ID, UserID: 803, CandidateID: candidate.ID + 100, Rank: 2}); !errors.Is(err, ErrRecommendationDayImmutable) {
+	if _, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(first.Day.ID), UserID: 803, CandidateID: candidate.ID + 100, Rank: 2}); !errors.Is(err, ErrRecommendationDayImmutable) {
 		t.Fatalf("published append error = %v", err)
 	}
 }

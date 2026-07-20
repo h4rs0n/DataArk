@@ -37,7 +37,7 @@ func TestRecommendationExperienceM15ContextIsTraceableAndUserScoped(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := AddRecommendationItem(&RecommendationItem{DayID: day.ID, UserID: 910, CandidateID: candidate.ID, AssessmentID: &assessment.ID, Rank: 1})
+	item, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(day.ID), UserID: 910, CandidateID: candidate.ID, AssessmentID: &assessment.ID, Rank: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

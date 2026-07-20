@@ -23,6 +23,10 @@ type recommendationSelectionReport struct {
 	EligibleAfterHard int
 }
 
+type recommendationSelectionOptions struct {
+	AllowRecentExposure bool
+}
+
 type recommendationHistoryEntry struct {
 	LastRecommendedAt time.Time
 	MaxContentVersion uint
@@ -53,6 +57,10 @@ func selectDailyRecommendationCandidates(ctx context.Context, userID uint, setti
 }
 
 func selectDailyRecommendationCandidatesV3(ctx context.Context, userID uint, settings RecommendationSettings, profile *UserRecommendationProfile, selectionLimit int) (*recommendationSelectionReport, error) {
+	return selectRecommendationCandidatesV3(ctx, userID, settings, profile, selectionLimit, recommendationSelectionOptions{})
+}
+
+func selectRecommendationCandidatesV3(ctx context.Context, userID uint, settings RecommendationSettings, profile *UserRecommendationProfile, selectionLimit int, options recommendationSelectionOptions) (*recommendationSelectionReport, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -127,9 +135,12 @@ func selectDailyRecommendationCandidatesV3(ctx context.Context, userID uint, set
 		state, hasState := states[candidate.ID]
 		historyEntry, hasHistory := recommendationHistoryForCandidate(history, candidate)
 		contentUpdated, cooldownRepeat, exclusion := recommendationRecurrenceDecision(candidate, state, hasState, historyEntry, hasHistory, now, cooldown)
-		if exclusion != "" {
+		if exclusion != "" && !(options.AllowRecentExposure && exclusion == "reexposure_cooldown") {
 			report.Excluded[exclusion]++
 			continue
+		}
+		if exclusion == "reexposure_cooldown" {
+			cooldownRepeat = true
 		}
 		topics := parseStringList(candidate.Topics)
 		host := sourceHost(candidate.URL)

@@ -62,9 +62,10 @@ type RecommendationDay struct {
 
 type RecommendationItem struct {
 	ID                       uint                         `json:"id" gorm:"primaryKey"`
-	DayID                    uint                         `json:"dayId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;index;not null"`
+	DayID                    *uint                        `json:"dayId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;index;check:recommendation_items_exactly_one_parent,(day_id IS NOT NULL AND feed_batch_id IS NULL) OR (day_id IS NULL AND feed_batch_id IS NOT NULL)"`
+	FeedBatchID              *uint                        `json:"feedBatchId" gorm:"uniqueIndex:idx_recommendation_items_feed_candidate;index"`
 	UserID                   uint                         `json:"userId" gorm:"index;not null"`
-	CandidateID              uint                         `json:"candidateId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;index;not null"`
+	CandidateID              uint                         `json:"candidateId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;uniqueIndex:idx_recommendation_items_feed_candidate;index;not null"`
 	Candidate                discovery.DiscoveryCandidate `json:"candidate" gorm:"-"`
 	DedupeKey                string                       `json:"dedupeKey" gorm:"index;size:128"`
 	Rank                     int                          `json:"rank" gorm:"not null"`
@@ -101,6 +102,21 @@ type RecommendationItem struct {
 	AuditVersion             uint                         `json:"auditVersion" gorm:"not null;default:1"`
 	CreatedAt                time.Time                    `json:"createdAt"`
 	UpdatedAt                time.Time                    `json:"updatedAt"`
+}
+
+type RecommendationFeedBatch struct {
+	ID              uint                 `json:"id" gorm:"primaryKey"`
+	UserID          uint                 `json:"userId" gorm:"index;not null"`
+	Status          string               `json:"status" gorm:"index;not null;size:32"`
+	RequestedCount  int                  `json:"requestedCount" gorm:"not null;default:10"`
+	ActualCount     int                  `json:"actualCount" gorm:"not null;default:0"`
+	PolicyVersion   string               `json:"policyVersion" gorm:"not null;size:64"`
+	ProfileVersion  uint                 `json:"profileVersion"`
+	ShortageReasons string               `json:"shortageReasons" gorm:"type:text"`
+	ReplacedAt      *time.Time           `json:"replacedAt"`
+	Items           []RecommendationItem `json:"-" gorm:"foreignKey:FeedBatchID"`
+	CreatedAt       time.Time            `json:"createdAt"`
+	UpdatedAt       time.Time            `json:"updatedAt"`
 }
 
 type RecommendationFeedback struct {

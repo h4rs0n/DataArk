@@ -67,6 +67,8 @@ var (
 	getRecommendationSettings           = recommendation.GetRecommendationSettings
 	saveRecommendationSettings          = recommendation.SaveRecommendationSettings
 	getRecommendationDaySnapshot        = recommendation.GetRecommendationDaySnapshot
+	getCurrentDiscoveryFeed             = recommendation.GetCurrentDiscoveryFeed
+	refreshDiscoveryFeed                = recommendation.RefreshDiscoveryFeed
 	recommendationDateForUser           = recommendation.RecommendationDateForUser
 	recommendationNow                   = time.Now
 	listRecommendationDays              = recommendation.ListRecommendationDays
@@ -794,6 +796,32 @@ func GetRecommendationToday(c *gin.Context) {
 	c.JSON(200, gin.H{"Status": "1", "Message": "查询今日推荐成功", "Data": snapshot})
 }
 
+func GetDiscoveryRecommendationFeed(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	snapshot, err := getCurrentDiscoveryFeed(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "查询猜你喜欢失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询猜你喜欢成功", "Data": snapshot})
+}
+
+func RefreshDiscoveryRecommendationFeed(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	snapshot, err := refreshDiscoveryFeed(c.Request.Context(), userID, 10)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "刷新猜你喜欢失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"Status": "1", "Message": "猜你喜欢已更新", "Data": snapshot})
+}
+
 func GetRecommendationHistory(c *gin.Context) {
 	userID, ok := requireCurrentUserID(c)
 	if !ok {
@@ -1502,6 +1530,8 @@ func WebStarter(debugMode bool) {
 		protected.POST("/discovery/candidates/:id/archive", ArchiveDiscoveryCandidate)
 		protected.POST("/discovery/candidates/:id/ignore", IgnoreDiscoveryCandidate)
 		protected.GET("/recommendations/today", GetRecommendationToday)
+		protected.GET("/recommendations/discovery-feed", GetDiscoveryRecommendationFeed)
+		protected.POST("/recommendations/discovery-feed/refresh", RefreshDiscoveryRecommendationFeed)
 		protected.GET("/recommendations/history", GetRecommendationHistory)
 		protected.GET("/recommendations/days/:date", GetRecommendationDay)
 		protected.POST("/admin/recommendations/generate", GenerateRecommendationDay)
