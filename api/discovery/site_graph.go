@@ -106,6 +106,10 @@ func (service SiteGraphService) ApplyLinks(ctx context.Context, fromSite Discove
 			if created {
 				result.SitesCreated++
 			}
+			domainBlocked, err := isDiscoveryHostBlacklistedDB(tx, hostKey)
+			if err != nil {
+				return err
+			}
 			pendingReason := ""
 			needsActivation := created || isGraphLimitPause(target.OperationalPause)
 			if target.Status == DiscoverySiteStatusNonBlog {
@@ -183,7 +187,7 @@ func (service SiteGraphService) ApplyLinks(ctx context.Context, fromSite Discove
 				if err != nil {
 					return err
 				}
-				if activate {
+				if activate && !domainBlocked {
 					work = append(work, graphWork{siteID: target.ID, sourceID: source.ID})
 				}
 			}

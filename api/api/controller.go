@@ -46,6 +46,9 @@ var (
 	getArchiveRankings                  = archive.GetArchiveRankings
 	getArchiveRecommendations           = archive.GetArchiveRecommendations
 	listDiscoverySources                = discovery.ListDiscoverySources
+	listDiscoveryDomainBlacklist        = discovery.ListDiscoveryDomainBlacklist
+	createDiscoveryDomainBlacklist      = discovery.CreateDiscoveryDomainBlacklist
+	deleteDiscoveryDomainBlacklist      = discovery.DeleteDiscoveryDomainBlacklist
 	createDiscoverySource               = discovery.CreateDiscoverySource
 	updateDiscoverySource               = discovery.UpdateDiscoverySource
 	deleteDiscoverySource               = discovery.DeleteDiscoverySource
@@ -115,15 +118,25 @@ var (
 )
 
 func startApplicationJobQueue(ctx context.Context) (func(), error) {
+	ignoreBlacklisted := func(err error) error {
+		if errors.Is(err, discovery.ErrDiscoveryDomainBlacklisted) {
+			return nil
+		}
+		return err
+	}
 	handlers := jobqueue.Handlers{
 		FetchSource: func(ctx context.Context, sourceID uint) error {
 			_, err := discovery.FetchDiscoverySourceByID(ctx, sourceID)
-			return err
+			return ignoreBlacklisted(err)
 		},
-		ScanBlogroll: discovery.RunScanBlogrollJob,
-		BackfillSite: discovery.RunBackfillSiteJob,
+		ScanBlogroll: func(ctx context.Context, siteID uint) error {
+			return ignoreBlacklisted(discovery.RunScanBlogrollJob(ctx, siteID))
+		},
+		BackfillSite: func(ctx context.Context, siteID uint) error {
+			return ignoreBlacklisted(discovery.RunBackfillSiteJob(ctx, siteID))
+		},
 		ProcessCandidate: func(ctx context.Context, candidateID uint, contentVersion string) error {
-			return discovery.ProcessCandidateWithAssessor(ctx, candidateID, contentVersion, recommendation.ConfiguredArticleAssessor())
+			return ignoreBlacklisted(discovery.ProcessCandidateWithAssessor(ctx, candidateID, contentVersion, recommendation.ConfiguredArticleAssessor()))
 		},
 		GenerateDaily: recommendation.RunGenerateDailyRecommendationJob,
 	}
@@ -628,6 +641,65 @@ func RunDiscoveryCrawlQueue(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "爬取任务队列已开始执行", "Data": snapshot})
+}
+
+func ListDiscoveryDomainBlacklist(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	entries, err := listDiscoveryDomainBlacklist()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "查询域名黑名单失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询域名黑名单成功", "Data": entries})
+}
+
+func CreateDiscoveryDomainBlacklist(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	var req struct {
+		Domain string `json:"domain" binding:"required"`
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "请输入有效域名"})
+		return
+	}
+	mutation, err := createDiscoveryDomainBlacklist(req.Domain, req.Reason)
+	if err != nil {
+		status := http.StatusInternalServerError
+		message := "添加域名黑名单失败"
+		if errors.Is(err, discovery.ErrInvalidDiscoveryBlacklistDomain) {
+			status, message = http.StatusBadRequest, "域名格式无效"
+		} else if errors.Is(err, discovery.ErrDuplicateDiscoveryBlacklistDomain) {
+			status, message = http.StatusConflict, "该域名已在黑名单中"
+		}
+		c.JSON(status, gin.H{"Status": "0", "Message": message, "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"Status": "1", "Message": "域名黑名单已添加", "Data": mutation})
+}
+
+func DeleteDiscoveryDomainBlacklist(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	mutation, err := deleteDiscoveryDomainBlacklist(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"Status": "0", "Message": "域名黑名单规则不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "删除域名黑名单失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "域名黑名单已删除", "Data": mutation})
 }
 
 func ListDiscoveryCandidates(c *gin.Context) {
@@ -1422,6 +1494,9 @@ func WebStarter(debugMode bool) {
 		protected.GET("/discovery/sites/:id/operations", GetDiscoverySiteOperations)
 		protected.GET("/admin/discovery/crawl-queue", GetDiscoveryCrawlQueue)
 		protected.POST("/admin/discovery/crawl-queue/run", RunDiscoveryCrawlQueue)
+		protected.GET("/admin/discovery/domain-blacklist", ListDiscoveryDomainBlacklist)
+		protected.POST("/admin/discovery/domain-blacklist", CreateDiscoveryDomainBlacklist)
+		protected.DELETE("/admin/discovery/domain-blacklist/:id", DeleteDiscoveryDomainBlacklist)
 		protected.GET("/discovery/candidates", ListDiscoveryCandidates)
 		protected.POST("/discovery/candidates/:id/read", MarkDiscoveryCandidateRead)
 		protected.POST("/discovery/candidates/:id/archive", ArchiveDiscoveryCandidate)

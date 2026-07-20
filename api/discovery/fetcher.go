@@ -45,6 +45,7 @@ func ConfiguredHTTPFetcher() HTTPFetcher {
 			Limiter:      limiter,
 			UserAgent:    config.DISCOVERYUSERAGENT,
 			MaxRedirects: config.DISCOVERYMAXREDIRECTS,
+			BlockURL:     ensureDiscoveryURLNotBlacklisted,
 		}
 		robots := NewRobotsCache(clock, robotsTTL, raw)
 		configuredFetcher.value = &HTTPClientFetcher{
@@ -54,6 +55,7 @@ func ConfiguredHTTPFetcher() HTTPFetcher {
 			Robots:       robots,
 			UserAgent:    config.DISCOVERYUSERAGENT,
 			MaxRedirects: config.DISCOVERYMAXREDIRECTS,
+			BlockURL:     ensureDiscoveryURLNotBlacklisted,
 		}
 	})
 	return configuredFetcher.value

@@ -43,3 +43,13 @@ test('owner UI exposes the manual crawl queue in a dedicated tab', () => {
   assert.match(view, /watch\(activeTab, \(tab\) =>/)
   assert.match(view, /crawlQueue\.value\.state === 'running' \? 2000 : 10000/)
 })
+
+test('owner queue tab manages the discovery domain blacklist', () => {
+  assert.match(view, /域名黑名单/)
+  assert.match(view, /同时匹配所有子域/)
+  assert.match(view, /\/api\/admin\/discovery\/domain-blacklist/)
+  assert.match(view, /method: 'POST'.*domain-blacklist/s)
+  assert.match(view, /method: 'DELETE'.*domain-blacklist/s)
+  assert.match(view, /affectedCandidates/)
+  assert.ok(view.indexOf('domain-blacklist-panel') > view.indexOf('爬取任务队列'))
+})

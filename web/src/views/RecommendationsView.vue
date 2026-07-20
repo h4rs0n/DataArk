@@ -226,7 +226,7 @@
               </div>
               <a-space wrap>
                 <span class="queue-state" :class="`queue-state-${crawlQueue.state}`">{{ crawlQueueStateLabel }}</span>
-                <a-button :loading="crawlQueueLoading" @click="loadCrawlQueue()">
+                <a-button :loading="crawlQueueLoading || blacklistLoading" @click="refreshQueueTab">
                   <template #icon><icon-refresh /></template>
                   刷新
                 </a-button>
@@ -256,6 +256,41 @@
                 <small v-if="task.error" class="queue-task-error">{{ task.error }}</small>
               </article>
             </div>
+          </section>
+
+          <section class="panel domain-blacklist-panel">
+            <div class="section-title">
+              <div>
+                <h2>域名黑名单</h2>
+                <span>命中域名及其子域的发现、RSS、robots、回溯、正文和重定向均不会被访问</span>
+              </div>
+            </div>
+            <form class="blacklist-form" @submit.prevent="addDomainBlacklist">
+              <label class="source-field" for="blacklist-domain">
+                <span>域名</span>
+                <input id="blacklist-domain" v-model="blacklistForm.domain" name="blacklist-domain" autocomplete="off" placeholder="example.com" />
+              </label>
+              <label class="source-field" for="blacklist-reason">
+                <span>备注（可选）</span>
+                <input id="blacklist-reason" v-model="blacklistForm.reason" name="blacklist-reason" autocomplete="off" placeholder="屏蔽原因" />
+              </label>
+              <a-button type="primary" html-type="submit" :loading="addingBlacklist">添加域名</a-button>
+            </form>
+            <a-spin :loading="blacklistLoading">
+              <a-empty v-if="domainBlacklist.length === 0" description="暂无域名黑名单" />
+              <div v-else class="blacklist-list">
+                <article v-for="entry in domainBlacklist" :key="entry.id" class="blacklist-row">
+                  <div><strong>{{ entry.domain }}</strong><span>{{ entry.reason || '未填写备注' }}</span></div>
+                  <span>同时匹配所有子域 · {{ formatDateTime(entry.createdAt) }}</span>
+                  <a-popconfirm content="删除后，不再被其他规则覆盖的候选文章将恢复为待抓取。确认删除？" @ok="deleteDomainBlacklist(entry.id)">
+                    <a-button size="small" status="danger" :loading="deletingBlacklistId === entry.id">
+                      <template #icon><icon-delete /></template>
+                      删除
+                    </a-button>
+                  </a-popconfirm>
+                </article>
+              </div>
+            </a-spin>
           </section>
         </a-tab-pane>
 
@@ -568,6 +603,19 @@ interface CrawlQueueSnapshot {
   tasks: CrawlQueueTask[]
 }
 
+interface DomainBlacklistEntry {
+  id: number
+  domain: string
+  reason: string
+  createdAt: string
+  updatedAt: string
+}
+
+interface DomainBlacklistMutation {
+  entry: DomainBlacklistEntry
+  affectedCandidates: number
+}
+
 const emptyCrawlQueue = (): CrawlQueueSnapshot => ({
   mode: 'manual',
   state: 'idle',
@@ -588,6 +636,9 @@ const archivingCandidateId = ref<number | null>(null)
 const feedbackLoadingId = ref<number | null>(null)
 const crawlQueueLoading = ref(false)
 const runningCrawlQueue = ref(false)
+const blacklistLoading = ref(false)
+const addingBlacklist = ref(false)
+const deletingBlacklistId = ref<number | null>(null)
 const rankingWindow = ref<'7d' | 'all'>('7d')
 const keywordWindow = ref<'7d' | 'all'>('7d')
 const candidateStatus = ref('new')
@@ -598,6 +649,7 @@ const keywords = ref<KeywordItem[]>([])
 const sources = ref<DiscoverySource[]>([])
 const candidates = ref<DiscoveryCandidate[]>([])
 const crawlQueue = ref<CrawlQueueSnapshot>(emptyCrawlQueue())
+const domainBlacklist = ref<DomainBlacklistEntry[]>([])
 const historyDays = ref<RecommendationDay[]>([])
 const blockRules = ref<BlockRule[]>([])
 const feedbackByItem = reactive<Record<number, { action: string } | undefined>>({})
@@ -612,6 +664,7 @@ const itemContext = ref<any>()
 const todaySnapshot = ref<RecommendationSnapshot>(emptySnapshot(formatLocalDate(new Date())))
 const historySnapshot = ref<RecommendationSnapshot>(emptySnapshot(historyDate.value))
 const sourceForm = reactive({ name: '', url: '', type: 'feed' })
+const blacklistForm = reactive({ domain: '', reason: '' })
 const settingsForm = reactive<RecommendationSettings>({
   dailyLimit: 10,
   timezone: 'Asia/Shanghai',
@@ -734,6 +787,57 @@ const runCrawlQueue = async () => {
   }
 }
 
+const loadDomainBlacklist = async (silent = false) => {
+  if (!isOwner.value) return
+  try {
+    if (!silent) blacklistLoading.value = true
+    domainBlacklist.value = (await requestJSON<DomainBlacklistEntry[]>('/api/admin/discovery/domain-blacklist', { headers: authHeaders() })) ?? []
+  } catch (error) {
+    if (!silent) Message.error(error instanceof Error ? error.message : '加载域名黑名单失败')
+  } finally {
+    blacklistLoading.value = false
+  }
+}
+
+const refreshQueueTab = async () => {
+  await Promise.all([loadCrawlQueue(), loadDomainBlacklist()])
+}
+
+const addDomainBlacklist = async () => {
+  const domain = blacklistForm.domain.trim()
+  if (!domain) {
+    Message.warning('请输入要屏蔽的域名')
+    return
+  }
+  try {
+    addingBlacklist.value = true
+    const mutation = await requestJSON<DomainBlacklistMutation>('/api/admin/discovery/domain-blacklist', {
+      method: 'POST', headers: authHeaders(true), body: JSON.stringify({ domain, reason: blacklistForm.reason.trim() }),
+    })
+    blacklistForm.domain = ''
+    blacklistForm.reason = ''
+    await Promise.all([loadDomainBlacklist(true), loadCrawlQueue(true), loadCandidates()])
+    Message.success(`域名已加入黑名单，暂停 ${mutation.affectedCandidates || 0} 个候选任务`)
+  } catch (error) {
+    Message.error(error instanceof Error ? error.message : '添加域名黑名单失败')
+  } finally {
+    addingBlacklist.value = false
+  }
+}
+
+const deleteDomainBlacklist = async (id: number) => {
+  try {
+    deletingBlacklistId.value = id
+    const mutation = await requestJSON<DomainBlacklistMutation>(`/api/admin/discovery/domain-blacklist/${id}`, { method: 'DELETE', headers: authHeaders() })
+    await Promise.all([loadDomainBlacklist(true), loadCrawlQueue(true), loadCandidates()])
+    Message.success(`域名黑名单已删除，恢复 ${mutation.affectedCandidates || 0} 个候选任务`)
+  } catch (error) {
+    Message.error(error instanceof Error ? error.message : '删除域名黑名单失败')
+  } finally {
+    deletingBlacklistId.value = null
+  }
+}
+
 const loadItemFeedback = async (item: RecommendationItem) => {
   const data = await requestJSON<{ current?: { action: string } }>(`/api/recommendations/items/${item.id}/feedback`, { headers: authHeaders() })
   feedbackByItem[item.id] = data?.current ? { action: data.current.action === 'duplicate' ? 'too_repetitive' : data.current.action } : undefined
@@ -804,7 +908,7 @@ const loadAll = async () => {
       loadSources(),
       loadCandidates(),
     ])
-    if (activeTab.value === 'queue' && isOwner.value) await loadCrawlQueue()
+    if (activeTab.value === 'queue' && isOwner.value) await refreshQueueTab()
   } catch (error) {
     Notification.error({ title: '加载失败', content: error instanceof Error ? error.message : '推荐中心加载失败', position: 'topRight' })
   } finally {
@@ -1123,7 +1227,7 @@ function crawlTaskTimeLabel(task: CrawlQueueTask): string {
 
 watch(activeTab, (tab) => {
   if (tab === 'queue' && isOwner.value) {
-    void loadCrawlQueue()
+    void refreshQueueTab()
     return
   }
   clearCrawlQueueTimer()
@@ -1447,6 +1551,44 @@ onBeforeUnmount(clearCrawlQueueTimer)
 .task-status-failed { background: #ffece8; color: #f53f3f !important; }
 .queue-task-error { grid-column: 1 / -1; color: #f53f3f !important; overflow-wrap: anywhere; }
 
+.domain-blacklist-panel {
+  border-top: 1px solid #e5e6eb;
+}
+
+.blacklist-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 2fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.blacklist-list {
+  display: grid;
+  gap: 8px;
+}
+
+.blacklist-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+}
+
+.blacklist-row > div {
+  display: grid;
+  gap: 4px;
+}
+
+.blacklist-row span {
+  color: #86909c;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .source-form {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) minmax(280px, 2fr) minmax(110px, 130px) auto;
@@ -1517,7 +1659,9 @@ onBeforeUnmount(clearCrawlQueueTimer)
   .source-row,
   .history-layout,
   .settings-grid,
-  .source-form {
+  .source-form,
+  .blacklist-form,
+  .blacklist-row {
     grid-template-columns: 1fr;
   }
 

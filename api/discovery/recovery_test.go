@@ -136,3 +136,57 @@ func TestRecoverySkipsSitemapWithoutExplicitOwnerRequest(t *testing.T) {
 		t.Fatalf("unrequested sitemap recovery = %#v", queue.backfills)
 	}
 }
+
+func TestRecoverDueJobsSkipsBlacklistedNetworkWorkButKeepsReadyLocalWork(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
+	if err := db.Create(&DiscoveryDomainBlacklistEntry{Domain: "blocked.example"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	blockedSite := DiscoverySite{RootURL: "https://blocked.example/", HostKey: "blocked.example", DomainKey: "blocked.example", Status: DiscoverySiteStatusSeed, DiscoveryMethod: DiscoveryMethodManualSeed, CrawlAllowed: true, FirstDiscoveredAt: now}
+	allowedSite := DiscoverySite{RootURL: "https://allowed.example/", HostKey: "allowed.example", DomainKey: "allowed.example", Status: DiscoverySiteStatusSeed, DiscoveryMethod: DiscoveryMethodManualSeed, CrawlAllowed: true, FirstDiscoveredAt: now}
+	if err := db.Create(&blockedSite).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&allowedSite).Error; err != nil {
+		t.Fatal(err)
+	}
+	blockedSource := DiscoverySource{Name: "Blocked", URL: "https://blocked.example/feed", CrawlHost: "blocked.example", Type: DiscoverySourceTypeFeed, SiteID: &blockedSite.ID, Enabled: true, NextDueAt: &now}
+	allowedSource := DiscoverySource{Name: "Allowed", URL: "https://allowed.example/feed", CrawlHost: "allowed.example", Type: DiscoverySourceTypeFeed, SiteID: &allowedSite.ID, Enabled: true, NextDueAt: &now}
+	if err := db.Create(&blockedSource).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&allowedSource).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&DiscoveryBackfillState{SiteID: blockedSite.ID, Strategy: BackfillStrategyArchive, Status: BackfillStatusPending, NextBatchAt: &now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&DiscoveryBackfillState{SiteID: allowedSite.ID, Strategy: BackfillStrategyArchive, Status: BackfillStatusPending, NextBatchAt: &now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	blockedCandidate := DiscoveryCandidate{SourceID: blockedSource.ID, SourceName: blockedSource.Name, URL: "https://blocked.example/article", CrawlHost: "blocked.example", Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingFetchPending, EligibilityState: DiscoveryEligibilityUnknown, LastSeenAt: now}
+	readyCandidate := DiscoveryCandidate{SourceID: blockedSource.ID, SourceName: blockedSource.Name, URL: "https://blocked.example/ready", CrawlHost: "blocked.example", Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingReady, EligibilityState: DiscoveryEligibilityUnknown, DedupeState: DiscoveryDedupePending, ContentHash: "hash", LastSeenAt: now}
+	if err := db.Create(&blockedCandidate).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&readyCandidate).Error; err != nil {
+		t.Fatal(err)
+	}
+	queue := &recoveryRecordingQueue{}
+	if err := RecoverDueJobs(context.Background(), queue, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.fetches) != 1 || queue.fetches[0] != allowedSource.ID {
+		t.Fatalf("fetches = %#v", queue.fetches)
+	}
+	if len(queue.scans) != 1 || queue.scans[0] != allowedSite.ID {
+		t.Fatalf("scans = %#v", queue.scans)
+	}
+	if len(queue.backfills) != 1 || queue.backfills[0] != allowedSite.ID {
+		t.Fatalf("backfills = %#v", queue.backfills)
+	}
+	if len(queue.candidates) != 1 || queue.candidates[0] != readyCandidate.ID {
+		t.Fatalf("candidates = %#v", queue.candidates)
+	}
+}

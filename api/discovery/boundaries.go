@@ -90,9 +90,15 @@ type HTTPClientFetcher struct {
 	Robots       RobotsChecker
 	UserAgent    string
 	MaxRedirects int
+	BlockURL     func(context.Context, string) error
 }
 
 func (fetcher HTTPClientFetcher) Fetch(ctx context.Context, input FetchRequest) (FetchResult, error) {
+	if fetcher.BlockURL != nil {
+		if err := fetcher.BlockURL(ctx, input.URL); err != nil {
+			return FetchResult{}, err
+		}
+	}
 	validator := fetcher.Validator
 	if validator == nil {
 		validator = ValidateFetchURL
@@ -150,6 +156,11 @@ func (fetcher HTTPClientFetcher) Fetch(ctx context.Context, input FetchRequest) 
 	clientCopy.CheckRedirect = func(request *http.Request, via []*http.Request) error {
 		if len(via) > maxRedirects {
 			return ErrTooManyRedirects
+		}
+		if fetcher.BlockURL != nil {
+			if err := fetcher.BlockURL(request.Context(), request.URL.String()); err != nil {
+				return err
+			}
 		}
 		if _, err := validator(request.Context(), request.URL.String()); err != nil {
 			return err

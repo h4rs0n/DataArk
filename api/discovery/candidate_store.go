@@ -5,6 +5,7 @@ import (
 	"DataArk/jobqueue"
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -13,6 +14,9 @@ import (
 )
 
 var enqueueCandidateForProcessing = func(ctx context.Context, candidate DiscoveryCandidate) error {
+	if candidate.ProcessingState == DiscoveryProcessingDomainBlocked {
+		return nil
+	}
 	queue, available := jobqueue.Default()
 	if !available {
 		return nil
@@ -47,6 +51,7 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 	if err != nil {
 		articleURL = normalizedURL
 	}
+	crawlHost := crawlHostForURL(articleURL)
 	now := discoveryClock.Now()
 	method := strings.TrimSpace(candidate.DiscoveryMethod)
 	if method == "" {
@@ -60,16 +65,31 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 		return result, nil
 	}
 	err = db.Transaction(func(tx *gorm.DB) error {
+		blocked, err := isDiscoveryHostBlacklistedDB(tx, crawlHost)
+		if err != nil {
+			return err
+		}
 		var record DiscoveryCandidate
 		findErr := tx.Where("url = ? OR normalized_url = ?", normalizedURL, articleURL).Order("id").First(&record).Error
 		switch {
 		case errors.Is(findErr, gorm.ErrRecordNotFound):
+			processingState := DiscoveryProcessingFetchPending
+			processingErrorType := ""
+			processingError := ""
+			eligibilityReasons := ""
+			if blocked {
+				processingState = DiscoveryProcessingDomainBlocked
+				processingErrorType = processingErrorDomainBlacklist
+				processingError = fmt.Sprintf("crawl domain is blacklisted: %s", crawlHost)
+				eligibilityReasons = processingErrorDomainBlacklist
+			}
 			record = DiscoveryCandidate{
 				SourceID: source.ID, SourceName: source.Name, URL: normalizedURL,
-				NormalizedURL: articleURL, CanonicalURL: articleURL,
+				NormalizedURL: articleURL, CanonicalURL: articleURL, CrawlHost: crawlHost,
 				Title: strings.TrimSpace(candidate.Title), Summary: archive.BuildSummary(candidate.Summary, 260),
-				Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingFetchPending,
-				EligibilityState:   DiscoveryEligibilityUnknown,
+				Status: DiscoveryCandidateStatusNew, ProcessingState: processingState,
+				EligibilityState:    DiscoveryEligibilityUnknown,
+				ProcessingErrorType: processingErrorType, ProcessingError: processingError, EligibilityReasons: eligibilityReasons,
 				EnrichmentStatus:   DiscoveryCandidateEnrichmentStatusPending,
 				MetadataConfidence: confidence, DedupeKey: initialCandidateDedupeKey(articleURL),
 				Score: scoreDiscoveredCandidate(candidate), PublishedAt: candidate.PublishedAt,
@@ -83,7 +103,7 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 		case findErr != nil:
 			return findErr
 		default:
-			updates := map[string]interface{}{"last_seen_at": now, "updated_at": now}
+			updates := map[string]interface{}{"last_seen_at": now, "updated_at": now, "crawl_host": crawlHost}
 			incomingTitle := strings.TrimSpace(candidate.Title)
 			incomingSummary := archive.BuildSummary(candidate.Summary, 260)
 			trusted := confidence >= record.MetadataConfidence

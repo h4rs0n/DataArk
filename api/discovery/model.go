@@ -13,6 +13,7 @@ type DiscoverySource struct {
 	ID            uint       `json:"id" gorm:"primaryKey"`
 	Name          string     `json:"name" gorm:"not null;size:255"`
 	URL           string     `json:"url" gorm:"uniqueIndex;not null;size:2048"`
+	CrawlHost     string     `json:"-" gorm:"index;not null;default:'';size:512"`
 	Type          string     `json:"type" gorm:"not null;size:32"`
 	SiteID        *uint      `json:"siteId" gorm:"index"`
 	EndpointType  string     `json:"endpointType" gorm:"index;not null;default:legacy;size:32"`
@@ -36,6 +37,9 @@ type DiscoverySource struct {
 }
 
 func (source *DiscoverySource) BeforeSave(tx *gorm.DB) error {
+	if source.CrawlHost == "" {
+		source.CrawlHost = crawlHostForURL(source.URL)
+	}
 	if tx != nil && tx.Dialector.Name() == "postgres" && strings.TrimSpace(source.CrawlConfig) == "" {
 		source.CrawlConfig = "{}"
 	}
@@ -47,6 +51,7 @@ type DiscoveryCandidate struct {
 	SourceID            uint       `json:"sourceId" gorm:"index;not null"`
 	SourceName          string     `json:"sourceName" gorm:"size:255"`
 	URL                 string     `json:"url" gorm:"uniqueIndex;not null;size:2048"`
+	CrawlHost           string     `json:"-" gorm:"index;not null;default:'';size:512"`
 	CanonicalURL        string     `json:"canonicalUrl" gorm:"size:2048"`
 	NormalizedURL       string     `json:"normalizedUrl" gorm:"index;size:2048"`
 	FinalURL            string     `json:"finalUrl" gorm:"size:2048"`
@@ -100,6 +105,9 @@ type DiscoveryCandidate struct {
 }
 
 func (candidate *DiscoveryCandidate) BeforeSave(tx *gorm.DB) error {
+	if candidate.CrawlHost == "" {
+		candidate.CrawlHost = crawlHostForURL(candidate.URL)
+	}
 	if tx == nil || tx.Dialector.Name() != "postgres" {
 		return nil
 	}

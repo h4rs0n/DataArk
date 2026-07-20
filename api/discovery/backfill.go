@@ -60,6 +60,9 @@ func RunBackfillSite(ctx context.Context, siteID uint, queue JobEnqueuer) (*Disc
 	if err := db.First(&site, siteID).Error; err != nil {
 		return nil, err
 	}
+	if err := ensureDiscoveryURLNotBlacklisted(ctx, site.RootURL); err != nil {
+		return nil, err
+	}
 	if !site.CrawlAllowed || site.Status == DiscoverySiteStatusPaused || site.Status == DiscoverySiteStatusBlocked || site.Status == DiscoverySiteStatusNonBlog {
 		reason := firstNonBlank(site.OperationalPause, "site_not_crawlable")
 		if err := db.Model(&DiscoveryBackfillState{}).Where("site_id = ? AND status <> ?", siteID, BackfillStatusCompleted).Updates(map[string]interface{}{"status": BackfillStatusPaused, "completion_reason": reason, "next_batch_at": nil}).Error; err != nil {
@@ -139,7 +142,7 @@ func RunBackfillSite(ctx context.Context, siteID uint, queue JobEnqueuer) (*Disc
 			urlsSeen++
 			if writeResult.Created {
 				createdCount++
-				if queue != nil {
+				if queue != nil && writeResult.Candidate.ProcessingState != DiscoveryProcessingDomainBlocked {
 					_ = queue.EnqueueProcessCandidate(ctx, writeResult.Candidate.ID, candidateContentVersion(writeResult.Candidate))
 				}
 			} else {
@@ -347,7 +350,7 @@ func recordBackfillFailure(state *DiscoveryBackfillState, cursor backfillCursor,
 }
 
 func backfillFailureIsUnrecoverable(err error) bool {
-	return errors.Is(err, ErrRobotsDisallowed) || errors.Is(err, ErrUnsafeURLScheme) || errors.Is(err, ErrUnsafeURLHost) || errors.Is(err, ErrUnsafeURLPort) || errors.Is(err, ErrUnsafeIPAddress) || errors.Is(err, ErrHTTPFetchContentType)
+	return errors.Is(err, ErrDiscoveryDomainBlacklisted) || errors.Is(err, ErrRobotsDisallowed) || errors.Is(err, ErrUnsafeURLScheme) || errors.Is(err, ErrUnsafeURLHost) || errors.Is(err, ErrUnsafeURLPort) || errors.Is(err, ErrUnsafeIPAddress) || errors.Is(err, ErrHTTPFetchContentType)
 }
 
 func ListBackfillCoverage(siteID uint) ([]BackfillCoverage, error) {

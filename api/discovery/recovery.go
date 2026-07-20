@@ -14,6 +14,10 @@ func RecoverDueJobs(ctx context.Context, queue JobEnqueuer, now time.Time) error
 		return nil
 	}
 	var recoveryErrors []error
+	blacklist, err := loadDiscoveryDomainBlacklist()
+	if err != nil {
+		return err
+	}
 
 	var sources []DiscoverySource
 	activeSiteIDs := db.Model(&DiscoverySite{}).Select("id").Where("crawl_allowed = ? AND status NOT IN ?", true, []string{DiscoverySiteStatusPaused, DiscoverySiteStatusBlocked, DiscoverySiteStatusNonBlog})
@@ -25,6 +29,9 @@ next_due_at <= ? OR
 		return err
 	}
 	for _, source := range sources {
+		if domainBlacklistMatchesURL(blacklist, source.URL) {
+			continue
+		}
 		if err := queue.EnqueueFetchSource(ctx, source.ID); err != nil {
 			recoveryErrors = append(recoveryErrors, err)
 		}
@@ -36,6 +43,9 @@ next_due_at <= ? OR
 		recoveryErrors = append(recoveryErrors, err)
 	} else {
 		for _, site := range sites {
+			if domainBlacklistMatchesURL(blacklist, site.RootURL) {
+				continue
+			}
 			if err := queue.EnqueueScanBlogroll(ctx, site.ID); err != nil {
 				recoveryErrors = append(recoveryErrors, err)
 			}
@@ -47,6 +57,14 @@ next_due_at <= ? OR
 		recoveryErrors = append(recoveryErrors, err)
 	} else {
 		for _, backfill := range backfills {
+			var site DiscoverySite
+			if err := db.Select("root_url").First(&site, backfill.SiteID).Error; err != nil {
+				recoveryErrors = append(recoveryErrors, err)
+				continue
+			}
+			if domainBlacklistMatchesURL(blacklist, site.RootURL) {
+				continue
+			}
 			if err := queue.EnqueueBackfillSite(ctx, backfill.SiteID); err != nil {
 				recoveryErrors = append(recoveryErrors, err)
 			}
@@ -59,6 +77,9 @@ next_due_at <= ? OR
 		recoveryErrors = append(recoveryErrors, err)
 	} else {
 		for _, candidate := range candidates {
+			if candidate.ProcessingState != DiscoveryProcessingReady && domainBlacklistMatchesURL(blacklist, candidate.URL) {
+				continue
+			}
 			if err := queue.EnqueueProcessCandidate(ctx, candidate.ID, strconv.FormatUint(uint64(candidate.ContentVersion), 10)); err != nil {
 				recoveryErrors = append(recoveryErrors, err)
 			}

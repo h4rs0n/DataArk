@@ -264,7 +264,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 20 || migrations[len(migrations)-1].Version != 20 {
+	if len(migrations) != 21 || migrations[len(migrations)-1].Version != 21 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -411,6 +411,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"owner_requested_at", "sitemap_requires_owner_request", "enabled = FALSE", "Data-preserving rollback"} {
 		if !strings.Contains(string(sitemapGapFill), required) {
 			t.Fatalf("sitemap gap-fill migration missing %q", required)
+		}
+	}
+	blacklistBody, err := appmigrations.FS.ReadFile("000021_discovery_domain_blacklist.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"CREATE TABLE IF NOT EXISTS discovery_domain_blacklist_entries", "ADD COLUMN IF NOT EXISTS crawl_host", "VALUES ('csdn.net'", "processing_state = 'domain_blocked'"} {
+		if !strings.Contains(string(blacklistBody), required) {
+			t.Fatalf("blacklist migration missing %q", required)
 		}
 	}
 }

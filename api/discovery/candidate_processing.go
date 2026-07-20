@@ -70,6 +70,17 @@ func ProcessCandidateWithAssessor(ctx context.Context, candidateID uint, expecte
 	if candidate.ProcessingState == DiscoveryProcessingReady && candidate.DedupeState == DiscoveryDedupeReady && candidate.AssessmentState == DiscoveryAssessmentPending {
 		return AssessCandidate(ctx, candidate.ID, enhanced)
 	}
+	if err := ensureDiscoveryURLNotBlacklisted(ctx, candidate.URL); err != nil {
+		if errors.Is(err, ErrDiscoveryDomainBlacklisted) {
+			updates := candidateFailureUpdates(DiscoveryProcessingDomainBlocked, DiscoveryEligibilityUnknown, processingErrorDomainBlacklist, err.Error(), discoveryClock.Now())
+			updates["eligibility_reasons"] = processingErrorDomainBlacklist
+			updates["next_processing_at"] = nil
+			if updateErr := db.Model(&candidate).Updates(updates).Error; updateErr != nil {
+				return updateErr
+			}
+		}
+		return err
+	}
 
 	now := discoveryClock.Now()
 	attempt := candidate.ProcessingAttempts + 1
@@ -177,7 +188,7 @@ func recordCandidateFetchFailure(candidate *DiscoveryCandidate, fetchErr error, 
 }
 
 func isPermanentCandidateFetchError(err error) bool {
-	return errors.Is(err, ErrRobotsDisallowed) ||
+	return errors.Is(err, ErrDiscoveryDomainBlacklisted) || errors.Is(err, ErrRobotsDisallowed) ||
 		errors.Is(err, ErrUnsafeURLScheme) || errors.Is(err, ErrUnsafeURLHost) ||
 		errors.Is(err, ErrUnsafeURLPort) || errors.Is(err, ErrUnsafeIPAddress) ||
 		errors.Is(err, ErrHTTPFetchBodyTooLarge) || errors.Is(err, ErrHTTPFetchContentType)

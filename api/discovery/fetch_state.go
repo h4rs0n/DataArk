@@ -146,6 +146,8 @@ func duplicateResultCount(result *DiscoveryFetchResult) int {
 
 func discoveryFetchErrorCategory(err error) string {
 	switch {
+	case errors.Is(err, ErrDiscoveryDomainBlacklisted):
+		return processingErrorDomainBlacklist
 	case errors.Is(err, ErrRobotsDisallowed):
 		return "robots_disallowed"
 	case errors.Is(err, ErrRobotsUnavailable):

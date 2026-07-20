@@ -10,16 +10,17 @@ const (
 	DiscoverySiteStatusBlocked   = "blocked"
 	DiscoverySiteStatusNonBlog   = "non_blog"
 
-	DiscoveryProcessingDiscovered  = "discovered"
-	DiscoveryProcessingFetching    = "fetching"
-	DiscoveryProcessingReady       = "ready"
-	DiscoveryProcessingReview      = "review"
-	DiscoveryProcessingFailed      = "failed"
-	DiscoveryProcessingIneligible  = "ineligible"
-	DiscoveryEligibilityUnknown    = "unknown"
-	DiscoveryEligibilityEligible   = "eligible"
-	DiscoveryEligibilityReview     = "review"
-	DiscoveryEligibilityIneligible = "ineligible"
+	DiscoveryProcessingDiscovered    = "discovered"
+	DiscoveryProcessingFetching      = "fetching"
+	DiscoveryProcessingReady         = "ready"
+	DiscoveryProcessingReview        = "review"
+	DiscoveryProcessingFailed        = "failed"
+	DiscoveryProcessingIneligible    = "ineligible"
+	DiscoveryProcessingDomainBlocked = "domain_blocked"
+	DiscoveryEligibilityUnknown      = "unknown"
+	DiscoveryEligibilityEligible     = "eligible"
+	DiscoveryEligibilityReview       = "review"
+	DiscoveryEligibilityIneligible   = "ineligible"
 )
 
 type DiscoverySite struct {
@@ -43,6 +44,19 @@ type DiscoverySite struct {
 	OperationalDetails string     `json:"operationalDetails" gorm:"type:text"`
 	CreatedAt          time.Time  `json:"createdAt"`
 	UpdatedAt          time.Time  `json:"updatedAt"`
+}
+
+type DiscoveryDomainBlacklistEntry struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Domain    string    `json:"domain" gorm:"uniqueIndex;not null;size:512"`
+	Reason    string    `json:"reason" gorm:"type:text"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type DiscoveryDomainBlacklistMutation struct {
+	Entry              DiscoveryDomainBlacklistEntry `json:"entry"`
+	AffectedCandidates int64                         `json:"affectedCandidates"`
 }
 
 type DiscoverySiteEdge struct {
@@ -279,6 +293,7 @@ type DiscoverySourceScheduleDecision struct {
 
 func V3Models() []interface{} {
 	return []interface{}{
+		&DiscoveryDomainBlacklistEntry{},
 		&DiscoverySite{},
 		&DiscoverySiteEdge{},
 		&DiscoveryCandidateProvenance{},

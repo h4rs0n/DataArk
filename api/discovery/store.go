@@ -108,6 +108,9 @@ func CreateDiscoverySource(name string, rawURL string, sourceType string, enable
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureDiscoveryURLNotBlacklisted(context.Background(), normalizedURL); err != nil {
+		return nil, err
+	}
 	sourceType = normalizeDiscoverySourceType(sourceType)
 	if sourceType == DiscoverySourceTypeSitemap {
 		return nil, ErrSitemapSourceDisabled
@@ -118,6 +121,7 @@ func CreateDiscoverySource(name string, rawURL string, sourceType string, enable
 	source := &DiscoverySource{
 		Name:         strings.TrimSpace(name),
 		URL:          normalizedURL,
+		CrawlHost:    crawlHostForURL(normalizedURL),
 		Type:         sourceType,
 		EndpointType: legacyEndpointType(sourceType),
 		UserManaged:  true,
@@ -178,6 +182,9 @@ func UpdateDiscoverySource(id uint, name string, rawURL string, sourceType strin
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureDiscoveryURLNotBlacklisted(context.Background(), normalizedURL); err != nil {
+		return nil, err
+	}
 	sourceType = normalizeDiscoverySourceType(sourceType)
 	if sourceType == DiscoverySourceTypeSitemap {
 		return nil, ErrSitemapSourceDisabled
@@ -185,6 +192,7 @@ func UpdateDiscoverySource(id uint, name string, rawURL string, sourceType strin
 	updates := map[string]interface{}{
 		"name":          strings.TrimSpace(name),
 		"url":           normalizedURL,
+		"crawl_host":    crawlHostForURL(normalizedURL),
 		"type":          sourceType,
 		"endpoint_type": legacyEndpointType(sourceType),
 		"enabled":       enabled,
@@ -230,6 +238,9 @@ func FetchDiscoverySourceByID(ctx context.Context, id uint) (*DiscoveryFetchResu
 func FetchDiscoverySource(ctx context.Context, source *DiscoverySource) (*DiscoveryFetchResult, error) {
 	if source == nil {
 		return nil, errors.New("missing discovery source")
+	}
+	if err := ensureDiscoveryURLNotBlacklisted(ctx, source.URL); err != nil {
+		return &DiscoveryFetchResult{SourceID: source.ID, SourceError: err.Error()}, err
 	}
 	if source.EndpointType == DiscoveryEndpointSitemap || normalizeDiscoverySourceType(source.Type) == DiscoverySourceTypeSitemap {
 		return &DiscoveryFetchResult{SourceID: source.ID, SourceError: ErrSitemapSourceDisabled.Error()}, ErrSitemapSourceDisabled
