@@ -32,6 +32,14 @@ test('discovery UI separates manual subscriptions and explicit sitemap gap fill'
   assert.match(siteInsight, /sitemapBackfill/)
 })
 
+test('candidate article titles open the source in a safe new tab', () => {
+  assert.match(view, /class="candidate-title-link"/)
+  assert.match(view, /:href="candidate\.url"/)
+  assert.match(view, /target="_blank"/)
+  assert.match(view, /rel="noopener noreferrer"/)
+  assert.match(view, /@click="markCandidateRead\(candidate\)"/)
+})
+
 test('owner UI exposes the manual crawl queue in a dedicated tab', () => {
   assert.match(view, /爬取任务队列/)
   assert.match(view, /执行待处理任务/)

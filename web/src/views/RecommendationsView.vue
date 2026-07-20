@@ -193,7 +193,17 @@
             <div v-else class="item-list">
               <article v-for="candidate in candidates" :key="candidate.id" class="compact-card">
                 <div class="item-main">
-                  <h3>{{ candidate.title }}</h3>
+                  <h3>
+                    <a
+                      class="candidate-title-link"
+                      :href="candidate.url"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      @click="markCandidateRead(candidate)"
+                    >
+                      {{ candidate.title || candidate.url }}
+                    </a>
+                  </h3>
                   <p>{{ candidate.summary || candidate.url }}</p>
                   <span>{{ candidate.sourceName }} · 处理 {{ candidate.processingState || 'unknown' }} · 资格 {{ candidate.eligibilityState || 'unknown' }} · 去重 {{ candidate.dedupeState || 'unknown' }}</span>
                   <small>评估 {{ candidate.assessmentState || 'pending' }} · 正文 v{{ candidate.contentVersion || 0 }} · {{ candidate.userState?.currentFeedback || '无个人反馈' }}</small>
@@ -1127,15 +1137,18 @@ const searchKeyword = (keyword: string) => {
   router.push({ path: '/search', query: { q: keyword } })
 }
 
-const openCandidate = async (candidate: DiscoveryCandidate) => {
+const markCandidateRead = async (candidate: DiscoveryCandidate) => {
   if (!candidate?.url) return
   try {
     await requestJSON(`/api/discovery/candidates/${candidate.id}/read`, { method: 'POST', headers: authHeaders() })
-    window.open(candidate.url, '_blank', 'noopener,noreferrer')
     await loadCandidates()
-  } catch {
-    window.open(candidate.url, '_blank', 'noopener,noreferrer')
-  }
+  } catch { /* Opening the article should not depend on recording read state. */ }
+}
+
+const openCandidate = (candidate: DiscoveryCandidate) => {
+  if (!candidate?.url) return
+  window.open(candidate.url, '_blank', 'noopener,noreferrer')
+  void markCandidateRead(candidate)
 }
 
 const archiveCandidate = async (candidateId: number) => {
@@ -1390,6 +1403,19 @@ onBeforeUnmount(clearCrawlQueueTimer)
   font-size: 17px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.candidate-title-link {
+  color: #1d2129;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.candidate-title-link:hover,
+.candidate-title-link:focus-visible {
+  color: #165dff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .item-main p,
