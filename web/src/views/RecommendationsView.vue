@@ -243,18 +243,30 @@
               <div><strong>{{ crawlQueue.counts.failed24h }}</strong><span>近 24 小时失败</span></div>
             </div>
 
-            <a-empty v-if="crawlQueue.tasks.length === 0" description="暂无爬取任务" />
+            <a-empty v-if="displayedCrawlQueueTasks.length === 0" description="暂无爬取任务" />
             <div v-else class="queue-task-list">
-              <article v-for="task in crawlQueue.tasks" :key="task.id" class="queue-task-row">
-                <div>
-                  <strong>{{ crawlTaskKindLabel(task.kind) }}</strong>
-                  <span>{{ crawlTaskTargetLabel(task) }}</span>
-                </div>
-                <span class="task-status" :class="`task-status-${task.status}`">{{ crawlTaskStatusLabel(task.status) }}</span>
-                <span>尝试 {{ task.attempts }} 次</span>
-                <span>{{ crawlTaskTimeLabel(task) }}</span>
-                <small v-if="task.error" class="queue-task-error">{{ task.error }}</small>
-              </article>
+              <template v-for="item in displayedCrawlQueueTasks" :key="item.key">
+                <article v-if="item.type === 'task'" class="queue-task-row">
+                  <div>
+                    <strong>{{ crawlTaskKindLabel(item.task.kind) }}</strong>
+                    <span>{{ crawlTaskTargetLabel(item.task) }}</span>
+                  </div>
+                  <span class="task-status" :class="`task-status-${item.task.status}`">{{ crawlTaskStatusLabel(item.task.status) }}</span>
+                  <span>尝试 {{ item.task.attempts }} 次</span>
+                  <span>{{ crawlTaskTimeLabel(item.task) }}</span>
+                  <small v-if="item.task.error" class="queue-task-error">{{ item.task.error }}</small>
+                </article>
+                <article v-else class="queue-task-row queue-task-summary">
+                  <div>
+                    <strong>{{ crawlTaskKindLabel(item.kind) }}</strong>
+                    <span>当前列表内另有 {{ item.collapsedCount }} 条相同任务已合并<span v-if="item.contentVersion"> · 正文 v{{ item.contentVersion }}</span></span>
+                  </div>
+                  <span class="task-status" :class="`task-status-${item.status}`">{{ crawlTaskStatusLabel(item.status) }}</span>
+                  <span>尝试 {{ item.attempts }} 次</span>
+                  <span>{{ crawlTaskGroupTimeLabel(item) }}</span>
+                  <small v-if="item.error" class="queue-task-error">{{ item.error }}</small>
+                </article>
+              </template>
             </div>
           </section>
 
@@ -447,6 +459,7 @@ import { Message, Notification } from '@arco-design/web-vue'
 import DigestSummary from '@/components/recommendations/DigestSummary.vue'
 import FeedbackControls from '@/components/recommendations/FeedbackControls.vue'
 import SiteInsightPanel from '@/components/recommendations/SiteInsightPanel.vue'
+import { groupCrawlQueueTasks } from '@/utils/crawlQueueGrouping.mjs'
 import {
   IconArrowLeft,
   IconClose,
@@ -690,6 +703,8 @@ const crawlQueueStateLabel = computed(() => ({
   waiting: '等待手动执行',
   running: '正在执行',
 }[crawlQueue.value.state]))
+
+const displayedCrawlQueueTasks = computed(() => groupCrawlQueueTasks(crawlQueue.value.tasks))
 
 const todayStatusText = computed(() => {
   const day = todaySnapshot.value.day
@@ -1225,6 +1240,12 @@ function crawlTaskTimeLabel(task: CrawlQueueTask): string {
   return value ? formatDateTime(value) : '暂无时间'
 }
 
+function crawlTaskGroupTimeLabel(item: { windowStart: string; windowEnd: string }): string {
+  const start = formatDateTime(item.windowStart)
+  const end = formatDateTime(item.windowEnd)
+  return start === end ? start : `${start} 至 ${end}`
+}
+
 watch(activeTab, (tab) => {
   if (tab === 'queue' && isOwner.value) {
     void refreshQueueTab()
@@ -1537,6 +1558,15 @@ onBeforeUnmount(clearCrawlQueueTimer)
 .queue-task-row > div {
   display: grid;
   gap: 4px;
+}
+
+.queue-task-summary {
+  border-style: dashed;
+  background: #f7f8fa;
+}
+
+.queue-task-summary strong {
+  color: #4e5969;
 }
 
 .task-status {
