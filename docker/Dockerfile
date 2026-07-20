@@ -1,9 +1,12 @@
-FROM node:20 AS frontend-builder
+FROM node:24 AS frontend-builder
 
-COPY web /DataArk/web
-COPY makefile /DataArk/makefile
-WORKDIR /DataArk
-RUN make web
+COPY web/package.json web/package-lock.json /DataArk/web/
+WORKDIR /DataArk/web
+RUN npm ci
+COPY web/env.d.ts web/index.html web/tsconfig*.json web/vite.config.ts /DataArk/web/
+COPY web/public /DataArk/web/public
+COPY web/src /DataArk/web/src
+RUN npm run build
 
 FROM golang:1.26 AS backend-builder
 

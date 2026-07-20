@@ -1,0 +1,10 @@
+.git
+.codex
+passwd.txt
+bin
+web/node_modules
+web/dist
+docker/archive
+docker/database
+docker/meili_data
+docker/meili_dumps
