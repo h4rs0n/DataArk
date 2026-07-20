@@ -527,11 +527,16 @@ func (worker *generateDailyWorker) Work(ctx context.Context, job *river.Job[Gene
 }
 
 func logWorkerEvent(name string, jobID string, event observability.Event, err error) {
+	observability.Log(workerEvent(name, jobID, event, err))
+}
+
+func workerEvent(name string, jobID string, event observability.Event, err error) observability.Event {
 	event.Name, event.JobID, event.Status = "job_"+name, jobID, "completed"
 	if err != nil {
-		event.Status, event.ErrorType = "failed", "handler"
+		event.Status = "failed"
+		event = observability.WithError(event, err)
 	}
-	observability.Log(event)
+	return event
 }
 
 func registerWorkers(workers *river.Workers, handlers Handlers) {

@@ -340,7 +340,8 @@ func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discove
 			return nil, 1, 0, &fetchResult, nil
 		}
 		if fetchResult.StatusCode < 200 || fetchResult.StatusCode >= 300 {
-			return nil, 0, 0, &fetchResult, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, fetchResult.StatusCode)
+			statusError := fmt.Errorf("%w: %d", ErrHTTPFetchStatus, fetchResult.StatusCode)
+			return nil, 0, 0, &fetchResult, withHTTPStatusDiagnostic(statusError, fetchResult, source.URL)
 		}
 		candidates, err := parseFeedCandidates(fetchResult.Body)
 		for index := range candidates {
@@ -374,7 +375,8 @@ func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discove
 			return nil, 0, 0, &fetchResult, nil
 		}
 		if fetchResult.StatusCode < 200 || fetchResult.StatusCode >= 300 {
-			return nil, 0, 0, &fetchResult, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, fetchResult.StatusCode)
+			statusError := fmt.Errorf("%w: %d", ErrHTTPFetchStatus, fetchResult.StatusCode)
+			return nil, 0, 0, &fetchResult, withHTTPStatusDiagnostic(statusError, fetchResult, source.URL)
 		}
 		wasObserving := site.Status == DiscoverySiteStatusObserving
 		if wasObserving {
@@ -431,7 +433,8 @@ func fetchFeedCandidates(ctx context.Context, rawURL string) ([]discoveredCandid
 		return nil, err
 	}
 	if result.StatusCode < 200 || result.StatusCode >= 300 {
-		return nil, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, result.StatusCode)
+		statusError := fmt.Errorf("%w: %d", ErrHTTPFetchStatus, result.StatusCode)
+		return nil, withHTTPStatusDiagnostic(statusError, result, rawURL)
 	}
 	return parseFeedCandidates(result.Body)
 }
@@ -493,7 +496,8 @@ func crawlSiteLinks(ctx context.Context, rawURL string) ([]string, []string, err
 				if fetchErr != nil {
 					return nil, nil, fetchErr
 				}
-				return nil, nil, fmt.Errorf("%w: %d", ErrHTTPFetchStatus, result.StatusCode)
+				statusError := fmt.Errorf("%w: %d", ErrHTTPFetchStatus, result.StatusCode)
+				return nil, nil, withHTTPStatusDiagnostic(statusError, result, pageURL)
 			}
 			continue
 		}

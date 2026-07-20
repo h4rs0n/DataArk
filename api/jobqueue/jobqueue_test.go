@@ -1,6 +1,7 @@
 package jobqueue
 
 import (
+	"DataArk/observability"
 	"context"
 	"database/sql"
 	"errors"
@@ -14,6 +15,16 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+type queueDiagnosticError struct{}
+
+func (queueDiagnosticError) Error() string {
+	return "fetch https://private.example/feed?token=secret failed; password=hunter2"
+}
+
+func (queueDiagnosticError) ObservabilityFailure() observability.FailureDetails {
+	return observability.FailureDetails{ErrorType: "http_status", Domain: "feed.example.com", HTTPStatus: 502}
+}
 
 type recordingSQLExecer struct {
 	query string
@@ -72,6 +83,19 @@ func TestCompactQueueErrorRedactsURLsAndSecrets(t *testing.T) {
 	got := compactQueueError("fetch https://private.example/feed failed; token=secret-value")
 	if got != "fetch [url] failed; token=[redacted]" {
 		t.Fatalf("sanitized error = %q", got)
+	}
+}
+
+func TestWorkerEventIncludesSafeFailureDiagnostics(t *testing.T) {
+	event := workerEvent("fetch_source", "42", observability.Event{SourceID: 7}, queueDiagnosticError{})
+	if event.Name != "job_fetch_source" || event.JobID != "42" || event.SourceID != 7 || event.Status != "failed" {
+		t.Fatalf("event identity = %#v", event)
+	}
+	if event.ErrorType != "http_status" || event.Domain != "feed.example.com" || event.HTTPStatus != 502 {
+		t.Fatalf("event diagnostics = %#v", event)
+	}
+	if strings.Contains(event.ErrorMessage, "private.example") || strings.Contains(event.ErrorMessage, "secret") || strings.Contains(event.ErrorMessage, "hunter2") {
+		t.Fatalf("unsafe message = %q", event.ErrorMessage)
 	}
 }
 

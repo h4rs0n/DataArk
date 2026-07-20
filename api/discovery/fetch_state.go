@@ -152,6 +152,8 @@ func discoveryFetchErrorCategory(err error) string {
 		return "robots_disallowed"
 	case errors.Is(err, ErrRobotsUnavailable):
 		return "robots_unavailable"
+	case errors.Is(err, ErrTooManyRedirects):
+		return "too_many_redirects"
 	case errors.Is(err, ErrUnsafeURLScheme), errors.Is(err, ErrUnsafeURLHost), errors.Is(err, ErrUnsafeURLPort), errors.Is(err, ErrUnsafeIPAddress):
 		return "unsafe_url"
 	case errors.Is(err, ErrHTTPFetchBodyTooLarge):

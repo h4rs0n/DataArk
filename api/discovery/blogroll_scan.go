@@ -51,7 +51,7 @@ func ScanBlogroll(ctx context.Context, siteID uint, queue JobEnqueuer) (Blogroll
 		return result, finishGraphScan(&site, now, nil, err)
 	}
 	if root.StatusCode < http.StatusOK || root.StatusCode >= http.StatusMultipleChoices {
-		err = fmt.Errorf("%w: %d", ErrHTTPFetchStatus, root.StatusCode)
+		err = withHTTPStatusDiagnostic(fmt.Errorf("%w: %d", ErrHTTPFetchStatus, root.StatusCode), root, site.RootURL)
 		return result, finishGraphScan(&site, now, &root, err)
 	}
 	rootDiscovery, err := discoverer.Discover(root.Body, root.FinalURLOr(site.RootURL), site.RootURL)

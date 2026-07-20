@@ -50,23 +50,24 @@ func (cache *RobotsCache) Allowed(ctx context.Context, rawURL string, userAgent 
 	cache.mu.Unlock()
 
 	if cache.loader == nil {
-		return false, "unavailable", ErrRobotsUnavailable
+		return false, "unavailable", withFetchDiagnostic(ErrRobotsUnavailable, origin+"/robots.txt", 0, "robots_unavailable")
 	}
 	result, err := cache.loader.Fetch(ctx, FetchRequest{URL: origin + "/robots.txt", Kind: FetchKindRobots, MaxBytes: 512 << 10})
 	if err != nil {
-		return false, "unavailable", fmt.Errorf("%w: %v", ErrRobotsUnavailable, err)
+		return false, "unavailable", withFetchDiagnostic(fmt.Errorf("%w: %w", ErrRobotsUnavailable, err), origin+"/robots.txt", 0, "robots_unavailable")
 	}
 	entry = robotsCacheEntry{status: "allowed", expiresAt: cache.clock.Now().Add(cache.ttl)}
 	switch result.StatusCode {
 	case http.StatusOK:
 		entry.robots, err = robotstxt.FromBytes(result.Body)
 		if err != nil {
-			return false, "invalid", fmt.Errorf("%w: invalid robots.txt: %v", ErrRobotsUnavailable, err)
+			parseError := fmt.Errorf("%w: invalid robots.txt: %v", ErrRobotsUnavailable, err)
+			return false, "invalid", withFetchDiagnostic(parseError, origin+"/robots.txt", result.StatusCode, "robots_unavailable")
 		}
 	case http.StatusNotFound, http.StatusGone:
 		entry.status = "missing"
 	default:
-		return false, "unavailable", ErrRobotsUnavailable
+		return false, "unavailable", withFetchDiagnostic(ErrRobotsUnavailable, origin+"/robots.txt", result.StatusCode, "robots_unavailable")
 	}
 	cache.mu.Lock()
 	cache.items[origin] = entry

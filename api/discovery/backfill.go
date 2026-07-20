@@ -107,7 +107,7 @@ func RunBackfillSite(ctx context.Context, siteID uint, queue JobEnqueuer) (*Disc
 			return &state, recordBackfillFailure(&state, cursor, now, fetchErr)
 		}
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-			fetchErr = fmt.Errorf("%w: %d", ErrHTTPFetchStatus, response.StatusCode)
+			fetchErr = withHTTPStatusDiagnostic(fmt.Errorf("%w: %d", ErrHTTPFetchStatus, response.StatusCode), response, currentURL)
 			return &state, recordBackfillFailure(&state, cursor, now, fetchErr)
 		}
 		urlsSeen++

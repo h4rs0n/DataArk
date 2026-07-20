@@ -96,7 +96,7 @@ type HTTPClientFetcher struct {
 func (fetcher HTTPClientFetcher) Fetch(ctx context.Context, input FetchRequest) (FetchResult, error) {
 	if fetcher.BlockURL != nil {
 		if err := fetcher.BlockURL(ctx, input.URL); err != nil {
-			return FetchResult{}, err
+			return FetchResult{}, withFetchDiagnostic(err, input.URL, 0, discoveryFetchErrorCategory(err))
 		}
 	}
 	validator := fetcher.Validator
@@ -105,7 +105,7 @@ func (fetcher HTTPClientFetcher) Fetch(ctx context.Context, input FetchRequest) 
 	}
 	validatedURL, err := validator(ctx, input.URL)
 	if err != nil {
-		return FetchResult{}, err
+		return FetchResult{}, withFetchDiagnostic(err, input.URL, 0, discoveryFetchErrorCategory(err))
 	}
 	userAgent := strings.TrimSpace(fetcher.UserAgent)
 	if userAgent == "" {
@@ -115,24 +115,24 @@ func (fetcher HTTPClientFetcher) Fetch(ctx context.Context, input FetchRequest) 
 	if fetcher.Robots != nil && input.Kind != FetchKindRobots {
 		allowed, status, err := fetcher.Robots.Allowed(ctx, validatedURL.String(), userAgent)
 		if err != nil {
-			return FetchResult{}, err
+			return FetchResult{}, withFetchDiagnostic(err, validatedURL.String(), 0, discoveryFetchErrorCategory(err))
 		}
 		robotsStatus = status
 		if !allowed {
-			return FetchResult{}, ErrRobotsDisallowed
+			return FetchResult{}, withFetchDiagnostic(ErrRobotsDisallowed, validatedURL.String(), 0, discoveryFetchErrorCategory(ErrRobotsDisallowed))
 		}
 	}
 	if fetcher.Limiter != nil {
 		release, err := fetcher.Limiter.Acquire(ctx, validatedURL.Hostname())
 		if err != nil {
-			return FetchResult{}, err
+			return FetchResult{}, withFetchDiagnostic(err, validatedURL.String(), 0, discoveryFetchErrorCategory(err))
 		}
 		defer release()
 	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, validatedURL.String(), nil)
 	if err != nil {
-		return FetchResult{}, err
+		return FetchResult{}, withFetchDiagnostic(err, validatedURL.String(), 0, discoveryFetchErrorCategory(err))
 	}
 	request.Header.Set("User-Agent", userAgent)
 	request.Header.Set("Accept", acceptHeader(input.Kind))
@@ -172,9 +172,18 @@ func (fetcher HTTPClientFetcher) Fetch(ctx context.Context, input FetchRequest) 
 	}
 	response, err := clientCopy.Do(request)
 	if err != nil {
-		return FetchResult{}, err
+		failedURL := validatedURL.String()
+		var requestError *neturl.Error
+		if errors.As(err, &requestError) && strings.TrimSpace(requestError.URL) != "" {
+			failedURL = requestError.URL
+		}
+		return FetchResult{}, withFetchDiagnostic(err, failedURL, 0, discoveryFetchErrorCategory(err))
 	}
 	defer response.Body.Close()
+	responseURL := validatedURL.String()
+	if response.Request != nil && response.Request.URL != nil {
+		responseURL = response.Request.URL.String()
+	}
 
 	limit := input.MaxBytes
 	if limit <= 0 {
@@ -182,15 +191,20 @@ func (fetcher HTTPClientFetcher) Fetch(ctx context.Context, input FetchRequest) 
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return FetchResult{}, err
+		errorType := discoveryFetchErrorCategory(err)
+		if errorType == "processing" {
+			errorType = "network"
+		}
+		return FetchResult{}, withFetchDiagnostic(err, responseURL, response.StatusCode, errorType)
 	}
 	if int64(len(body)) > limit {
-		return FetchResult{}, ErrHTTPFetchBodyTooLarge
+		return FetchResult{}, withFetchDiagnostic(ErrHTTPFetchBodyTooLarge, responseURL, response.StatusCode, "body_too_large")
 	}
 	contentType := response.Header.Get("Content-Type")
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && response.StatusCode != http.StatusNotModified {
 		if !allowedContentType(input.Kind, contentType) {
-			return FetchResult{}, fmt.Errorf("%w: %s for %s", ErrHTTPFetchContentType, contentType, input.Kind)
+			contentTypeError := fmt.Errorf("%w: %s for %s", ErrHTTPFetchContentType, contentType, input.Kind)
+			return FetchResult{}, withFetchDiagnostic(contentTypeError, responseURL, response.StatusCode, "content_type")
 		}
 	}
 

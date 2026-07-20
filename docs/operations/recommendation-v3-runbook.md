@@ -61,7 +61,7 @@ Shared data includes logical sites, endpoints, graph edges, fetched article bodi
 
 ## Operational diagnosis
 
-Use `GET /api/admin/recommendations/metrics`, site graph/operations/backfill endpoints, candidate inventory, and structured `dataark_event` logs together. Events contain only stable IDs, status, error category, local date, and counts; they deliberately have no arbitrary body/details field.
+Use `GET /api/admin/recommendations/metrics`, site graph/operations/backfill endpoints, candidate inventory, and structured `dataark_event` logs together. Events contain stable IDs, status, error category, local date, counts, and fixed failure diagnostics. Failed HTTP work may include a hostname-only `domain` and integer `http_status`; failed jobs may include a whitespace-compacted, URL-redacted, secret-redacted `error_message` of at most 300 characters. Events deliberately have no arbitrary body/details field.
 
 - Source failure: inspect the latest fetch runs, HTTP/error category, validator, next due time, and failure backoff. A failure for one endpoint must not stop other jobs. Resume by fixing reachability and waiting for or re-requesting the owner fetch; do not reset candidate data.
 - robots denial or unavailability: an explicit denial stops the disallowed request. An unavailable robots file is conservative and retryable. Do not bypass robots to restore throughput; correct the site/endpoint or wait for the bounded retry.
@@ -78,7 +78,7 @@ The long-tail gem contribution rate counts distinct positively received recommen
 
 The system currently performs no automatic destructive retention of discovery bodies, immutable content versions, provenance, assessments, digests, feedback history, legacy-review rows, or operational evidence. This supports audit, retry, and rollback. Operators must treat article bodies and user feedback as retained application data and include them in access control, backups, export, and erasure procedures.
 
-Structured events must never contain article bodies, Cookies, authorization headers, access tokens, passwords, model keys, or arbitrary upstream error payloads. Error summaries stored for fetch/processing are bounded operational text; inspect them under owner access. Preference reset starts a new personalization boundary but deliberately keeps historical feedback, digests, and explicit safety blocks. Any future physical deletion requires a separate reviewed migration and referential-integrity reconciliation.
+Structured events must never contain full URLs, URL paths or queries, article bodies, Cookies, authorization headers, access tokens, passwords, model keys, response bodies, or arbitrary upstream error payloads. Failure diagnostics are normalized again at the final logging boundary: `domain` is hostname-only, invalid status codes are omitted, and `error_message` is bounded and redacted. Error summaries stored for fetch/processing are bounded operational text; inspect them under owner access. Preference reset starts a new personalization boundary but deliberately keeps historical feedback, digests, and explicit safety blocks. Any future physical deletion requires a separate reviewed migration and referential-integrity reconciliation.
 
 ## Release verification
 

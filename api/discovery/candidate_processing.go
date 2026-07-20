@@ -99,7 +99,7 @@ func ProcessCandidateWithAssessor(ctx context.Context, candidateID uint, expecte
 		return recordCandidateFetchFailure(&candidate, err, now)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		statusError := fmt.Errorf("%w: article returned status %d", ErrHTTPFetchStatus, response.StatusCode)
+		statusError := withHTTPStatusDiagnostic(fmt.Errorf("%w: article returned status %d", ErrHTTPFetchStatus, response.StatusCode), response, candidate.URL)
 		if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= http.StatusInternalServerError {
 			return recordCandidateFetchFailure(&candidate, statusError, now)
 		}
