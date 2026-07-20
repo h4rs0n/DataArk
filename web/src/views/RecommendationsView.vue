@@ -50,7 +50,17 @@
                     <span>{{ item.candidate.sourceName || sourceHost(item.candidate.url) }}</span>
                     <span v-if="item.candidate.publishedAt">{{ formatDateTime(item.candidate.publishedAt) }}</span>
                   </div>
-                  <h3>{{ item.candidate.title || `候选文章 ${item.candidateId}` }}</h3>
+                  <h3>
+                    <a
+                      class="candidate-title-link"
+                      :href="item.candidate.url"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      @click="markCandidateRead(item.candidate)"
+                    >
+                      {{ item.candidate.title || `候选文章 ${item.candidateId}` }}
+                    </a>
+                  </h3>
                   <p>{{ item.candidate.summary || item.candidate.url }}</p>
                   <div class="topic-row">
                     <span v-for="topic in parseList(item.candidate.topics).slice(0, 4)" :key="topic">{{ topic }}</span>

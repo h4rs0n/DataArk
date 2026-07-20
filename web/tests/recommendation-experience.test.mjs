@@ -40,6 +40,12 @@ test('candidate article titles open the source in a safe new tab', () => {
   assert.match(view, /@click="markCandidateRead\(candidate\)"/)
 })
 
+test('today recommendation titles open the source in a safe new tab', () => {
+  assert.match(view, /:href="item\.candidate\.url"/)
+  assert.match(view, /@click="markCandidateRead\(item\.candidate\)"/)
+  assert.match(view, /item\.candidate\.title \|\| `候选文章 \$\{item\.candidateId\}`/)
+})
+
 test('owner UI exposes the manual crawl queue in a dedicated tab', () => {
   assert.match(view, /爬取任务队列/)
   assert.match(view, /执行待处理任务/)
