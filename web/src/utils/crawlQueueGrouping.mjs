@@ -1,5 +1,6 @@
 export const PROCESS_CANDIDATE_KIND = 'discovery_process_candidate'
-export const CRAWL_TASK_DETAIL_LIMIT = 3
+export const CRAWL_TASK_GROUP_THRESHOLD = 3
+export const CRAWL_TASK_DETAIL_LIMIT = 1
 export const CRAWL_TASK_GROUP_WINDOW_MS = 10 * 60 * 1000
 
 function effectiveTaskTimestamp(task) {
@@ -53,7 +54,7 @@ export function groupCrawlQueueTasks(tasks) {
 
   const condensedBuckets = new Map()
   for (const bucket of buckets) {
-    if (bucket.members.length <= CRAWL_TASK_DETAIL_LIMIT) continue
+    if (bucket.members.length <= CRAWL_TASK_GROUP_THRESHOLD) continue
     const newestFirst = [...bucket.members].sort((left, right) => right.timestamp - left.timestamp || left.index - right.index)
     const detailIndexes = new Set(newestFirst.slice(0, CRAWL_TASK_DETAIL_LIMIT).map((member) => member.index))
     const hiddenMembers = newestFirst.slice(CRAWL_TASK_DETAIL_LIMIT)

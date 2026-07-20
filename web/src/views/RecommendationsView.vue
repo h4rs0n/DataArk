@@ -259,7 +259,7 @@
                 <article v-else class="queue-task-row queue-task-summary">
                   <div>
                     <strong>{{ crawlTaskKindLabel(item.kind) }}</strong>
-                    <span>当前列表内另有 {{ item.collapsedCount }} 条相同任务已合并<span v-if="item.contentVersion"> · 正文 v{{ item.contentVersion }}</span></span>
+                    <span>另有 {{ item.collapsedCount }} 条相同任务已合并<span v-if="item.contentVersion"> · 正文 v{{ item.contentVersion }}</span></span>
                   </div>
                   <span class="task-status" :class="`task-status-${item.status}`">{{ crawlTaskStatusLabel(item.status) }}</span>
                   <span>尝试 {{ item.attempts }} 次</span>

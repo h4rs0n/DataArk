@@ -32,17 +32,18 @@ test('three matching article tasks remain individual', () => {
   assert.deepEqual(input.map((item) => item.id), ['1', '2', '3'])
 })
 
-test('larger groups keep the three newest details and summarize the remainder', () => {
+test('larger groups keep the newest detail and summarize the remainder', () => {
   const input = [task(1), task(2), task(3), task(4), task(5), task(6)]
   const output = groupCrawlQueueTasks(input)
-  assert.deepEqual(output.slice(0, 3).map((item) => item.task.id), ['1', '2', '3'])
-  assert.equal(output.length, 4)
-  assert.equal(output[3].type, 'summary')
-  assert.equal(output[3].collapsedCount, 3)
-  assert.equal(output[3].contentVersion, '0')
+  assert.equal(output.length, 2)
+  assert.equal(output[0].type, 'task')
+  assert.equal(output[0].task.id, '1')
+  assert.equal(output[1].type, 'summary')
+  assert.equal(output[1].collapsedCount, 5)
+  assert.equal(output[1].contentVersion, '0')
 })
 
-test('the summary follows all retained details when job order and completion order differ', () => {
+test('the summary follows the newest retained detail when other job kinds are interleaved', () => {
   const input = [
     task(1, { offsetMs: 0 }),
     task(2, { offsetMs: 4 * 60 * 1000 }),
@@ -52,9 +53,10 @@ test('the summary follows all retained details when job order and completion ord
     task(5, { offsetMs: 8 * 60 * 1000 }),
   ]
   const output = groupCrawlQueueTasks(input)
-  assert.deepEqual(output.filter((item) => item.type === 'task').map((item) => item.task.id), ['1', '2', 'source', '4'])
-  assert.equal(output.at(-1).type, 'summary')
-  assert.equal(output.at(-1).collapsedCount, 2)
+  assert.deepEqual(output.map((item) => item.type), ['task', 'summary', 'task'])
+  assert.equal(output[0].task.id, '1')
+  assert.equal(output[1].collapsedCount, 4)
+  assert.equal(output[2].task.id, 'source')
 })
 
 test('the ten-minute window is inclusive and prevents chained long groups', () => {

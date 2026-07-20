@@ -4,7 +4,7 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 ## Purpose / Big Picture
 
-The owner-facing crawl queue currently renders every recent article-body processing job as a separate row. Bulk discovery can fill all fifty visible rows with nearly identical jobs, making the page difficult to scan. After this change, article-processing jobs with the same processing attributes inside a ten-minute window retain their three newest details and replace the remainder with one compact summary row. Queue execution, counts, and the backend response remain unchanged.
+The owner-facing crawl queue receives many article-body processing jobs in a batch. The first grouping implementation still retained three detail rows for every large group, so the page continued to repeat “文章正文处理” several times for one batch. After this correction, article-processing jobs with the same processing attributes inside a ten-minute window remain individual only when there are at most three; a group of four or more retains only its newest detail and adds one compact summary for the remaining tasks. Queue execution, counts, and the backend response remain unchanged.
 
 ## Progress
 
@@ -14,6 +14,10 @@ The owner-facing crawl queue currently renders every recent article-body process
 - [x] (2026-07-20 16:37+08:00) Passed both frontend Node test files and the production Vue/Vite build.
 - [x] (2026-07-20 16:37+08:00) Rebuilt the Docker Compose application and verified real queue data at desktop and 760-pixel widths with Chrome DevTools.
 - [x] (2026-07-20 16:40+08:00) Created the single focused implementation commit without staging unrelated worktree files.
+- [x] (2026-07-20 21:03+08:00) Reproduced the reported redundancy against live Docker data and identified the retained-three-details presentation as its cause.
+- [x] (2026-07-20 21:03+08:00) Changed large groups to retain one newest detail plus one summary row and updated the grouping and frontend contract tests after the user clarified the desired presentation.
+- [x] (2026-07-20 21:08+08:00) Passed frontend tests/build and the full Go suite, rebuilt Docker Compose, and verified the corrected live DOM plus console/network state at desktop and 760-pixel widths in Chrome DevTools.
+- [x] (2026-07-20 21:10+08:00) Committed the focused fix without staging unrelated worktree files.
 
 ## Surprises & Discoveries
 
@@ -25,6 +29,8 @@ The owner-facing crawl queue currently renders every recent article-body process
   Evidence: recent jobs 44281 through 44290 shared kind, state, attempt, and content version while their candidate IDs and completion times differed.
 - Observation: River task ID order and completion-time order can differ when workers finish concurrently.
   Evidence: the first Docker browser pass correctly retained candidate 6805 as one of the three newest completions, but a lower-ID Blogroll row caused the initial summary insertion point to appear before that retained detail.
+- Observation: the ten-minute grouping and signatures were working on the current live data, but the retained detail rows made the result still look unmerged.
+  Evidence: Chrome showed pending candidates 6818, 6817, and 6816 followed by “另有 7 条”, and successful candidates 6808, 6807, and 6805 followed by “另有 18 条”. The corresponding database rows had matching status, attempt count, content version, and sub-minute timestamps.
 
 ## Decision Log
 
@@ -37,18 +43,18 @@ The owner-facing crawl queue currently renders every recent article-body process
 - Decision: every group must have a maximum timestamp span of ten minutes, including the boundary, so adjacent jobs cannot chain into an hours-long group.
   Rationale: this is the user-selected interpretation of the time window.
   Date/Author: 2026-07-20 / Codex
-- Decision: groups of four or more keep the three newest detail rows and replace all remaining rows with a non-expandable summary.
-  Rationale: the user selected the “keep three” presentation instead of an expandable aggregate.
+- Decision: supersede the retained-three-details presentation; a group of four or more now retains its one newest detail and uses one non-expandable summary for all remaining members.
+  Rationale: live verification proved that retaining three rows was the source of the remaining visual redundancy, and the user explicitly selected one detail plus one summary. The threshold still preserves all details when only one to three tasks match.
   Date/Author: 2026-07-20 / Codex
-- Decision: insert the summary immediately after the last retained detail in API order, even if hidden members appeared earlier in that order.
-  Rationale: all three promised details must be visually encountered before the row that summarizes the remainder.
+- Decision: insert a large group's summary immediately after its retained newest detail.
+  Rationale: the detail and aggregate read as one unit, while unrelated task rows keep their relative order.
   Date/Author: 2026-07-20 / Codex
 
 ## Outcomes & Retrospective
 
-The queue tab now condenses only repeated article-processing rows. In the live Docker data, one ten-minute group containing 39 matching completed jobs rendered three candidate details and one summary for the remaining 36, while interleaved Blogroll and source rows stayed visible in their original order. The backend counters remained the raw values returned by the API.
+The original implementation condensed repeated article-processing rows but retained three details per large batch. Live feedback exposed that this was still visually redundant, so the corrected implementation retains only the newest member of a large group and summarizes all others while preserving individual display for groups of at most three. The backend counters remain the raw values returned by the API.
 
-Both frontend test files and the production build passed. The Compose rebuild completed successfully. Chrome DevTools observed repeated 200 responses from the unchanged `limit=50` queue endpoint, no console errors or warnings, and a stable 15-row DOM across polling. The desktop layout showed a subdued dashed summary row, while a 760-pixel viewport used the responsive two-column grid with no horizontal overflow.
+The updated frontend tests and production build pass, as does the full Go suite. Docker Compose rebuilt successfully and all four services are running, with PostgreSQL healthy. In current live data, ten matching waiting article tasks render candidate 6818 plus “另有 9 条”, and the six matching successful article tasks present in the fifty-row response render candidate 6808 plus “另有 5 条”. Chrome reported repeated HTTP 200 responses from the queue endpoint, no console warnings or errors, and no horizontal overflow at 760 pixels. The correction was committed as `Fix: reduce repeated crawl task details`.
 
 ## Context and Orientation
 
@@ -58,21 +64,21 @@ The grouping algorithm will live in `web/src/utils/crawlQueueGrouping.mjs` as a 
 
 ## Plan of Work
 
-Implement a deterministic helper that derives the effective task time using the same precedence as the current UI: finished, started, scheduled, then created. It will collect article-processing tasks by signature into buckets whose minimum and maximum timestamps differ by no more than ten minutes. Invalid timestamps remain standalone. For any bucket larger than three, the helper identifies the three newest members, inserts a summary after the last retained detail in API order, and suppresses the hidden members. All ungrouped tasks retain their original relative position.
+Implement a deterministic helper that derives the effective task time using the same precedence as the current UI: finished, started, scheduled, then created. It collects article-processing tasks by signature into buckets whose minimum and maximum timestamps differ by no more than ten minutes. Invalid timestamps remain standalone. For any bucket larger than three, the helper retains the newest member, inserts a summary for the remaining count immediately after it, and suppresses every other member detail. All ungrouped tasks retain their original relative position.
 
-Change the Vue template to iterate over the computed display items. Detail items use the existing row and labels. Summary items show “当前列表内另有 N 条相同任务已合并”, the common status, attempts, optional content version and error, plus the oldest-to-newest time range. Add a subdued dashed summary style compatible with the existing mobile grid. Do not change the request limit, API model, queue counts, polling, or execution controls.
+Change the Vue template to iterate over the computed display items. Detail items use the existing row and labels. Summary items show “另有 N 条相同任务已合并”, the common status, attempts, optional content version and error, plus the oldest-to-newest time range. Keep the subdued dashed summary style compatible with the existing mobile grid. Do not change the request limit, API model, queue counts, polling, or execution controls.
 
-Add fixture-based Node tests for the threshold, newest-three retention, inclusive ten-minute boundary, window splitting, signature differences, other task kinds, invalid dates, and input immutability. Extend the existing frontend contract test to ensure the queue template renders derived display items and the summary wording.
+Add fixture-based Node tests for the threshold, newest-one retention, inclusive ten-minute boundary, window splitting, signature differences, other task kinds, invalid dates, and input immutability. Extend the existing frontend contract test to ensure the queue template renders derived display items and the summary wording.
 
 ## Concrete Steps
 
 From `web/`, run `npm test` and expect all Node tests to pass. Run `npm run build` and expect Vue type checking and Vite production compilation to exit successfully. From `docker/`, run `docker compose -p dataark up -d --build` and expect the API container plus database, Meilisearch, and SingleFile services to be running.
 
-Open `http://127.0.0.1:7845` with Chrome DevTools, authenticate as the owner, and open the task queue tab. Verify that a large matching article batch shows three newest candidate details plus one summary, while source, scan, and backfill rows remain unchanged. Inspect DOM, network, and console state at desktop and narrow widths, and save a screenshot as evidence.
+Open `http://127.0.0.1:7845` with Chrome DevTools, authenticate as the owner, and open the task queue tab. Verify that each large matching article batch shows its newest candidate detail followed by exactly one summary for all other members, while source, scan, and backfill rows remain unchanged. Inspect DOM, network, and console state at desktop and narrow widths, and save a screenshot as evidence.
 
 ## Validation and Acceptance
 
-A set of three matching article tasks renders three rows. A set of four or more matching tasks whose effective timestamps span at most ten minutes renders the three newest details and one summary whose hidden count is the group size minus three. Exactly ten minutes is accepted; any larger span creates a separate bucket. Changes to status, attempts, content version, or error create separate groups. Missing or invalid timestamps and every non-article task remain individual.
+A set of three matching article tasks renders three rows. A set of four or more matching tasks whose effective timestamps span at most ten minutes renders exactly one newest detail plus one summary whose count equals the group size minus one. Exactly ten minutes is accepted; any larger span creates a separate bucket. Changes to status, attempts, content version, or error create separate groups. Missing or invalid timestamps and every non-article task remain individual.
 
 The four queue counters retain their backend values, the API remains polled at the existing cadence, and clicking “执行待处理任务” retains its current behavior. The production build has no type errors, Chrome shows no runtime console errors, and the condensed rows remain readable on a narrow viewport.
 
@@ -84,10 +90,10 @@ The transformation is pure and operates only on the current response, so polling
 
 The worktree already contains unrelated changes in `docker/docker-compose.yml`, `go.work.sum`, and `makefile`, plus untracked `.codex` and `passwd.txt`. They must not be staged or modified for this work.
 
-Chrome screenshots were saved as `/tmp/dataark-crawl-queue-grouping-desktop.png` and `/tmp/dataark-crawl-queue-grouping-narrow.png`.
+The initial Chrome screenshots were saved as `/tmp/dataark-crawl-queue-grouping-desktop.png` and `/tmp/dataark-crawl-queue-grouping-narrow.png`. Corrected one-detail-plus-summary screenshots were saved as `/tmp/dataark-crawl-queue-grouping-fix-desktop.png` and `/tmp/dataark-crawl-queue-grouping-fix-narrow.png`.
 
 ## Interfaces and Dependencies
 
-The helper exports `groupCrawlQueueTasks(tasks)`, the ten-minute window constant, and the three-detail threshold. Its output is a discriminated union with `type: 'task'` carrying the original task or `type: 'summary'` carrying `collapsedCount`, common status/attempt/version/error data, and ISO window bounds. It uses no new package dependency.
+The helper exports `groupCrawlQueueTasks(tasks)`, the ten-minute window constant, the three-task grouping threshold, and the one-detail retention limit. Its output is a discriminated union with `type: 'task'` carrying the original task or `type: 'summary'` carrying `collapsedCount`, common status/attempt/version/error data, and ISO window bounds. It uses no new package dependency.
 
-Revision note (2026-07-20): created this plan after the user fixed the grouping scope, presentation, and ten-minute window behavior; later recorded the concurrent completion-order discovery and final Docker/Chrome evidence.
+Revision note (2026-07-20): created this plan after the user fixed the grouping scope, presentation, and ten-minute window behavior; later recorded the concurrent completion-order discovery and initial Docker/Chrome evidence. Updated at 21:03+08:00 after live data showed that retaining three detail rows caused the reported remaining redundancy, then revised the correction to the user-selected one-detail-plus-one-summary presentation. Updated at 21:10+08:00 with final validation and commit status.
