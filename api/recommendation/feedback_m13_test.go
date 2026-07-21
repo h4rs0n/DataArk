@@ -104,6 +104,60 @@ func TestFeedbackM13DoesNotCreateSourcePreferenceAndDecays(t *testing.T) {
 	}
 }
 
+func TestFeedbackM13LowValueIsArticleOnly(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC)
+	useRecommendationTestClock(t, now)
+	item := createFeedbackItem(t, 710, "https://quality.example/low", []string{"databases"}, "tutorial")
+
+	var before discovery.DiscoveryCandidate
+	if err := db.First(&before, item.CandidateID).Error; err != nil {
+		t.Fatal(err)
+	}
+	feedback, _, err := RecordRecommendationFeedback(710, item.ID, RecommendationFeedbackLowValue, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if feedback.Action != RecommendationFeedbackLowValue {
+		t.Fatalf("feedback action = %q", feedback.Action)
+	}
+
+	var state discovery.UserCandidateState
+	if err := db.Where("user_id = ? AND candidate_id = ?", 710, item.CandidateID).First(&state).Error; err != nil {
+		t.Fatal(err)
+	}
+	if state.CurrentFeedback != RecommendationFeedbackLowValue || state.OpenedAt != nil || state.ReadAt != nil || state.DeepReadAt != nil {
+		t.Fatalf("low-value state = %#v", state)
+	}
+	if !userCandidateStateExcludesRecommendation(state) {
+		t.Fatal("low-value article should be excluded from future recommendations for this user")
+	}
+
+	profile, err := RebuildUserRecommendationProfile(710)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parseWeightMap(profile.TopicWeights)) != 0 || len(parseWeightMap(profile.StyleWeights)) != 0 || len(parseWeightMap(profile.SourceWeights)) != 0 || profile.DepthPreference != 0.5 {
+		t.Fatalf("low-value feedback changed personal preferences: %#v", profile)
+	}
+
+	var after discovery.DiscoveryCandidate
+	if err := db.First(&after, item.CandidateID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.QualityScore != before.QualityScore || after.EligibilityState != before.EligibilityState {
+		t.Fatalf("low-value feedback changed shared candidate: before=%#v after=%#v", before, after)
+	}
+
+	metrics, err := GetAdminProductMetrics(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.Feedback.ByAction[RecommendationFeedbackLowValue] != 1 || metrics.Feedback.PositiveArticles != 0 {
+		t.Fatalf("low-value metrics = %#v", metrics.Feedback)
+	}
+}
+
 func TestFeedbackM13DuplicateIsClusterSignalAndBlockIsExplicitPerUser(t *testing.T) {
 	setupSQLiteDB(t)
 	useRecommendationTestClock(t, time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC))

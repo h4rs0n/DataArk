@@ -35,6 +35,7 @@ const (
 	RecommendationFeedbackDuplicate     = "duplicate"
 	RecommendationFeedbackTooRepetitive = "too_repetitive"
 	RecommendationFeedbackDeepRead      = "deep_read"
+	RecommendationFeedbackLowValue      = "low_value"
 	RecommendationFeedbackBlock         = "block"
 	RecommendationFeedbackBlockSource   = "block_source"
 	RecommendationFeedbackReduceTopic   = "reduce_topic"
@@ -815,7 +816,7 @@ func syncUserCandidateFeedbackState(tx *gorm.DB, userID uint, candidateID uint, 
 		updates["opened_at"] = now
 		updates["read_at"] = now
 		updates["deep_read_at"] = now
-	case RecommendationFeedbackValuable, RecommendationFeedbackNotInterested, RecommendationFeedbackDuplicate,
+	case RecommendationFeedbackValuable, RecommendationFeedbackNotInterested, RecommendationFeedbackDuplicate, RecommendationFeedbackLowValue,
 		RecommendationFeedbackBlock, RecommendationFeedbackReduceTopic, RecommendationFeedbackReduceStyle:
 	default:
 		return nil
@@ -1665,6 +1666,8 @@ func feedbackDeltas(action string) (float64, float64, float64, float64) {
 		return -0.8, 0, -0.4, -0.03
 	case RecommendationFeedbackDuplicate:
 		return 0, 0, 0, 0
+	case RecommendationFeedbackLowValue:
+		return 0, 0, 0, 0
 	case RecommendationFeedbackReduceTopic:
 		return -1, 0, 0, 0
 	case RecommendationFeedbackReduceStyle:
@@ -1994,6 +1997,8 @@ func normalizeFeedbackAction(action string) string {
 		return RecommendationFeedbackDuplicate
 	case RecommendationFeedbackDeepRead:
 		return RecommendationFeedbackDeepRead
+	case RecommendationFeedbackLowValue:
+		return RecommendationFeedbackLowValue
 	case RecommendationFeedbackBlock:
 		return RecommendationFeedbackBlock
 	case RecommendationFeedbackBlockSource:

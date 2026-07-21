@@ -51,7 +51,7 @@
 import FeedbackControls from '@/components/recommendations/FeedbackControls.vue'
 import { IconLink, IconStorage } from '@arco-design/web-vue/es/icon'
 
-type FeedbackAction = 'valuable' | 'not_interested' | 'too_repetitive' | 'deep_read'
+type FeedbackAction = 'valuable' | 'not_interested' | 'too_repetitive' | 'low_value'
 type BlockRuleType = 'topic' | 'source' | 'style'
 
 interface CardCandidate {

@@ -499,7 +499,7 @@ import {
   IconSync,
 } from '@arco-design/web-vue/es/icon'
 
-type FeedbackAction = 'valuable' | 'not_interested' | 'too_repetitive' | 'deep_read' | 'block_source' | 'reduce_topic' | 'reduce_style'
+type FeedbackAction = 'valuable' | 'not_interested' | 'too_repetitive' | 'low_value' | 'deep_read' | 'block_source' | 'reduce_topic' | 'reduce_style'
 type BlockRuleType = 'topic' | 'source' | 'style'
 
 interface ArchiveRankingItem {

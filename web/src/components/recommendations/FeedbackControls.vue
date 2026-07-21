@@ -3,6 +3,7 @@
     <a-button v-for="action in actions" :key="action.value" size="small" :type="currentAction === action.value ? 'primary' : 'outline'" :loading="loading" @click="$emit('select', action.value)">
       {{ action.label }}
     </a-button>
+    <span v-if="currentAction === 'deep_read'" class="legacy-feedback">历史反馈：值得深读</span>
     <a-dropdown trigger="click">
       <a-button size="small">调整范围</a-button>
       <template #content>
@@ -18,7 +19,7 @@
 <script setup lang="ts">
 defineProps<{ itemId: number; currentAction?: string; loading?: boolean }>()
 defineEmits<{
-  select: [action: 'valuable' | 'not_interested' | 'too_repetitive' | 'deep_read']
+  select: [action: 'valuable' | 'not_interested' | 'too_repetitive' | 'low_value']
   scope: [scope: 'source' | 'topic' | 'style']
   revert: []
 }>()
@@ -27,10 +28,11 @@ const actions = [
   { value: 'valuable', label: '有价值' },
   { value: 'not_interested', label: '不感兴趣' },
   { value: 'too_repetitive', label: '太重复' },
-  { value: 'deep_read', label: '值得深读' },
+  { value: 'low_value', label: '低价值' },
 ] as const
 </script>
 
 <style scoped>
 .feedback-controls { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.legacy-feedback { align-self: center; color: var(--color-text-3); font-size: 12px; }
 </style>
