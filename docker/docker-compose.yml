@@ -6,7 +6,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     ports:
-      - "7845:7845"
+      - "${DATAARK_PORT}:7845"
     volumes:
       - ./archive:/archive
       - ./meili_dumps:/meili_dumps
@@ -14,21 +14,33 @@ services:
       database:
           condition: service_healthy
     command: [
-      "-loc", "/archive/",
-      "-mhost", "http://meili:7700",
-      "-mkey", "masterkey",
-      "-mdump", "/meili_dumps",
-      "-dbhost", "database",
-      "-discover-interval", "6h",
-      "-discover-timeout", "12s",
-      "-discover-max", "50",
+      "-loc", "${ARCHIVE_LOCATION}",
+      "-mhost", "${MEILI_HOST}",
+      "-mkey", "${MEILI_MASTER_KEY}",
+      "-mdump", "${MEILI_DUMP_DIR}",
+      "-sfhost", "${SINGLEFILE_HOST}",
+      "-dbhost", "${DB_HOST}",
+      "-dbport", "${DB_PORT}",
+      "-dbname", "${DB_NAME}",
+      "-dbuser", "${DB_USER}",
+      "-dbpasswd", "${DB_PASSWORD}",
+      "-discover-interval", "${DISCOVERY_INTERVAL}",
+      "-discover-timeout", "${DISCOVERY_TIMEOUT}",
+      "-discover-max", "${DISCOVERY_MAX_CANDIDATES}",
+      "-discover-socks5-proxy", "${DISCOVERY_SOCKS5_PROXY}",
+      "-recommend-enabled=${RECOMMEND_ENABLED}",
+      "-llm-base-url", "${LLM_BASE_URL}",
+      "-llm-api-key", "${LLM_API_KEY}",
+      "-llm-chat-model", "${LLM_CHAT_MODEL}",
+      "-llm-embedding-model", "${LLM_EMBEDDING_MODEL}",
+      "-embedding-dimension", "${EMBEDDING_DIMENSION}"
     ]
 
   meili:
     image: getmeili/meilisearch:v1.42
     environment:
-      MEILI_MASTER_KEY: "masterkey"
-      MEILI_DUMP_DIR: "/meili_dumps"
+      MEILI_MASTER_KEY: "${MEILI_MASTER_KEY}"
+      MEILI_DUMP_DIR: "${MEILI_DUMP_DIR}"
     volumes:
       - ./meili_data:/meili_data
       - ./meili_dumps:/meili_dumps
@@ -38,10 +50,11 @@ services:
     volumes:
       - ./database:/var/lib/postgresql/data
     environment:
-      POSTGRES_PASSWORD: "postgres"
-      POSTGRES_DB: "echoark"
+      POSTGRES_USER: "${DB_USER}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD}"
+      POSTGRES_DB: "${DB_NAME}"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d echoark"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -51,11 +64,11 @@ services:
     image: ghcr.io/h4rs0n/singlefile-webservice:latest
     container_name: singlefile-webservice
     ports:
-      - "8080:8080"
+      - "${SINGLEFILE_PORT}:${SINGLEFILE_PORT}"
     volumes:
       - ./archive:/usr/src/app/output
     restart: unless-stopped
     environment:
-      - PORT=8080
-      - TIMEOUT=60
-      - OUTPUT_DIR=/usr/src/app/output
+      - PORT=${SINGLEFILE_PORT}
+      - TIMEOUT=${SINGLEFILE_TIMEOUT}
+      - OUTPUT_DIR=${SINGLEFILE_OUTPUT_DIR}

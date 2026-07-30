@@ -3,6 +3,7 @@ docker/meili_data
 docker/database
 docker/archive
 docker/meili_dumps
+docker/.env
 
 # static files
 api/static/archive
