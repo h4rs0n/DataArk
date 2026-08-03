@@ -862,7 +862,8 @@ func EnrichPendingDiscoveryCandidates(ctx context.Context, limit int, provider E
 		limit = 50
 	}
 	var candidates []DiscoveryCandidate
-	if err := db.Where("enrichment_status = ? OR enrichment_status = '' OR enrichment_status IS NULL", RecommendationEnrichmentStatusPending).
+	query := discovery.ExcludeBlacklistedCandidateDomains(db, "")
+	if err := query.Where("enrichment_status = ? OR enrichment_status = '' OR enrichment_status IS NULL", RecommendationEnrichmentStatusPending).
 		Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
 		Where("dedupe_state = ? AND (representative_id IS NULL OR representative_id = id)", discovery.DiscoveryDedupeReady).
 		Order("last_seen_at desc").
@@ -1195,7 +1196,7 @@ func selectDailyRecommendationCandidatesLegacy(ctx context.Context, userID uint,
 	}
 	cutoff := time.Now().AddDate(0, 0, -settings.CandidateWindowDays)
 	var candidates []DiscoveryCandidate
-	query := db.Where("enrichment_status = ?", RecommendationEnrichmentStatusReady).
+	query := discovery.ExcludeBlacklistedCandidateDomains(db, "").Where("enrichment_status = ?", RecommendationEnrichmentStatusReady).
 		Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
 		Where("dedupe_state = ? AND (representative_id IS NULL OR representative_id = id)", discovery.DiscoveryDedupeReady).
 		Where("status <> ?", DiscoveryCandidateStatusIgnored).
@@ -1224,7 +1225,8 @@ func selectDailyRecommendationCandidatesLegacy(ctx context.Context, userID uint,
 		}
 		if len(missingIDs) > 0 {
 			var vectorCandidates []DiscoveryCandidate
-			if err := db.Where("id IN ?", missingIDs).
+			vectorQuery := discovery.ExcludeBlacklistedCandidateDomains(db, "")
+			if err := vectorQuery.Where("id IN ?", missingIDs).
 				Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
 				Where("dedupe_state = ? AND (representative_id IS NULL OR representative_id = id)", discovery.DiscoveryDedupeReady).
 				Find(&vectorCandidates).Error; err != nil {

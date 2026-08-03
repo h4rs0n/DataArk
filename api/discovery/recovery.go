@@ -77,7 +77,7 @@ next_due_at <= ? OR
 		recoveryErrors = append(recoveryErrors, err)
 	} else {
 		for _, candidate := range candidates {
-			if candidate.ProcessingState != DiscoveryProcessingReady && domainBlacklistMatchesURL(blacklist, candidate.URL) {
+			if domainBlacklistMatchesURL(blacklist, candidate.URL) {
 				continue
 			}
 			if err := queue.EnqueueProcessCandidate(ctx, candidate.ID, strconv.FormatUint(uint64(candidate.ContentVersion), 10)); err != nil {

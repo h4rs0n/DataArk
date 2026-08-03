@@ -78,7 +78,8 @@ func selectRecommendationCandidatesV3(ctx context.Context, userID uint, settings
 		poolSize = 100
 	}
 	var candidates []DiscoveryCandidate
-	if err := db.Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
+	query := discovery.ExcludeBlacklistedCandidateDomains(db, "")
+	if err := query.Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
 		Where("dedupe_state = ? AND (representative_id IS NULL OR representative_id = id)", discovery.DiscoveryDedupeReady).
 		Order("quality_score desc, depth_score desc, score desc, last_seen_at desc, id asc").
 		Limit(poolSize).Find(&candidates).Error; err != nil {
@@ -232,6 +233,11 @@ func explicitSourcePreferenceMatches(candidate DiscoveryCandidate, host string, 
 }
 
 func populateGlobalSelectionExclusions(excluded map[string]int) error {
+	var blacklisted int64
+	if err := discovery.OnlyBlacklistedCandidateDomains(db.Model(&DiscoveryCandidate{}), "").Count(&blacklisted).Error; err != nil {
+		return err
+	}
+	excluded["domain_blacklist"] = int(blacklisted)
 	queries := []struct {
 		key   string
 		where string

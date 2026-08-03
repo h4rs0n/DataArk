@@ -92,3 +92,25 @@ func TestCandidateInventorySeparatesPoolsAndAppliesOnlyUserHardFilters(t *testin
 		t.Fatalf("other user inherited hard filters: %#v", other)
 	}
 }
+
+func TestCandidateInventoryExcludesActiveDomainBlacklist(t *testing.T) {
+	setupSQLiteDB(t)
+	settings := DefaultRecommendationSettings(303)
+	settings.DailyLimit = 1
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	createReadyCandidate(t, "https://blocked.example/post", "Blocked", []string{"Security"}, "blocked-inventory", 0.9, 0.8)
+	createReadyCandidate(t, "https://allowed.example/post", "Allowed", []string{"Go"}, "allowed-inventory", 0.8, 0.7)
+	if _, err := discovery.CreateDiscoveryDomainBlacklist("blocked.example", "fixture"); err != nil {
+		t.Fatal(err)
+	}
+
+	inventory, err := GetCandidateInventory(303)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inventory.EligibleCandidates != 1 || inventory.UserAvailableCandidates != 1 {
+		t.Fatalf("blacklisted inventory = %#v", inventory)
+	}
+}

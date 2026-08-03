@@ -21,6 +21,50 @@ var (
 
 const processingErrorDomainBlacklist = "domain_blacklist"
 
+func discoveryCandidateBlacklistPredicate(candidateAlias string) (string, error) {
+	hostColumn := "discovery_candidates.crawl_host"
+	switch strings.TrimSpace(candidateAlias) {
+	case "", "discovery_candidates":
+	case "candidate":
+		hostColumn = "candidate.crawl_host"
+	default:
+		return "", fmt.Errorf("invalid discovery candidate table alias %q", candidateAlias)
+	}
+	return `EXISTS (
+SELECT 1
+FROM discovery_domain_blacklist_entries AS domain_blacklist
+WHERE ` + hostColumn + ` = domain_blacklist.domain
+   OR ` + hostColumn + ` LIKE '%.' || domain_blacklist.domain
+)`, nil
+}
+
+// ExcludeBlacklistedCandidateDomains applies the active domain blacklist to a
+// discovery-candidate query without deleting or rewriting retained evidence.
+func ExcludeBlacklistedCandidateDomains(query *gorm.DB, candidateAlias string) *gorm.DB {
+	if query == nil {
+		return query
+	}
+	predicate, err := discoveryCandidateBlacklistPredicate(candidateAlias)
+	if err != nil {
+		_ = query.AddError(err)
+		return query
+	}
+	return query.Where("NOT " + predicate)
+}
+
+// OnlyBlacklistedCandidateDomains selects candidates hidden by an active rule.
+func OnlyBlacklistedCandidateDomains(query *gorm.DB, candidateAlias string) *gorm.DB {
+	if query == nil {
+		return query
+	}
+	predicate, err := discoveryCandidateBlacklistPredicate(candidateAlias)
+	if err != nil {
+		_ = query.AddError(err)
+		return query
+	}
+	return query.Where(predicate)
+}
+
 func NormalizeDiscoveryBlacklistDomain(value string) (string, error) {
 	value = strings.TrimSpace(strings.TrimSuffix(value, "."))
 	if value == "" || strings.ContainsAny(value, "/:@*?#[]") || net.ParseIP(value) != nil || strings.EqualFold(value, "localhost") {
@@ -118,6 +162,12 @@ func CreateDiscoveryDomainBlacklist(domain string, reason string) (*DiscoveryDom
 		if count > 0 {
 			return ErrDuplicateDiscoveryBlacklistDomain
 		}
+		newlyHidden := ExcludeBlacklistedCandidateDomains(tx.Model(&DiscoveryCandidate{}), "")
+		if err := newlyHidden.
+			Where("crawl_host = ? OR crawl_host LIKE ?", normalized, "%."+normalized).
+			Count(&affected).Error; err != nil {
+			return err
+		}
 		if err := tx.Create(&entry).Error; err != nil {
 			return err
 		}
@@ -133,7 +183,6 @@ func CreateDiscoveryDomainBlacklist(domain string, reason string) (*DiscoveryDom
 				"next_processing_at":    nil,
 				"updated_at":            time.Now(),
 			})
-		affected = result.RowsAffected
 		return result.Error
 	})
 	if err != nil {
@@ -159,9 +208,12 @@ func DeleteDiscoveryDomainBlacklist(id uint) (*DiscoveryDomainBlacklistMutation,
 			return err
 		}
 		var candidates []DiscoveryCandidate
-		if err := tx.Where("processing_state = ? AND processing_error_type = ?", DiscoveryProcessingDomainBlocked, processingErrorDomainBlacklist).Find(&candidates).Error; err != nil {
+		if err := tx.Select("id", "crawl_host", "processing_state", "processing_error_type").
+			Where("crawl_host = ? OR crawl_host LIKE ?", mutation.Entry.Domain, "%."+mutation.Entry.Domain).
+			Find(&candidates).Error; err != nil {
 			return err
 		}
+		unblocked := make([]uint, 0)
 		resumable := make([]uint, 0)
 		for _, candidate := range candidates {
 			blocked := false
@@ -172,9 +224,13 @@ func DeleteDiscoveryDomainBlacklist(id uint) (*DiscoveryDomainBlacklistMutation,
 				}
 			}
 			if !blocked {
-				resumable = append(resumable, candidate.ID)
+				unblocked = append(unblocked, candidate.ID)
+				if candidate.ProcessingState == DiscoveryProcessingDomainBlocked && candidate.ProcessingErrorType == processingErrorDomainBlacklist {
+					resumable = append(resumable, candidate.ID)
+				}
 			}
 		}
+		mutation.AffectedCandidates = int64(len(unblocked))
 		if len(resumable) == 0 {
 			return nil
 		}
@@ -188,7 +244,6 @@ func DeleteDiscoveryDomainBlacklist(id uint) (*DiscoveryDomainBlacklistMutation,
 			"next_processing_at":    &now,
 			"updated_at":            now,
 		})
-		mutation.AffectedCandidates = result.RowsAffected
 		return result.Error
 	})
 	if err != nil {

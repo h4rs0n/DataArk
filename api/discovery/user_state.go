@@ -33,7 +33,7 @@ func ListDiscoveryCandidatesForUser(userID uint, status string, limit int) ([]Us
 	if personalStatus {
 		queryLimit = 200
 	}
-	query := db.Order("score desc, published_at desc, last_seen_at desc").Limit(queryLimit)
+	query := ExcludeBlacklistedCandidateDomains(db, "").Order("score desc, published_at desc, last_seen_at desc").Limit(queryLimit)
 	if strings.TrimSpace(status) != "" && !personalStatus {
 		query = query.Where("status = ?", strings.TrimSpace(status))
 	}

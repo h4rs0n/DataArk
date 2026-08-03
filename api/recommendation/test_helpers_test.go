@@ -28,6 +28,7 @@ func setupSQLiteDB(t *testing.T) {
 		&discovery.DiscoveryBackfillState{},
 		&discovery.DiscoverySiteOperationalStats{},
 		&discovery.DiscoverySourceScheduleDecision{},
+		&discovery.DiscoveryDomainBlacklistEntry{},
 		&RecommendationSettings{},
 		&RecommendationDay{},
 		&RecommendationFeedBatch{},

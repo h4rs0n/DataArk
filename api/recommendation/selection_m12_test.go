@@ -156,6 +156,49 @@ func TestRecommendationV3PublishesOnlyEligibleMAndExplainsShortage(t *testing.T)
 	}
 }
 
+func TestRecommendationV3ExcludesRetainedCandidatesFromBlacklistedDomains(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 8, 3, 7, 0, 0, 0, time.UTC)
+	useRecommendationTestClock(t, now)
+	settings := DefaultRecommendationSettings(409)
+	settings.DailyLimit = 2
+	settings.Enabled = true
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	blocked := createReadyCandidate(t, "https://news.blocked.example/high", "Blocked", []string{"Security"}, "blocked-key", 0.99, 0.95)
+	createReadyCandidate(t, "https://allowed-one.example/post", "Allowed one", []string{"Go"}, "allowed-key-1", 0.8, 0.7)
+	createReadyCandidate(t, "https://allowed-two.example/post", "Allowed two", []string{"Systems"}, "allowed-key-2", 0.79, 0.7)
+	if _, err := discovery.CreateDiscoveryDomainBlacklist("blocked.example", "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&blocked, blocked.ID).Error; err != nil || blocked.ProcessingState != discovery.DiscoveryProcessingReady {
+		t.Fatalf("retained candidate evidence changed: %#v, %v", blocked, err)
+	}
+
+	snapshot, err := GenerateDailyRecommendations(context.Background(), 409, "2026-08-03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Day.ActualCount != 2 || len(snapshot.Items) != 2 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	for _, item := range snapshot.Items {
+		if item.CandidateID == blocked.ID {
+			t.Fatalf("blacklisted retained candidate was published: %#v", item)
+		}
+	}
+	var audit struct {
+		Excluded map[string]int `json:"excluded"`
+	}
+	if err := json.Unmarshal([]byte(snapshot.Day.ShortageReasons), &audit); err != nil {
+		t.Fatal(err)
+	}
+	if audit.Excluded["domain_blacklist"] != 1 {
+		t.Fatalf("blacklist audit = %#v", audit.Excluded)
+	}
+}
+
 func TestRecommendationV3CooldownUpdateAndExplicitFeedbackRecurrence(t *testing.T) {
 	setupSQLiteDB(t)
 	clock := useRecommendationTestClock(t, time.Date(2026, 1, 1, 7, 0, 0, 0, time.UTC))

@@ -81,5 +81,7 @@ test('owner queue tab manages the discovery domain blacklist', () => {
   assert.match(view, /method: 'POST'.*domain-blacklist/s)
   assert.match(view, /method: 'DELETE'.*domain-blacklist/s)
   assert.match(view, /affectedCandidates/)
+  assert.match(view, /已爬取文章也会从候选列表和后续推荐中剔除/)
+  assert.match(view, /剔除.*篇候选文章/)
   assert.ok(view.indexOf('domain-blacklist-panel') > view.indexOf('爬取任务队列'))
 })

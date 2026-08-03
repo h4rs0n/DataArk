@@ -39,12 +39,18 @@ func GetCurrentDiscoveryFeed(userID uint) (*RecommendationFeedSnapshot, error) {
 		return empty, nil
 	}
 	items := make([]RecommendationItem, 0)
-	if err := db.Where("feed_batch_id = ? AND user_id = ?", batch.ID, userID).Order("rank asc").Find(&items).Error; err != nil {
+	query := db.Table("recommendation_items AS item").Select("item.*").
+		Joins("JOIN discovery_candidates AS candidate ON candidate.id = item.candidate_id").
+		Where("item.feed_batch_id = ? AND item.user_id = ?", batch.ID, userID).
+		Order("item.rank asc")
+	query = discovery.ExcludeBlacklistedCandidateDomains(query, "candidate")
+	if err := query.Scan(&items).Error; err != nil {
 		return nil, err
 	}
 	if err := attachRecommendationItemCandidates(items, RecommendationDayStatusPublished); err != nil {
 		return nil, err
 	}
+	batch.ActualCount = len(items)
 	return &RecommendationFeedSnapshot{Batch: &batch, Items: items}, nil
 }
 

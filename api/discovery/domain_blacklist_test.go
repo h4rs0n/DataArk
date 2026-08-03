@@ -44,7 +44,7 @@ func TestDomainBlacklistReversiblyBlocksPendingCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	broad, err := CreateDiscoveryDomainBlacklist("CSDN.NET", "fixture")
-	if err != nil || broad.AffectedCandidates != 1 {
+	if err != nil || broad.AffectedCandidates != 2 {
 		t.Fatalf("broad mutation = %#v, %v", broad, err)
 	}
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
@@ -56,9 +56,13 @@ func TestDomainBlacklistReversiblyBlocksPendingCandidates(t *testing.T) {
 	if err := db.First(&ready, ready.ID).Error; err != nil || ready.ProcessingState != DiscoveryProcessingReady {
 		t.Fatalf("ready candidate changed = %#v, %v", ready, err)
 	}
+	visible, err := ListDiscoveryCandidatesForUser(1, DiscoveryCandidateStatusNew, 10)
+	if err != nil || len(visible) != 0 {
+		t.Fatalf("blacklisted retained candidates remain visible: %#v, %v", visible, err)
+	}
 	narrow, err := CreateDiscoveryDomainBlacklist("blog.csdn.net", "overlap")
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || narrow.AffectedCandidates != 0 {
+		t.Fatalf("overlapping mutation = %#v, %v", narrow, err)
 	}
 	if _, err := DeleteDiscoveryDomainBlacklist(broad.Entry.ID); err != nil {
 		t.Fatal(err)
@@ -67,7 +71,7 @@ func TestDomainBlacklistReversiblyBlocksPendingCandidates(t *testing.T) {
 		t.Fatalf("overlapping rule did not retain block = %#v, %v", candidate, err)
 	}
 	removed, err := DeleteDiscoveryDomainBlacklist(narrow.Entry.ID)
-	if err != nil || removed.AffectedCandidates != 1 {
+	if err != nil || removed.AffectedCandidates != 2 {
 		t.Fatalf("remove mutation = %#v, %v", removed, err)
 	}
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
@@ -75,6 +79,10 @@ func TestDomainBlacklistReversiblyBlocksPendingCandidates(t *testing.T) {
 	}
 	if candidate.ProcessingState != DiscoveryProcessingFetchPending || candidate.NextProcessingAt == nil || candidate.ProcessingErrorType != "" {
 		t.Fatalf("resumed candidate = %#v", candidate)
+	}
+	visible, err = ListDiscoveryCandidatesForUser(1, DiscoveryCandidateStatusNew, 10)
+	if err != nil || len(visible) != 2 {
+		t.Fatalf("retained candidates were not restored: %#v, %v", visible, err)
 	}
 }
 

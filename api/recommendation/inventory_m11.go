@@ -37,7 +37,8 @@ func GetCandidateInventory(userID uint) (*CandidateInventory, error) {
 		return nil, err
 	}
 	var candidates []DiscoveryCandidate
-	if err := db.Where("processing_state = ? AND eligibility_state = ? AND dedupe_state = ? AND (representative_id IS NULL OR representative_id = id)",
+	query := discovery.ExcludeBlacklistedCandidateDomains(db, "")
+	if err := query.Where("processing_state = ? AND eligibility_state = ? AND dedupe_state = ? AND (representative_id IS NULL OR representative_id = id)",
 		discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady).Find(&candidates).Error; err != nil {
 		return nil, err
 	}
