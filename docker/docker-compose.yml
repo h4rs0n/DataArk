@@ -33,6 +33,7 @@ services:
       "-llm-api-key", "${LLM_API_KEY}",
       "-llm-chat-model", "${LLM_CHAT_MODEL}",
       "-llm-embedding-model", "${LLM_EMBEDDING_MODEL}",
+      "-llm-timeout", "${LLM_TIMEOUT}",
       "-embedding-dimension", "${EMBEDDING_DIMENSION}"
     ]
 
