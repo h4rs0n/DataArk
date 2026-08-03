@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	neturl "net/url"
 	"sync"
@@ -12,9 +11,15 @@ import (
 )
 
 type robotsCacheEntry struct {
-	robots    *robotstxt.RobotsData
-	status    string
-	expiresAt time.Time
+	inspection RobotsInspection
+	expiresAt  time.Time
+}
+
+// RobotsInspection contains advisory data discovered in robots.txt. Sitemaps
+// are path hints only; Allow, Disallow and Crawl-delay never gate a request.
+type RobotsInspection struct {
+	Status   string
+	Sitemaps []string
 }
 
 type RobotsCache struct {
@@ -35,49 +40,55 @@ func NewRobotsCache(clock Clock, ttl time.Duration, loader HTTPFetcher) *RobotsC
 	return &RobotsCache{items: make(map[string]robotsCacheEntry), clock: clock, ttl: ttl, loader: loader}
 }
 
-func (cache *RobotsCache) Allowed(ctx context.Context, rawURL string, userAgent string) (bool, string, error) {
+func (cache *RobotsCache) Inspect(ctx context.Context, rawURL string) RobotsInspection {
 	target, err := neturl.Parse(rawURL)
 	if err != nil {
-		return false, "invalid", err
+		return RobotsInspection{Status: "invalid"}
 	}
 	origin := target.Scheme + "://" + target.Host
 	cache.mu.Lock()
 	entry, found := cache.items[origin]
 	if found && cache.clock.Now().Before(entry.expiresAt) {
 		cache.mu.Unlock()
-		return robotsEntryAllows(entry, target, userAgent), entry.status, nil
+		return cloneRobotsInspection(entry.inspection)
 	}
 	cache.mu.Unlock()
 
+	inspection := RobotsInspection{Status: "unavailable"}
 	if cache.loader == nil {
-		return false, "unavailable", withFetchDiagnostic(ErrRobotsUnavailable, origin+"/robots.txt", 0, "robots_unavailable")
+		return cache.store(origin, inspection)
 	}
 	result, err := cache.loader.Fetch(ctx, FetchRequest{URL: origin + "/robots.txt", Kind: FetchKindRobots, MaxBytes: 512 << 10})
 	if err != nil {
-		return false, "unavailable", withFetchDiagnostic(fmt.Errorf("%w: %w", ErrRobotsUnavailable, err), origin+"/robots.txt", 0, "robots_unavailable")
+		return cache.store(origin, inspection)
 	}
-	entry = robotsCacheEntry{status: "allowed", expiresAt: cache.clock.Now().Add(cache.ttl)}
 	switch result.StatusCode {
 	case http.StatusOK:
-		entry.robots, err = robotstxt.FromBytes(result.Body)
-		if err != nil {
-			parseError := fmt.Errorf("%w: invalid robots.txt: %v", ErrRobotsUnavailable, err)
-			return false, "invalid", withFetchDiagnostic(parseError, origin+"/robots.txt", result.StatusCode, "robots_unavailable")
+		robots, parseErr := robotstxt.FromBytes(result.Body)
+		inspection.Status = "available"
+		if robots != nil {
+			inspection.Sitemaps = append([]string(nil), robots.Sitemaps...)
+		}
+		if parseErr != nil {
+			inspection.Status = "invalid"
 		}
 	case http.StatusNotFound, http.StatusGone:
-		entry.status = "missing"
+		inspection.Status = "missing"
 	default:
-		return false, "unavailable", withFetchDiagnostic(ErrRobotsUnavailable, origin+"/robots.txt", result.StatusCode, "robots_unavailable")
+		inspection.Status = "unavailable"
 	}
+	return cache.store(origin, inspection)
+}
+
+func (cache *RobotsCache) store(origin string, inspection RobotsInspection) RobotsInspection {
+	entry := robotsCacheEntry{inspection: cloneRobotsInspection(inspection), expiresAt: cache.clock.Now().Add(cache.ttl)}
 	cache.mu.Lock()
 	cache.items[origin] = entry
 	cache.mu.Unlock()
-	return robotsEntryAllows(entry, target, userAgent), entry.status, nil
+	return cloneRobotsInspection(inspection)
 }
 
-func robotsEntryAllows(entry robotsCacheEntry, target *neturl.URL, userAgent string) bool {
-	if entry.robots == nil {
-		return true
-	}
-	return entry.robots.FindGroup(userAgent).Test(target.RequestURI())
+func cloneRobotsInspection(inspection RobotsInspection) RobotsInspection {
+	inspection.Sitemaps = append([]string(nil), inspection.Sitemaps...)
+	return inspection
 }

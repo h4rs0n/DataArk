@@ -28,6 +28,7 @@ services:
       "-discover-timeout", "${DISCOVERY_TIMEOUT}",
       "-discover-max", "${DISCOVERY_MAX_CANDIDATES}",
       "-discover-socks5-proxy", "${DISCOVERY_SOCKS5_PROXY}",
+      "-discover-ua", "${DISCOVERY_USER_AGENT}",
       "-recommend-enabled=${RECOMMEND_ENABLED}",
       "-llm-base-url", "${LLM_BASE_URL}",
       "-llm-api-key", "${LLM_API_KEY}",

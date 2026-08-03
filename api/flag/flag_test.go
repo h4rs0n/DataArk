@@ -98,6 +98,9 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 	if config.DISCOVERYSOCKS5PROXY != "socks5://proxy-user:proxy-pass@127.0.0.1:1080" {
 		t.Fatalf("unexpected discovery SOCKS5 proxy: %q", config.DISCOVERYSOCKS5PROXY)
 	}
+	if config.DISCOVERYUSERAGENT != config.DefaultDiscoveryUserAgent {
+		t.Fatalf("unexpected discovery user-agent: %q", config.DISCOVERYUSERAGENT)
+	}
 	if !config.RECOMMENDATIONENABLED || config.RECOMMENDATIONDAILYLIMIT != 12 || config.RECOMMENDATIONTIMEZONE != "UTC" || config.RECOMMENDATIONGENERATIONTIME != "06:30" {
 		t.Fatalf("unexpected recommendation config: enabled=%v limit=%d timezone=%q time=%q", config.RECOMMENDATIONENABLED, config.RECOMMENDATIONDAILYLIMIT, config.RECOMMENDATIONTIMEZONE, config.RECOMMENDATIONGENERATIONTIME)
 	}

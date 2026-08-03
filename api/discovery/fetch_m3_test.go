@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"DataArk/config"
 	"context"
 	"errors"
 	"net/http"
@@ -63,17 +64,19 @@ func TestFeedConditionalFetchPersistsValidatorsAndSkipsUnchangedWork(t *testing.
 	}
 }
 
-func TestRobotsDisallowPreventsArticleRequest(t *testing.T) {
+func TestRobotsRulesAreAdvisoryAndExposeSitemapHints(t *testing.T) {
 	var robotsRequests atomic.Int32
 	var articleRequests atomic.Int32
+	var articleUserAgent string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/robots.txt":
 			robotsRequests.Add(1)
 			writer.Header().Set("Content-Type", "text/plain")
-			_, _ = writer.Write([]byte("User-agent: *\nDisallow: /private\n"))
+			_, _ = writer.Write([]byte("User-agent: *\nDisallow: /private\nSitemap: " + serverURLForRequest(request) + "/sitemap.xml\n"))
 		case "/private/article":
 			articleRequests.Add(1)
+			articleUserAgent = request.Header.Get("User-Agent")
 			writer.Header().Set("Content-Type", "text/html")
 			_, _ = writer.Write([]byte("article"))
 		}
@@ -84,12 +87,51 @@ func TestRobotsDisallowPreventsArticleRequest(t *testing.T) {
 	raw := &HTTPClientFetcher{Client: server.Client(), Clock: clock, Validator: allowTestURL}
 	robots := NewRobotsCache(clock, time.Hour, raw)
 	fetcher := &HTTPClientFetcher{Client: server.Client(), Clock: clock, Validator: allowTestURL, Robots: robots}
-	_, err := fetcher.Fetch(context.Background(), FetchRequest{URL: server.URL + "/private/article", Kind: FetchKindArticle})
-	if !errors.Is(err, ErrRobotsDisallowed) {
-		t.Fatalf("fetch error = %v", err)
+	result, err := fetcher.Fetch(context.Background(), FetchRequest{URL: server.URL + "/private/article", Kind: FetchKindArticle})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if robotsRequests.Load() != 1 || articleRequests.Load() != 0 {
+	if robotsRequests.Load() != 1 || articleRequests.Load() != 1 {
 		t.Fatalf("requests robots=%d article=%d", robotsRequests.Load(), articleRequests.Load())
+	}
+	if result.RobotsStatus != "available" || articleUserAgent != config.DefaultDiscoveryUserAgent {
+		t.Fatalf("result status=%q user-agent=%q", result.RobotsStatus, articleUserAgent)
+	}
+	inspection := robots.Inspect(context.Background(), server.URL+"/another")
+	if len(inspection.Sitemaps) != 1 || inspection.Sitemaps[0] != server.URL+"/sitemap.xml" || robotsRequests.Load() != 1 {
+		t.Fatalf("cached robots inspection = %#v, requests=%d", inspection, robotsRequests.Load())
+	}
+}
+
+func serverURLForRequest(request *http.Request) string {
+	return "http://" + request.Host
+}
+
+func TestRobotsUnavailableDoesNotBlockManualDiscoveryRequest(t *testing.T) {
+	var articleRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/robots.txt" {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		articleRequests.Add(1)
+		writer.Header().Set("Content-Type", "text/html")
+		_, _ = writer.Write([]byte("article"))
+	}))
+	t.Cleanup(server.Close)
+
+	clock := &advancingClock{now: time.Date(2026, 8, 3, 13, 0, 0, 0, time.UTC)}
+	raw := &HTTPClientFetcher{Client: server.Client(), Clock: clock, Validator: allowTestURL}
+	fetcher := &HTTPClientFetcher{
+		Client: server.Client(), Clock: clock, Validator: allowTestURL,
+		Robots: NewRobotsCache(clock, time.Hour, raw),
+	}
+	result, err := fetcher.Fetch(context.Background(), FetchRequest{URL: server.URL + "/article", Kind: FetchKindArticle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RobotsStatus != "unavailable" || articleRequests.Load() != 1 {
+		t.Fatalf("result status=%q article requests=%d", result.RobotsStatus, articleRequests.Load())
 	}
 }
 

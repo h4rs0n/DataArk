@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"DataArk/config"
 	"context"
 	"errors"
 	"fmt"
@@ -76,18 +77,19 @@ type HTTPFetcher interface {
 
 type URLValidator func(context.Context, string) (*neturl.URL, error)
 
-type RobotsChecker interface {
-	Allowed(context.Context, string, string) (bool, string, error)
+type RobotsInspector interface {
+	Inspect(context.Context, string) RobotsInspection
 }
 
-// HTTPClientFetcher is the minimal production HTTPFetcher. Safe URL validation,
-// robots enforcement, redirects and per-host limiting are added by milestone M3.
+// HTTPClientFetcher is the production discovery fetcher. robots.txt is observed
+// for path hints and diagnostics, but its Allow/Disallow rules do not gate a
+// manually triggered discovery request.
 type HTTPClientFetcher struct {
 	Client       *http.Client
 	Clock        Clock
 	Validator    URLValidator
 	Limiter      *HostLimiter
-	Robots       RobotsChecker
+	Robots       RobotsInspector
 	UserAgent    string
 	MaxRedirects int
 	BlockURL     func(context.Context, string) error
@@ -109,18 +111,11 @@ func (fetcher HTTPClientFetcher) Fetch(ctx context.Context, input FetchRequest) 
 	}
 	userAgent := strings.TrimSpace(fetcher.UserAgent)
 	if userAgent == "" {
-		userAgent = "DataArkDiscovery/1.0"
+		userAgent = config.DefaultDiscoveryUserAgent
 	}
 	robotsStatus := ""
 	if fetcher.Robots != nil && input.Kind != FetchKindRobots {
-		allowed, status, err := fetcher.Robots.Allowed(ctx, validatedURL.String(), userAgent)
-		if err != nil {
-			return FetchResult{}, withFetchDiagnostic(err, validatedURL.String(), 0, discoveryFetchErrorCategory(err))
-		}
-		robotsStatus = status
-		if !allowed {
-			return FetchResult{}, withFetchDiagnostic(ErrRobotsDisallowed, validatedURL.String(), 0, discoveryFetchErrorCategory(ErrRobotsDisallowed))
-		}
+		robotsStatus = fetcher.Robots.Inspect(ctx, validatedURL.String()).Status
 	}
 	if fetcher.Limiter != nil {
 		release, err := fetcher.Limiter.Acquire(ctx, validatedURL.Hostname())

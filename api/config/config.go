@@ -1,5 +1,7 @@
 package config
 
+const DefaultDiscoveryUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+
 var DEBUG = false
 var MEILIHOST = ""
 var MEILIAPIKey = ""
@@ -17,7 +19,7 @@ var DISCOVERYFETCHINTERVAL = "6h"
 var DISCOVERYREQUESTTIMEOUT = "12s"
 var DISCOVERYSOCKS5PROXY = ""
 var DISCOVERYMAXCANDIDATES = 50
-var DISCOVERYUSERAGENT = "DataArkDiscovery/1.0"
+var DISCOVERYUSERAGENT = DefaultDiscoveryUserAgent
 var DISCOVERYHOSTCONCURRENCY = 2
 var DISCOVERYMINREQUESTINTERVAL = "1s"
 var DISCOVERYROBOTSCACHETTL = "6h"

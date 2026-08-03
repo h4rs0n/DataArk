@@ -22,7 +22,7 @@ func ParseFlag() {
 	DiscoveryRequestTimeoutFlag := stdflag.String("discover-timeout", "12s", "Assign discovery HTTP request timeout")
 	DiscoverySOCKS5ProxyFlag := stdflag.String("discover-socks5-proxy", "", "Assign optional SOCKS5 proxy URL for discovery HTTP requests")
 	DiscoveryMaxCandidatesFlag := stdflag.Int("discover-max", 50, "Assign max candidates collected per source fetch")
-	DiscoveryUserAgentFlag := stdflag.String("discover-ua", "DataArkDiscovery/1.0", "Assign discovery HTTP User-Agent")
+	DiscoveryUserAgentFlag := stdflag.String("discover-ua", config.DefaultDiscoveryUserAgent, "Assign discovery HTTP User-Agent")
 	DiscoveryHostConcurrencyFlag := stdflag.Int("discover-host-concurrency", 2, "Assign maximum concurrent discovery requests per host")
 	DiscoveryMinRequestIntervalFlag := stdflag.String("discover-min-request-interval", "1s", "Assign minimum interval between discovery requests to one host")
 	DiscoveryRobotsCacheTTLFlag := stdflag.String("discover-robots-ttl", "6h", "Assign robots.txt cache lifetime")
