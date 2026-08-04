@@ -8,3 +8,4 @@ docker/archive
 docker/database
 docker/meili_data
 docker/meili_dumps
+docker/logs

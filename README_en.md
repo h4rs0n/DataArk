@@ -18,6 +18,8 @@ sudo docker compose up -d
 ```
 When starting for the first time, an initial username and password will be generated. Please run the command `sudo docker compose logs` to view the default username and password in the output. This is only output the first time the system is deployed.
 
+`dataarkapi` mirrors application, job, database, HTTP access, and recovery logs to both the container console and the host's `docker/logs/` directory. Files use the server-local date and are named `dataarkapi-YYYY-MM-DD.log`. The current date and preceding six dates are retained by default; set a positive integer `LOG_RETENTION_DAYS` in `docker/.env` to change this window. The initially generated administrator password remains console-only and is never written to the log file. The API refuses to start when it cannot create the directory or current log file so persistence cannot fail silently.
+
 **Using `make` to build**
 ```
 make web
@@ -26,6 +28,8 @@ make build
 An executable file will be generated in the `api/bin` directory. After deploying Meilisearch and PostgreSQL with pgvector available, start the service by running:
 ```
 ./api/bin/DataArk.exe -loc ./docker/archive \
+                      -log-dir ./logs \
+                      -log-retention-days 7 \
                       -mhost "http://meili:7700" \
                       -mkey "RandomKey" \
                       -mdump "./docker/meili_dumps" \

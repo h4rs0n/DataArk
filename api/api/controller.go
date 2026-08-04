@@ -21,6 +21,7 @@ import (
 	"gorm.io/gorm"
 	"html/template"
 	"io"
+	"log"
 	"net/http"
 	neturl "net/url"
 	"os"
@@ -1470,12 +1471,12 @@ func WebStarter(debugMode bool) {
 	initDatabase()
 	createSearchIndex()
 	if err := initArchiveQueue(); err != nil {
-		fmt.Printf("failed to initialize archive task queue: %v\n", err)
+		log.Printf("failed to initialize archive task queue: %v", err)
 		return
 	}
 	stopSharedJobQueue, err := startSharedJobQueue(context.Background())
 	if err != nil {
-		fmt.Printf("failed to initialize shared job queue: %v\n", err)
+		log.Printf("failed to initialize shared job queue: %v", err)
 		stopSharedJobQueue = func() {}
 	}
 	defer stopSharedJobQueue()
@@ -1577,7 +1578,7 @@ func WebStarter(debugMode bool) {
 
 	err = runGinRouter(router, "0.0.0.0:7845")
 	if err != nil {
-		fmt.Print("Maybe the port is already in use. Please check it.")
+		log.Printf("web server stopped: %v", err)
 		return
 	}
 }

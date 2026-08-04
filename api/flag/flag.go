@@ -8,6 +8,8 @@ import (
 
 func ParseFlag() {
 	debugFlag := stdflag.Bool("debug", false, "Enable debug mode")
+	LogDirFlag := stdflag.String("log-dir", "./logs", "Assign service log directory")
+	LogRetentionDaysFlag := stdflag.Int("log-retention-days", 7, "Assign service log retention in local calendar days")
 	ArchiveFileLocationFlag := stdflag.String("loc", "./api/static/archive/", "Assign HTML file path")
 	MEILIHostFlag := stdflag.String("mhost", "http://127.0.0.1:7700", "Assign MeiliSearch host")
 	MEILIKeyFlag := stdflag.String("mkey", "", "Assign MeiliSearch API key")
@@ -62,6 +64,8 @@ func ParseFlag() {
 	RSSHubBaseURLFlag := stdflag.String("rsshub-base-url", "", "Assign optional RSSHub base URL")
 	stdflag.Parse()
 	config.DEBUG = *debugFlag
+	config.LOGDIR = strings.TrimSpace(*LogDirFlag)
+	config.LOGRETENTIONDAYS = *LogRetentionDaysFlag
 	config.ARCHIVEFILELOACTION = *ArchiveFileLocationFlag
 	config.MEILIHOST = *MEILIHostFlag
 	config.MEILIAPIKey = *MEILIKeyFlag

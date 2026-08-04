@@ -10,6 +10,8 @@ import (
 func TestParseFlagAppliesConfiguration(t *testing.T) {
 	oldArgs := os.Args
 	oldCommandLine := flag.CommandLine
+	oldLogDir := config.LOGDIR
+	oldLogRetentionDays := config.LOGRETENTIONDAYS
 	oldConfig := []interface{}{
 		config.DEBUG, config.ARCHIVEFILELOACTION, config.MEILIHOST, config.MEILIAPIKey, config.MEILIDumpDir,
 		config.SINGLEFILEWEBSERVICEURL, config.DBHost, config.DBPort, config.DBName, config.DBUser, config.DBPassword,
@@ -23,6 +25,8 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 	t.Cleanup(func() {
 		os.Args = oldArgs
 		flag.CommandLine = oldCommandLine
+		config.LOGDIR = oldLogDir
+		config.LOGRETENTIONDAYS = oldLogRetentionDays
 		config.DEBUG = oldConfig[0].(bool)
 		config.ARCHIVEFILELOACTION = oldConfig[1].(string)
 		config.MEILIHOST = oldConfig[2].(string)
@@ -56,6 +60,8 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 	os.Args = []string{
 		"dataark",
 		"-debug",
+		"-log-dir", " /tmp/dataark-logs ",
+		"-log-retention-days", "14",
 		"-loc", "/tmp/archive",
 		"-mhost", "http://meili:7700",
 		"-mkey", "key",
@@ -88,6 +94,9 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 
 	if !config.DEBUG || config.ARCHIVEFILELOACTION != "/tmp/archive" || config.MEILIHOST != "http://meili:7700" || config.MEILIAPIKey != "key" {
 		t.Fatalf("unexpected parsed config: debug=%v loc=%q mhost=%q key=%q", config.DEBUG, config.ARCHIVEFILELOACTION, config.MEILIHOST, config.MEILIAPIKey)
+	}
+	if config.LOGDIR != "/tmp/dataark-logs" || config.LOGRETENTIONDAYS != 14 {
+		t.Fatalf("unexpected log config: dir=%q retention=%d", config.LOGDIR, config.LOGRETENTIONDAYS)
 	}
 	if config.MEILIDumpDir != "/tmp/dumps" || config.SINGLEFILEWEBSERVICEURL != "http://singlefile" {
 		t.Fatalf("unexpected parsed service config: dump=%q singlefile=%q", config.MEILIDumpDir, config.SINGLEFILEWEBSERVICEURL)

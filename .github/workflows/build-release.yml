@@ -59,10 +59,13 @@ jobs:
             volumes:
               - ./archive:/archive
               - ./meili_dumps:/meili_dumps
+              - ./logs:/logs
             depends_on:
               database:
                 condition: service_healthy
             command: [
+              "-log-dir", "/logs",
+              "-log-retention-days", "${LOG_RETENTION_DAYS:-7}",
               "-loc", "/archive/",
               "-mhost", "http://meili:7700",
               "-mkey", "masterkey",

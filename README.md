@@ -23,6 +23,8 @@ sudo docker compose up -d
 ```
 第一次启动会生成一个初始用户名密码，请通过执行命令 `sudo docker compose logs` 查看输出中的默认用户名密码，仅在系统第一次部署运行时输出。
 
+`dataarkapi` 会把应用、任务、数据库和 HTTP 访问/恢复日志同时写入容器控制台与宿主机 `docker/logs/`。日志按服务器本地自然日保存为 `dataarkapi-YYYY-MM-DD.log`，默认保留当天在内的最近 7 天；可在 `docker/.env` 中通过 `LOG_RETENTION_DAYS` 设置正整数天数。首次生成的管理员密码仅输出到控制台，不写入日志文件。日志目录或当日日志文件无法创建时，API 会拒绝启动，避免静默丢失日志。
+
 **使用make编译**
 ```
 make web
@@ -31,6 +33,8 @@ make build
 可在 api/bin 目录下生成可执行文件。部署好 Meilisearch 和 PostgreSQL 后，运行下述命令启动服务：
 ```
 ./api/bin/DataArk.exe -loc ./docker/archive \
+                      -log-dir ./logs \
+                      -log-retention-days 7 \
                       -mhost "http://meili:7700" \
                       -mkey "RandomKey" \
                       -mdump "./docker/meili_dumps" \

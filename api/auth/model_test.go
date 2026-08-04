@@ -1,6 +1,14 @@
 package auth
 
-import "testing"
+import (
+	"bytes"
+	"io"
+	"log"
+	"os"
+	"regexp"
+	"strings"
+	"testing"
+)
 
 func TestHashPasswordAndCheckPassword(t *testing.T) {
 	hash, err := HashPassword("secret-password")
@@ -97,5 +105,42 @@ func TestUserDatabaseOperations(t *testing.T) {
 	}
 	if _, err := GetUserByID(user.ID); err == nil {
 		t.Fatal("deleted user should not be found")
+	}
+}
+
+func TestDefaultAdminCredentialStaysOutOfApplicationLog(t *testing.T) {
+	setupSQLiteDB(t)
+
+	previousLogWriter := log.Writer()
+	var applicationLog bytes.Buffer
+	log.SetOutput(&applicationLog)
+	t.Cleanup(func() { log.SetOutput(previousLogWriter) })
+
+	previousStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = writer
+	t.Cleanup(func() { os.Stdout = previousStdout })
+
+	CreateDefaultAdmin()
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	consoleOutput, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialPattern := regexp.MustCompile(`Password: ([0-9a-f]{12})`)
+	match := credentialPattern.FindStringSubmatch(string(consoleOutput))
+	if len(match) != 2 {
+		t.Fatalf("console output does not contain generated credential: %q", consoleOutput)
+	}
+	if strings.Contains(applicationLog.String(), match[1]) || strings.Contains(applicationLog.String(), "Password:") {
+		t.Fatalf("application log contains generated credential: %q", applicationLog.String())
+	}
+	if !strings.Contains(applicationLog.String(), "Default admin user created successfully") {
+		t.Fatalf("application log missing non-sensitive startup event: %q", applicationLog.String())
 	}
 }
