@@ -13,6 +13,10 @@ type EnrichmentProvider interface {
 	Enrich(ctx context.Context, input EnrichmentInput) (EnrichmentResult, error)
 }
 
+type ArticleAssessmentProvider interface {
+	AssessArticle(ctx context.Context, input ArticleAssessmentInput) (ArticleAssessmentResult, error)
+}
+
 type RerankProvider interface {
 	Rerank(ctx context.Context, input RerankInput) (RerankResult, error)
 }
@@ -38,6 +42,20 @@ type EnrichmentResult struct {
 	SpamProbability float64
 	Model           string
 	PromptVersion   string
+}
+
+type ArticleAssessmentInput struct {
+	Title       string
+	BodyText    string
+	PublishedAt *time.Time
+}
+
+type ArticleAssessmentResult struct {
+	QualityScore  float64  `json:"qualityScore"`
+	DepthScore    float64  `json:"depthScore"`
+	Reasons       []string `json:"reasons"`
+	Model         string   `json:"-"`
+	PromptVersion string   `json:"-"`
 }
 
 type RerankInput struct {

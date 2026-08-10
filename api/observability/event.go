@@ -38,6 +38,21 @@ type Event struct {
 	HTTPStatus   int       `json:"http_status,omitempty"`
 	ErrorMessage string    `json:"error_message,omitempty"`
 	Count        int       `json:"count,omitempty"`
+	LLMStage     string    `json:"llm_stage,omitempty"`
+	LLMModel     string    `json:"llm_model,omitempty"`
+	LLMDuration  int64     `json:"duration_ms,omitempty"`
+	LLMUsage     *LLMUsage `json:"llm_usage,omitempty"`
+}
+
+// LLMUsage contains provider-reported counters only. It deliberately cannot
+// carry prompt, completion, or reasoning text.
+type LLMUsage struct {
+	Available        bool `json:"available"`
+	PromptTokens     int  `json:"prompt_tokens"`
+	CompletionTokens int  `json:"completion_tokens"`
+	ReasoningTokens  int  `json:"reasoning_tokens"`
+	CachedTokens     int  `json:"cached_tokens"`
+	TotalTokens      int  `json:"total_tokens"`
 }
 
 // FailureDetails is the fixed, safe metadata an error may expose to structured
@@ -98,12 +113,42 @@ func Log(event Event) {
 
 func normalizeEvent(event Event) Event {
 	event.ErrorType = strings.TrimSpace(event.ErrorType)
+	event.LLMStage = boundedEventValue(event.LLMStage, 64)
+	event.LLMModel = boundedEventValue(event.LLMModel, 255)
+	if event.LLMDuration < 0 {
+		event.LLMDuration = 0
+	}
+	if event.LLMUsage != nil {
+		usage := *event.LLMUsage
+		usage.PromptTokens = nonNegativeCount(usage.PromptTokens)
+		usage.CompletionTokens = nonNegativeCount(usage.CompletionTokens)
+		usage.ReasoningTokens = nonNegativeCount(usage.ReasoningTokens)
+		usage.CachedTokens = nonNegativeCount(usage.CachedTokens)
+		usage.TotalTokens = nonNegativeCount(usage.TotalTokens)
+		event.LLMUsage = &usage
+	}
 	event.Domain = normalizeDomain(event.Domain)
 	if event.HTTPStatus < 100 || event.HTTPStatus > 599 {
 		event.HTTPStatus = 0
 	}
 	event.ErrorMessage = compactEventError(event.ErrorMessage)
 	return event
+}
+
+func boundedEventValue(value string, maximum int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if maximum > 0 && len(runes) > maximum {
+		return string(runes[:maximum])
+	}
+	return value
+}
+
+func nonNegativeCount(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
 }
 
 func normalizeDomain(value string) string {

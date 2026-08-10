@@ -8,14 +8,15 @@ import (
 	"time"
 )
 
-type capturingAssessmentEnricher struct {
-	input EnrichmentInput
+type capturingAssessmentProvider struct {
+	input ArticleAssessmentInput
 }
 
-func (provider *capturingAssessmentEnricher) Enrich(_ context.Context, input EnrichmentInput) (EnrichmentResult, error) {
+func (provider *capturingAssessmentProvider) AssessArticle(_ context.Context, input ArticleAssessmentInput) (ArticleAssessmentResult, error) {
 	provider.input = input
-	return EnrichmentResult{
-		QualityScore: 0.91, DepthScore: 0.84, Model: "fixture-llm", PromptVersion: "assessment-v1",
+	return ArticleAssessmentResult{
+		QualityScore: 0.91, DepthScore: 0.84, Reasons: []string{"Strong evidence", "Useful depth"},
+		Model: "fixture-llm", PromptVersion: "assessment-v2",
 	}, nil
 }
 
@@ -34,13 +35,13 @@ func TestOpenAICompatibleArticleAssessorPersistsEnhancedVersionWithoutSourceInpu
 	if err := db.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
 	}
-	provider := &capturingAssessmentEnricher{}
+	provider := &capturingAssessmentProvider{}
 	assessor := EnrichmentArticleAssessor{Provider: provider, Model: "fixture-llm"}
 	if err := discovery.AssessCandidate(context.Background(), candidate.ID, assessor); err != nil {
 		t.Fatal(err)
 	}
-	if provider.input.CandidateID != 0 || provider.input.URL != "" || provider.input.Title != candidate.Title || provider.input.BodyText != body {
-		t.Fatalf("enhanced assessor input leaked identity/source fields: %#v", provider.input)
+	if provider.input.Title != candidate.Title || provider.input.BodyText != body {
+		t.Fatalf("enhanced assessor input = %#v", provider.input)
 	}
 	var assessments []discovery.DiscoveryArticleAssessment
 	if err := db.Where("candidate_id = ?", candidate.ID).Order("id").Find(&assessments).Error; err != nil {
@@ -48,6 +49,9 @@ func TestOpenAICompatibleArticleAssessorPersistsEnhancedVersionWithoutSourceInpu
 	}
 	if len(assessments) != 2 || assessments[0].Assessor != discovery.RuleArticleAssessorName || assessments[1].Assessor != "openai_compatible" || assessments[1].AssessorVersion != "fixture-llm" {
 		t.Fatalf("rule/enhanced assessments = %#v", assessments)
+	}
+	if assessments[1].Reasons != `["Strong evidence","Useful depth"]` {
+		t.Fatalf("enhanced assessment reasons = %s", assessments[1].Reasons)
 	}
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
 		t.Fatal(err)

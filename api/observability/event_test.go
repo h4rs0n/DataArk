@@ -21,15 +21,36 @@ func (err testFailureDetailer) ObservabilityFailure() FailureDetails {
 }
 
 func TestEventSchemaCannotContainSensitivePayloads(t *testing.T) {
-	payload, err := json.Marshal(Event{Name: "candidate_processed", CandidateID: 7, Status: "ready"})
+	payload, err := json.Marshal(Event{
+		Name: "llm_call", CandidateID: 7, Status: "ready", LLMStage: "article_assessment",
+		LLMUsage: &LLMUsage{Available: true, PromptTokens: 10, CompletionTokens: 2, ReasoningTokens: 1, CachedTokens: 3, TotalTokens: 12},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := strings.ToLower(string(payload))
-	for _, forbidden := range []string{"body_text", "cookie", "authorization", "access_token", "api_key", "password"} {
+	for _, forbidden := range []string{
+		"body_text", "prompt_text", "completion_text", "reasoning_content", "cookie", "authorization",
+		"access_token", "api_key", "password",
+	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("sensitive field %q in %s", forbidden, payload)
 		}
+	}
+}
+
+func TestNormalizeEventBoundsLLMMetadataAndCounters(t *testing.T) {
+	event := normalizeEvent(Event{
+		LLMStage: strings.Repeat("阶", 70), LLMModel: strings.Repeat("模", 260), LLMDuration: -1,
+		LLMUsage: &LLMUsage{
+			Available: true, PromptTokens: -1, CompletionTokens: -2, ReasoningTokens: -3, CachedTokens: -4, TotalTokens: -5,
+		},
+	})
+	if len([]rune(event.LLMStage)) != 64 || len([]rune(event.LLMModel)) != 255 || event.LLMDuration != 0 {
+		t.Fatalf("bounded LLM metadata = %#v", event)
+	}
+	if event.LLMUsage == nil || event.LLMUsage.PromptTokens != 0 || event.LLMUsage.CompletionTokens != 0 || event.LLMUsage.ReasoningTokens != 0 || event.LLMUsage.CachedTokens != 0 || event.LLMUsage.TotalTokens != 0 {
+		t.Fatalf("normalized LLM usage = %#v", event.LLMUsage)
 	}
 }
 
