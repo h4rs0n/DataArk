@@ -1,12 +1,9 @@
-export const PROCESS_CANDIDATE_KIND = 'discovery_process_candidate'
-export const BACKFILL_SITE_KIND = 'discovery_backfill_site'
 export const CRAWL_TASK_GROUP_THRESHOLD = 3
 export const CRAWL_TASK_DETAIL_LIMIT = 1
 export const CRAWL_TASK_GROUP_WINDOW_MS = 10 * 60 * 1000
 
 function isGroupableTask(task) {
-  if (task.status === 'failed') return false
-  return task.kind === PROCESS_CANDIDATE_KIND || task.kind === BACKFILL_SITE_KIND
+  return task.status !== 'failed'
 }
 
 function effectiveTaskTimestamp(task) {
