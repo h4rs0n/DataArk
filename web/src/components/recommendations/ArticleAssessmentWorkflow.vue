@@ -79,7 +79,7 @@
               <label><input v-model="form.unjudgeable" type="checkbox" /> 无法判断</label>
             </div>
             <div class="label-actions">
-              <a-button :disabled="item.position === 0" @click="saveAndMove(-1)">保存并上一篇</a-button>
+              <a-button :loading="saving" :disabled="item.position === 0" @click="saveAndMove(-1)">保存并上一篇</a-button>
               <a-button v-if="labelPass === 1" status="warning" :loading="skipping" @click="skipCurrent">{{ item.position + 1 >= item.total ? '跳过当前' : '跳过并下一篇' }}</a-button>
               <a-button :loading="saving" @click="saveCurrent">保存当前</a-button>
               <a-button type="primary" :loading="saving" :disabled="item.position + 1 >= item.total" @click="saveAndMove(1)">保存并下一篇</a-button>
@@ -136,6 +136,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
+import { hasArticleAssessmentInput } from '@/utils/articleAssessmentForm.mjs'
 
 type WorkflowStatus = 'pass_one' | 'waiting_pass_two' | 'pass_two' | 'adjudication' | 'human_complete' | 'evaluating' | 'complete' | 'evaluation_failed'
 interface Progress { total: number; labeled: number; skipped: number; required: number }
@@ -349,7 +350,12 @@ async function performSkip() {
 }
 
 async function saveAndMove(delta: number) {
-  if (!item.value || !(await saveCurrent())) return
+  if (!item.value) return
+  if (delta < 0 && !hasArticleAssessmentInput(form)) {
+    await loadItem(item.value.position + delta)
+    return
+  }
+  if (!(await saveCurrent())) return
   const target = item.value.position + delta
   if (target >= 0 && target < item.value.total) await loadItem(target)
 }
