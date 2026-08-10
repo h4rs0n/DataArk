@@ -265,7 +265,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 23 || migrations[len(migrations)-1].Version != 23 {
+	if len(migrations) != 24 || migrations[len(migrations)-1].Version != 24 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -439,6 +439,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"article_assessment_workflow_runs", "article_assessment_workflow_labels", "evaluation_generation", "Data-preserving rollback"} {
 		if !strings.Contains(string(workflowBody), required) {
 			t.Fatalf("article assessment workflow migration missing %q", required)
+		}
+	}
+	optionalLabels, err := appmigrations.FS.ReadFile("000024_article_assessment_optional_labels.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"pass_one_skipped_at", "pass_one_skipped_by", "Data-preserving rollback"} {
+		if !strings.Contains(string(optionalLabels), required) {
+			t.Fatalf("optional article assessment labels migration missing %q", required)
 		}
 	}
 }

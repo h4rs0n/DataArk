@@ -46,6 +46,32 @@ func TestArticleAssessmentWorkflowIsOwnerOnlyAndCreatesServerSideRun(t *testing.
 	}
 }
 
+func TestArticleAssessmentWorkflowSkipIsOwnerOnly(t *testing.T) {
+	oldSkip := skipArticleAssessmentWorkflowItem
+	t.Cleanup(func() { skipArticleAssessmentWorkflowItem = oldSkip })
+	calls := 0
+	skipArticleAssessmentWorkflowItem = func(runID, userID uint, pass int, sampleID string) (assessmenteval.WorkflowSummary, error) {
+		calls++
+		if runID != 9 || userID != 1 || pass != 1 || sampleID != "sample-30" {
+			t.Fatalf("skip arguments = run:%d user:%d pass:%d sample:%q", runID, userID, pass, sampleID)
+		}
+		return assessmenteval.WorkflowSummary{
+			Exists: true, RunID: runID, Status: assessmenteval.WorkflowStatusPassOne,
+			PassOne: assessmenteval.WorkflowProgress{Total: 120, Labeled: 30, Skipped: 1, Required: 30},
+		}, nil
+	}
+	path := "/admin/recommendations/article-assessment-workflow/runs/9/skips/1/sample-30"
+	route := "/admin/recommendations/article-assessment-workflow/runs/:runId/skips/:pass/:sampleId"
+	member := performUserPathControllerRequestWithBody(http.MethodPut, route, path, []byte(`{}`), &auth.User{ID: 2, Role: auth.UserRoleMember}, SkipArticleAssessmentWorkflowItem)
+	if member.Code != http.StatusForbidden || calls != 0 {
+		t.Fatalf("member status=%d calls=%d", member.Code, calls)
+	}
+	owner := performUserPathControllerRequestWithBody(http.MethodPut, route, path, []byte(`{}`), &auth.User{ID: 1, Role: auth.UserRoleOwner}, SkipArticleAssessmentWorkflowItem)
+	if owner.Code != http.StatusOK || calls != 1 {
+		t.Fatalf("owner status=%d calls=%d body=%s", owner.Code, calls, owner.Body.String())
+	}
+}
+
 func TestArticleAssessmentBackfillRequiresOwnerAndSupportsDryRun(t *testing.T) {
 	oldPrepare := prepareArticleAssessmentBackfill
 	t.Cleanup(func() { prepareArticleAssessmentBackfill = oldPrepare })

@@ -24,7 +24,11 @@ import (
 )
 
 const (
-	BlindPassDelay = 72 * time.Hour
+	BlindPassDelay       = 72 * time.Hour
+	MinimumPassOneLabels = 30
+	PassTwoSampleCount   = 30
+	PassTwoCoreTarget    = 20
+	PassTwoStressTarget  = 10
 
 	WorkflowStatusPassOne          = "pass_one"
 	WorkflowStatusWaitingPassTwo   = "waiting_pass_two"
@@ -73,27 +77,29 @@ func (ArticleAssessmentWorkflowRun) TableName() string {
 }
 
 type ArticleAssessmentWorkflowItem struct {
-	ID                   uint   `gorm:"primaryKey"`
-	RunID                uint   `gorm:"uniqueIndex:idx_assessment_workflow_item;index;not null"`
-	Position             int    `gorm:"not null"`
-	PassTwoPosition      *int   `gorm:"index"`
-	AdjudicationPosition *int   `gorm:"index"`
-	SampleID             string `gorm:"uniqueIndex:idx_assessment_workflow_item;not null;size:64"`
-	CandidateID          uint   `gorm:"index;not null"`
-	ContentVersionID     uint   `gorm:"index;not null"`
-	ContentVersion       uint   `gorm:"not null"`
-	ContentHash          string `gorm:"not null;size:128"`
-	Host                 string `gorm:"size:255"`
-	Language             string `gorm:"size:32"`
-	BodyCharacters       int    `gorm:"not null"`
-	Stratum              string `gorm:"index;not null;size:64"`
-	BaselineAssessor     string `gorm:"size:128"`
-	BaselineQuality      int    `gorm:"not null"`
-	BaselineDepth        int    `gorm:"not null"`
-	BaselineEvergreen    int    `gorm:"not null"`
-	RuleQuality          int    `gorm:"not null"`
-	RuleDepth            int    `gorm:"not null"`
-	RuleEvergreen        int    `gorm:"not null"`
+	ID                   uint       `gorm:"primaryKey"`
+	RunID                uint       `gorm:"uniqueIndex:idx_assessment_workflow_item;index;not null"`
+	Position             int        `gorm:"not null"`
+	PassTwoPosition      *int       `gorm:"index"`
+	AdjudicationPosition *int       `gorm:"index"`
+	PassOneSkippedAt     *time.Time `gorm:"index"`
+	PassOneSkippedBy     *uint      `gorm:"index"`
+	SampleID             string     `gorm:"uniqueIndex:idx_assessment_workflow_item;not null;size:64"`
+	CandidateID          uint       `gorm:"index;not null"`
+	ContentVersionID     uint       `gorm:"index;not null"`
+	ContentVersion       uint       `gorm:"not null"`
+	ContentHash          string     `gorm:"not null;size:128"`
+	Host                 string     `gorm:"size:255"`
+	Language             string     `gorm:"size:32"`
+	BodyCharacters       int        `gorm:"not null"`
+	Stratum              string     `gorm:"index;not null;size:64"`
+	BaselineAssessor     string     `gorm:"size:128"`
+	BaselineQuality      int        `gorm:"not null"`
+	BaselineDepth        int        `gorm:"not null"`
+	BaselineEvergreen    int        `gorm:"not null"`
+	RuleQuality          int        `gorm:"not null"`
+	RuleDepth            int        `gorm:"not null"`
+	RuleEvergreen        int        `gorm:"not null"`
 	CreatedAt            time.Time
 }
 
@@ -184,8 +190,10 @@ func WorkflowModels() []interface{} {
 }
 
 type WorkflowProgress struct {
-	Total   int `json:"total"`
-	Labeled int `json:"labeled"`
+	Total    int `json:"total"`
+	Labeled  int `json:"labeled"`
+	Skipped  int `json:"skipped"`
+	Required int `json:"required"`
 }
 
 type WorkflowSummary struct {
@@ -227,6 +235,7 @@ type WorkflowItemView struct {
 	BodyText       string              `json:"bodyText"`
 	Language       string              `json:"language"`
 	BodyCharacters int                 `json:"bodyCharacters"`
+	Skipped        bool                `json:"skipped"`
 	Label          *WorkflowLabelInput `json:"label,omitempty"`
 }
 
@@ -289,7 +298,7 @@ func LatestWorkflowSummary(database *gorm.DB, now time.Time) (WorkflowSummary, e
 	var run ArticleAssessmentWorkflowRun
 	err := database.Order("id DESC").First(&run).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return WorkflowSummary{PassOne: WorkflowProgress{Total: GoldSampleCount}}, nil
+		return WorkflowSummary{PassOne: WorkflowProgress{Total: GoldSampleCount, Required: MinimumPassOneLabels}}, nil
 	}
 	if err != nil {
 		return WorkflowSummary{}, err
@@ -304,7 +313,7 @@ func GetWorkflowSummary(database *gorm.DB, runID uint, now time.Time) (WorkflowS
 	}
 	summary := WorkflowSummary{
 		Exists: true, RunID: run.ID, Status: run.Status, PolicyVersion: run.PolicyVersion, CreatedAt: run.CreatedAt,
-		PassOne: WorkflowProgress{Total: GoldSampleCount}, EvaluationGeneration: run.EvaluationGeneration,
+		PassOne: WorkflowProgress{Total: GoldSampleCount, Required: MinimumPassOneLabels}, EvaluationGeneration: run.EvaluationGeneration,
 		Model: run.Model, PromptVersion: run.PromptVersion, EvaluationError: run.EvaluationError,
 	}
 	var passCounts []struct {
@@ -324,6 +333,11 @@ func GetWorkflowSummary(database *gorm.DB, runID uint, now time.Time) (WorkflowS
 			summary.Adjudication.Labeled = count.Count
 		}
 	}
+	var passOneSkipped int64
+	if err := database.Model(&ArticleAssessmentWorkflowItem{}).Where("run_id = ? AND pass_one_skipped_at IS NOT NULL", run.ID).Count(&passOneSkipped).Error; err != nil {
+		return WorkflowSummary{}, err
+	}
+	summary.PassOne.Skipped = int(passOneSkipped)
 	var passTwoTotal int64
 	if err := database.Model(&ArticleAssessmentWorkflowItem{}).Where("run_id = ? AND pass_two_position IS NOT NULL", run.ID).Count(&passTwoTotal).Error; err != nil {
 		return WorkflowSummary{}, err
@@ -340,11 +354,11 @@ func GetWorkflowSummary(database *gorm.DB, runID uint, now time.Time) (WorkflowS
 	}
 	switch run.Status {
 	case WorkflowStatusPassOne:
-		summary.CanAdvance = summary.PassOne.Labeled == summary.PassOne.Total
+		summary.CanAdvance = summary.PassOne.Labeled >= summary.PassOne.Required
 	case WorkflowStatusWaitingPassTwo:
 		summary.CanAdvance = summary.NextPassAvailableAt != nil && !now.Before(*summary.NextPassAvailableAt)
 	case WorkflowStatusPassTwo:
-		summary.CanAdvance = summary.PassTwo.Total == 30 && summary.PassTwo.Labeled == summary.PassTwo.Total
+		summary.CanAdvance = summary.PassTwo.Total == PassTwoSampleCount && summary.PassTwo.Labeled == summary.PassTwo.Total
 	case WorkflowStatusAdjudication:
 		summary.CanAdvance = summary.Adjudication.Total > 0 && summary.Adjudication.Labeled == summary.Adjudication.Total
 	case WorkflowStatusHumanComplete, WorkflowStatusEvaluationFailed:
@@ -431,6 +445,7 @@ func GetWorkflowItem(database *gorm.DB, runID uint, pass, position int) (Workflo
 	view := WorkflowItemView{
 		RunID: run.ID, Pass: pass, Position: position, Total: int(total), SampleID: item.SampleID,
 		Title: strings.TrimSpace(content.Title), BodyText: strings.TrimSpace(content.BodyText), Language: item.Language, BodyCharacters: item.BodyCharacters,
+		Skipped: pass == 1 && item.PassOneSkippedAt != nil,
 	}
 	var label ArticleAssessmentWorkflowLabel
 	err = database.Where("run_id = ? AND sample_id = ? AND pass = ?", run.ID, item.SampleID, pass).First(&label).Error
@@ -491,10 +506,55 @@ func SaveWorkflowLabel(database *gorm.DB, runID, userID uint, pass int, sampleID
 		ExtractionBad: input.ExtractionBad, Unjudgeable: input.Unjudgeable,
 		DurationSeconds: duration, LabeledBy: userID, CreatedAt: now.UTC(), UpdatedAt: now.UTC(),
 	}
-	err = database.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "run_id"}, {Name: "sample_id"}, {Name: "pass"}},
-		DoUpdates: clause.AssignmentColumns([]string{"quality", "depth", "evergreen", "reason", "genre", "extraction_bad", "unjudgeable", "duration_seconds", "labeled_by", "updated_at"}),
-	}).Create(&label).Error
+	err = database.Transaction(func(transaction *gorm.DB) error {
+		if createErr := transaction.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "run_id"}, {Name: "sample_id"}, {Name: "pass"}},
+			DoUpdates: clause.AssignmentColumns([]string{"quality", "depth", "evergreen", "reason", "genre", "extraction_bad", "unjudgeable", "duration_seconds", "labeled_by", "updated_at"}),
+		}).Create(&label).Error; createErr != nil {
+			return createErr
+		}
+		if pass != 1 {
+			return nil
+		}
+		return transaction.Model(&ArticleAssessmentWorkflowItem{}).
+			Where("run_id = ? AND sample_id = ?", run.ID, item.SampleID).
+			Updates(map[string]interface{}{"pass_one_skipped_at": nil, "pass_one_skipped_by": nil}).Error
+	})
+	if err != nil {
+		return WorkflowSummary{}, err
+	}
+	return GetWorkflowSummary(database, run.ID, now)
+}
+
+func SkipWorkflowItem(database *gorm.DB, runID, userID uint, pass int, sampleID string, now time.Time) (WorkflowSummary, error) {
+	run, err := loadWorkflowRun(database, runID)
+	if err != nil {
+		return WorkflowSummary{}, err
+	}
+	if pass != 1 || run.Status != WorkflowStatusPassOne {
+		return WorkflowSummary{}, errors.New("only an editable first-pass article can be skipped")
+	}
+	sampleID = strings.TrimSpace(sampleID)
+	var item ArticleAssessmentWorkflowItem
+	if err := database.Where("run_id = ? AND sample_id = ?", run.ID, sampleID).First(&item).Error; err != nil {
+		return WorkflowSummary{}, err
+	}
+	skippedAt := now.UTC()
+	err = database.Transaction(func(transaction *gorm.DB) error {
+		if deleteErr := transaction.Where("run_id = ? AND sample_id = ? AND pass = 1", run.ID, item.SampleID).Delete(&ArticleAssessmentWorkflowLabel{}).Error; deleteErr != nil {
+			return deleteErr
+		}
+		result := transaction.Model(&ArticleAssessmentWorkflowItem{}).
+			Where("run_id = ? AND sample_id = ?", run.ID, item.SampleID).
+			Updates(map[string]interface{}{"pass_one_skipped_at": skippedAt, "pass_one_skipped_by": userID})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
 	if err != nil {
 		return WorkflowSummary{}, err
 	}
@@ -536,9 +596,7 @@ func AdvanceWorkflow(database *gorm.DB, runID uint, now time.Time) (WorkflowSumm
 	now = now.UTC()
 	switch run.Status {
 	case WorkflowStatusPassOne:
-		err = database.Model(&run).Updates(map[string]interface{}{
-			"status": WorkflowStatusWaitingPassTwo, "pass_one_completed_at": now, "updated_at": now,
-		}).Error
+		err = completeWorkflowPassOne(database, run, now)
 	case WorkflowStatusWaitingPassTwo:
 		err = startWorkflowPassTwo(database, run, now)
 	case WorkflowStatusPassTwo:
@@ -556,12 +614,44 @@ func AdvanceWorkflow(database *gorm.DB, runID uint, now time.Time) (WorkflowSumm
 	return GetWorkflowSummary(database, run.ID, now)
 }
 
+func completeWorkflowPassOne(database *gorm.DB, run ArticleAssessmentWorkflowRun, now time.Time) error {
+	return database.Transaction(func(transaction *gorm.DB) error {
+		var labeledSampleIDs []string
+		if err := transaction.Model(&ArticleAssessmentWorkflowLabel{}).
+			Where("run_id = ? AND pass = 1", run.ID).Pluck("sample_id", &labeledSampleIDs).Error; err != nil {
+			return err
+		}
+		if len(labeledSampleIDs) < MinimumPassOneLabels {
+			return fmt.Errorf("pass one requires at least %d labels", MinimumPassOneLabels)
+		}
+		if len(labeledSampleIDs) < GoldSampleCount {
+			if err := transaction.Model(&ArticleAssessmentWorkflowItem{}).
+				Where("run_id = ? AND sample_id NOT IN ?", run.ID, labeledSampleIDs).
+				Where("pass_one_skipped_at IS NULL").
+				Update("pass_one_skipped_at", now).Error; err != nil {
+				return err
+			}
+		}
+		return transaction.Model(&run).Updates(map[string]interface{}{
+			"status": WorkflowStatusWaitingPassTwo, "pass_one_completed_at": now, "updated_at": now,
+		}).Error
+	})
+}
+
 func startWorkflowPassTwo(database *gorm.DB, run ArticleAssessmentWorkflowRun, now time.Time) error {
 	manifest, err := loadWorkflowManifest(database, run)
 	if err != nil {
 		return err
 	}
-	selected, err := SelectPassTwoSampleIDs(manifest)
+	firstLabels, err := loadWorkflowLabelMap(database, run.ID, 1)
+	if err != nil {
+		return err
+	}
+	eligible := make(map[string]struct{}, len(firstLabels))
+	for sampleID := range firstLabels {
+		eligible[sampleID] = struct{}{}
+	}
+	selected, err := selectPassTwoSampleIDs(manifest, eligible)
 	if err != nil {
 		return err
 	}
@@ -619,9 +709,18 @@ func completeWorkflowPassTwo(database *gorm.DB, run ArticleAssessmentWorkflowRun
 }
 
 func SelectPassTwoSampleIDs(manifest Manifest) ([]string, error) {
+	return selectPassTwoSampleIDs(manifest, nil)
+}
+
+func selectPassTwoSampleIDs(manifest Manifest, eligible map[string]struct{}) ([]string, error) {
 	core := make([]ManifestItem, 0, CoreSampleCount)
 	stress := make([]ManifestItem, 0, StressSampleCount)
 	for _, item := range manifest.Items {
+		if eligible != nil {
+			if _, exists := eligible[item.SampleID]; !exists {
+				continue
+			}
+		}
 		switch {
 		case strings.HasPrefix(item.Stratum, "core:"):
 			core = append(core, item)
@@ -631,10 +730,15 @@ func SelectPassTwoSampleIDs(manifest Manifest) ([]string, error) {
 	}
 	sortManifestItems(core, manifest.Seed, "pass-two-core")
 	sortManifestItems(stress, manifest.Seed, "pass-two-stress")
-	if len(core) < 20 || len(stress) < 10 {
-		return nil, errors.New("manifest does not contain enough core and stress samples for pass two")
+	if len(core)+len(stress) < PassTwoSampleCount {
+		return nil, fmt.Errorf("first pass contains %d labelled samples, want at least %d for pass two", len(core)+len(stress), PassTwoSampleCount)
 	}
-	selected := append(append([]ManifestItem{}, core[:20]...), stress[:10]...)
+	coreCount := min(PassTwoCoreTarget, len(core))
+	stressCount := min(PassTwoStressTarget, len(stress))
+	selected := append(append([]ManifestItem{}, core[:coreCount]...), stress[:stressCount]...)
+	remaining := append(append([]ManifestItem{}, core[coreCount:]...), stress[stressCount:]...)
+	sortManifestItems(remaining, manifest.Seed, "pass-two-fill")
+	selected = append(selected, remaining[:PassTwoSampleCount-len(selected)]...)
 	sortManifestItems(selected, manifest.Seed, "pass-two-order")
 	ids := make([]string, 0, len(selected))
 	for _, item := range selected {

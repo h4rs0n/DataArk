@@ -32,7 +32,7 @@ func TestDatabaseWorkflowPersistsBlindPassesDelayAndAdjudication(t *testing.T) {
 	if summary.PassOne.Labeled != 1 {
 		t.Fatalf("first-pass progress = %#v", summary.PassOne)
 	}
-	for index, item := range manifest.Items[1:] {
+	for index, item := range manifest.Items[1:29] {
 		scores := fixtureScores(index + 1)
 		label := ArticleAssessmentWorkflowLabel{
 			RunID: run.ID, SampleID: item.SampleID, Pass: 1,
@@ -43,8 +43,44 @@ func TestDatabaseWorkflowPersistsBlindPassesDelayAndAdjudication(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	summary, err = SkipWorkflowItem(database, run.ID, 1, 1, manifest.Items[29].SampleID, now.Add(30*time.Minute))
+	if err != nil || summary.PassOne.Labeled != 29 || summary.PassOne.Skipped != 1 || summary.CanAdvance {
+		t.Fatalf("skip before minimum: summary=%#v err=%v", summary, err)
+	}
+	if _, err := AdvanceWorkflow(database, run.ID, now.Add(30*time.Minute)); err == nil {
+		t.Fatal("pass one advanced with fewer than the minimum labels")
+	}
+	skippedItem, err := GetWorkflowItem(database, run.ID, 1, 29)
+	if err != nil || !skippedItem.Skipped {
+		t.Fatalf("persisted skip: item=%#v err=%v", skippedItem, err)
+	}
+	thirtiethScores := fixtureScores(29)
+	summary, err = SaveWorkflowLabel(database, run.ID, 1, 1, manifest.Items[29].SampleID, WorkflowLabelInput{
+		Scores: &thirtiethScores, Reason: "replaced skip", Genre: "analysis",
+	}, now.Add(31*time.Minute))
+	if err != nil || summary.PassOne.Labeled != MinimumPassOneLabels || summary.PassOne.Skipped != 0 || !summary.CanAdvance {
+		t.Fatalf("minimum labels replace skip: summary=%#v err=%v", summary, err)
+	}
+	restoredItem, err := GetWorkflowItem(database, run.ID, 1, 29)
+	if err != nil || restoredItem.Skipped {
+		t.Fatalf("saved label did not clear skip: item=%#v err=%v", restoredItem, err)
+	}
+	summary, err = SkipWorkflowItem(database, run.ID, 1, 1, manifest.Items[29].SampleID, now.Add(32*time.Minute))
+	if err != nil || summary.PassOne.Labeled != MinimumPassOneLabels-1 || summary.PassOne.Skipped != 1 || summary.CanAdvance {
+		t.Fatalf("skip did not replace existing label: summary=%#v err=%v", summary, err)
+	}
+	summary, err = SaveWorkflowLabel(database, run.ID, 1, 1, manifest.Items[29].SampleID, WorkflowLabelInput{
+		Scores: &thirtiethScores, Reason: "restored label", Genre: "analysis",
+	}, now.Add(33*time.Minute))
+	if err != nil || summary.PassOne.Labeled != MinimumPassOneLabels || summary.PassOne.Skipped != 0 || !summary.CanAdvance {
+		t.Fatalf("restored minimum label: summary=%#v err=%v", summary, err)
+	}
+	summary, err = SkipWorkflowItem(database, run.ID, 1, 1, manifest.Items[30].SampleID, now.Add(34*time.Minute))
+	if err != nil || summary.PassOne.Labeled != MinimumPassOneLabels || summary.PassOne.Skipped != 1 || !summary.CanAdvance {
+		t.Fatalf("optional skip after minimum: summary=%#v err=%v", summary, err)
+	}
 	summary, err = AdvanceWorkflow(database, run.ID, now.Add(2*time.Hour))
-	if err != nil || summary.Status != WorkflowStatusWaitingPassTwo || summary.NextPassAvailableAt == nil {
+	if err != nil || summary.Status != WorkflowStatusWaitingPassTwo || summary.NextPassAvailableAt == nil || summary.PassOne.Skipped != GoldSampleCount-MinimumPassOneLabels {
 		t.Fatalf("complete pass one: summary=%#v err=%v", summary, err)
 	}
 	if _, err := GetWorkflowItem(database, run.ID, 1, 0); err == nil {
@@ -54,7 +90,7 @@ func TestDatabaseWorkflowPersistsBlindPassesDelayAndAdjudication(t *testing.T) {
 		t.Fatal("pass two started before the 72-hour blind interval")
 	}
 	summary, err = AdvanceWorkflow(database, run.ID, *summary.NextPassAvailableAt)
-	if err != nil || summary.Status != WorkflowStatusPassTwo || summary.PassTwo.Total != 30 {
+	if err != nil || summary.Status != WorkflowStatusPassTwo || summary.PassTwo.Total != PassTwoSampleCount {
 		t.Fatalf("start pass two: summary=%#v err=%v", summary, err)
 	}
 	blindItem, err := GetWorkflowItem(database, run.ID, 2, 0)
@@ -73,6 +109,11 @@ func TestDatabaseWorkflowPersistsBlindPassesDelayAndAdjudication(t *testing.T) {
 	var repeated []ArticleAssessmentWorkflowItem
 	if err := database.Where("run_id = ? AND pass_two_position IS NOT NULL", run.ID).Order("pass_two_position").Find(&repeated).Error; err != nil {
 		t.Fatal(err)
+	}
+	for _, item := range repeated {
+		if _, exists := firstLabels[item.SampleID]; !exists {
+			t.Fatalf("pass two selected skipped or unlabelled sample %q", item.SampleID)
+		}
 	}
 	for index, item := range repeated {
 		label := firstLabels[item.SampleID]

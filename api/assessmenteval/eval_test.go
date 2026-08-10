@@ -147,6 +147,42 @@ func TestBuildReportComputesPerfectControlledEvaluation(t *testing.T) {
 	}
 }
 
+func TestBuildReportExcludesSkippedPoolItemsFromHumanMetrics(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	manifest, err := BuildManifest(syntheticCandidateRecords(), "fixture-partial-report", now.Add(-96*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	passOne := LabelSet{Version: LabelVersion, ManifestDigest: manifest.Digest, Pass: 1, StartedAt: now.Add(-96 * time.Hour), CompletedAt: now.Add(-90 * time.Hour)}
+	eligible := make(map[string]struct{}, MinimumPassOneLabels)
+	for index, item := range manifest.Items[:MinimumPassOneLabels] {
+		eligible[item.SampleID] = struct{}{}
+		passOne.Labels = append(passOne.Labels, Label{SampleID: item.SampleID, Scores: fixtureScores(index), Reason: "fixture", Genre: "analysis"})
+	}
+	repeatedIDs, err := selectPassTwoSampleIDs(manifest, eligible)
+	if err != nil {
+		t.Fatal(err)
+	}
+	passTwo := LabelSet{Version: LabelVersion, ManifestDigest: manifest.Digest, Pass: 2, StartedAt: now.Add(-2 * time.Hour), CompletedAt: now.Add(-time.Hour)}
+	for _, id := range repeatedIDs {
+		index := manifestIndex(manifest, id)
+		passTwo.Labels = append(passTwo.Labels, Label{SampleID: id, Scores: fixtureScores(index), Reason: "fixture", Genre: "analysis"})
+	}
+	scores := ScoreSet{Version: ScoreVersion, ManifestDigest: manifest.Digest, Model: "fixture", PromptVersion: "fixture", CreatedAt: now}
+	for run := 1; run <= 2; run++ {
+		for index, item := range manifest.Items {
+			scores.Records = append(scores.Records, ScoreRecord{SampleID: item.SampleID, CandidateID: item.CandidateID, Run: run, Scores: fixtureScores(index)})
+		}
+	}
+	report, err := BuildReport(manifest, passOne, passTwo, nil, scores, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ExcludedSamples != GoldSampleCount-MinimumPassOneLabels || report.ModelAll.Quality.Count != MinimumPassOneLabels || report.HumanConsistency.Quality.Count != PassTwoSampleCount || report.Protocol.Calls != GoldSampleCount*2 {
+		t.Fatalf("partial-label report counts = excluded:%d model:%d human:%d protocol:%d", report.ExcludedSamples, report.ModelAll.Quality.Count, report.HumanConsistency.Quality.Count, report.Protocol.Calls)
+	}
+}
+
 func syntheticCandidateRecords() []CandidateRecord {
 	records := make([]CandidateRecord, 0, 180)
 	nextID := uint(1)

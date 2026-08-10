@@ -125,6 +125,9 @@ var (
 	saveArticleAssessmentWorkflowLabel = func(runID, userID uint, pass int, sampleID string, input assessmenteval.WorkflowLabelInput) (assessmenteval.WorkflowSummary, error) {
 		return assessmenteval.SaveWorkflowLabel(database.DB(), runID, userID, pass, sampleID, input, time.Now())
 	}
+	skipArticleAssessmentWorkflowItem = func(runID, userID uint, pass int, sampleID string) (assessmenteval.WorkflowSummary, error) {
+		return assessmenteval.SkipWorkflowItem(database.DB(), runID, userID, pass, sampleID, time.Now())
+	}
 	advanceArticleAssessmentWorkflow = func(runID uint) (assessmenteval.WorkflowSummary, error) {
 		return assessmenteval.AdvanceWorkflow(database.DB(), runID, time.Now())
 	}
@@ -801,6 +804,31 @@ func SaveArticleAssessmentWorkflowLabel(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "人工评分已保存", "Data": summary})
+}
+
+func SkipArticleAssessmentWorkflowItem(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	userID, authenticated := requireCurrentUserID(c)
+	if !authenticated {
+		return
+	}
+	runID, ok := parseUintParam(c, "runId")
+	if !ok {
+		return
+	}
+	passValue, err := strconv.Atoi(strings.TrimSpace(c.Param("pass")))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "标注轮次无效"})
+		return
+	}
+	summary, err := skipArticleAssessmentWorkflowItem(runID, userID, passValue, c.Param("sampleId"))
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"Status": "0", "Message": "跳过文章失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "文章已跳过", "Data": summary})
 }
 
 func AdvanceArticleAssessmentWorkflow(c *gin.Context) {
@@ -1718,6 +1746,7 @@ func WebStarter(debugMode bool) {
 		protected.POST("/admin/recommendations/article-assessment-workflow/runs", CreateArticleAssessmentWorkflow)
 		protected.GET("/admin/recommendations/article-assessment-workflow/runs/:runId/items/:pass/:position", GetArticleAssessmentWorkflowItem)
 		protected.PUT("/admin/recommendations/article-assessment-workflow/runs/:runId/labels/:pass/:sampleId", SaveArticleAssessmentWorkflowLabel)
+		protected.PUT("/admin/recommendations/article-assessment-workflow/runs/:runId/skips/:pass/:sampleId", SkipArticleAssessmentWorkflowItem)
 		protected.POST("/admin/recommendations/article-assessment-workflow/runs/:runId/advance", AdvanceArticleAssessmentWorkflow)
 		protected.POST("/admin/recommendations/article-assessment-workflow/runs/:runId/evaluate", EvaluateArticleAssessmentWorkflow)
 		protected.GET("/admin/discovery/domain-blacklist", ListDiscoveryDomainBlacklist)
