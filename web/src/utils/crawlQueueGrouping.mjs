@@ -5,8 +5,8 @@ export const CRAWL_TASK_DETAIL_LIMIT = 1
 export const CRAWL_TASK_GROUP_WINDOW_MS = 10 * 60 * 1000
 
 function isGroupableTask(task) {
-  if (task.kind === PROCESS_CANDIDATE_KIND) return true
-  return task.kind === BACKFILL_SITE_KIND && task.status === 'succeeded'
+  if (task.status === 'failed') return false
+  return task.kind === PROCESS_CANDIDATE_KIND || task.kind === BACKFILL_SITE_KIND
 }
 
 function effectiveTaskTimestamp(task) {
@@ -17,6 +17,7 @@ function effectiveTaskTimestamp(task) {
 
 function taskGroupSignature(task) {
   return JSON.stringify([
+    task.kind,
     task.status,
     task.attempts,
     task.contentVersion || '',

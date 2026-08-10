@@ -103,16 +103,71 @@ test('successful historical backfill tasks use the article task grouping behavio
   assert.equal(output[1].collapsedCount, 3)
 })
 
-test('failed historical backfill tasks remain individual with their error details', () => {
-  const input = [1, 2, 3, 4].map((id) => task(id, {
+test('non-failed historical backfill tasks group separately by status', () => {
+  const input = [
+    ...[1, 2, 3, 4].map((id) => task(id, {
+      kind: 'discovery_backfill_site',
+      targetType: 'site',
+      status: 'pending',
+    })),
+    ...[5, 6, 7, 8].map((id) => task(id, {
+      kind: 'discovery_backfill_site',
+      targetType: 'site',
+      status: 'running',
+    })),
+    ...[9, 10, 11, 12].map((id) => task(id, {
+      kind: 'discovery_backfill_site',
+      targetType: 'site',
+    })),
+  ]
+  const output = groupCrawlQueueTasks(input)
+  assert.deepEqual(output.map((item) => item.type), ['task', 'summary', 'task', 'summary', 'task', 'summary'])
+  assert.deepEqual(output.map((item) => item.type === 'task' ? item.task.status : item.status), [
+    'pending',
+    'pending',
+    'running',
+    'running',
+    'succeeded',
+    'succeeded',
+  ])
+  assert.deepEqual(output.filter((item) => item.type === 'summary').map((item) => item.collapsedCount), [3, 3, 3])
+})
+
+test('article processing and historical backfill tasks never share a group', () => {
+  const input = [
+    ...[1, 2, 3, 4].map((id) => task(id, { status: 'pending' })),
+    ...[5, 6, 7, 8].map((id) => task(id, {
+      kind: 'discovery_backfill_site',
+      targetType: 'site',
+      status: 'pending',
+    })),
+  ]
+  const output = groupCrawlQueueTasks(input)
+  assert.deepEqual(output.map((item) => item.type), ['task', 'summary', 'task', 'summary'])
+  assert.deepEqual(output.map((item) => item.type === 'task' ? item.task.kind : item.kind), [
+    'discovery_process_candidate',
+    'discovery_process_candidate',
+    'discovery_backfill_site',
+    'discovery_backfill_site',
+  ])
+})
+
+test('failed supported tasks remain individual with their error details', () => {
+  const backfills = [1, 2, 3, 4].map((id) => task(id, {
     kind: 'discovery_backfill_site',
     targetType: 'site',
     status: 'failed',
     error: `backfill failure ${id}`,
   }))
-  const output = groupCrawlQueueTasks(input)
-  assert.deepEqual(output.map((item) => item.type), ['task', 'task', 'task', 'task'])
-  assert.deepEqual(output.map((item) => item.task.error), input.map((item) => item.error))
+  const articles = [5, 6, 7, 8].map((id) => task(id, {
+    status: 'failed',
+    error: `article failure ${id}`,
+  }))
+  for (const input of [backfills, articles]) {
+    const output = groupCrawlQueueTasks(input)
+    assert.deepEqual(output.map((item) => item.type), ['task', 'task', 'task', 'task'])
+    assert.deepEqual(output.map((item) => item.task.error), input.map((item) => item.error))
+  }
 })
 
 test('other job kinds and invalid timestamps stay individual', () => {
