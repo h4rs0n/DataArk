@@ -72,6 +72,7 @@ test('owner UI exposes the manual crawl queue in a dedicated tab', () => {
   assert.match(view, /crawlQueue\.value\.state === 'running' \? 2000 : 10000/)
   assert.match(view, /displayedCrawlQueueTasks/)
   assert.match(view, /另有.*条相同任务已合并/)
+  assert.match(view, /失败原因：.*未提供失败原因/)
 })
 
 test('owner queue tab manages the discovery domain blacklist', () => {

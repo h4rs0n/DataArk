@@ -279,7 +279,8 @@
                   <span class="task-status" :class="`task-status-${item.task.status}`">{{ crawlTaskStatusLabel(item.task.status) }}</span>
                   <span>尝试 {{ item.task.attempts }} 次</span>
                   <span>{{ crawlTaskTimeLabel(item.task) }}</span>
-                  <small v-if="item.task.error" class="queue-task-error">{{ item.task.error }}</small>
+                  <small v-if="item.task.status === 'failed'" class="queue-task-error">失败原因：{{ item.task.error || '未提供失败原因' }}</small>
+                  <small v-else-if="item.task.error" class="queue-task-error">{{ item.task.error }}</small>
                 </article>
                 <article v-else class="queue-task-row queue-task-summary">
                   <div>
@@ -289,7 +290,8 @@
                   <span class="task-status" :class="`task-status-${item.status}`">{{ crawlTaskStatusLabel(item.status) }}</span>
                   <span>尝试 {{ item.attempts }} 次</span>
                   <span>{{ crawlTaskGroupTimeLabel(item) }}</span>
-                  <small v-if="item.error" class="queue-task-error">{{ item.error }}</small>
+                  <small v-if="item.status === 'failed'" class="queue-task-error">失败原因：{{ item.error || '未提供失败原因' }}</small>
+                  <small v-else-if="item.error" class="queue-task-error">{{ item.error }}</small>
                 </article>
               </template>
             </div>

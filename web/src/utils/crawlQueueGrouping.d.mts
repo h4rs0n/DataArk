@@ -33,6 +33,7 @@ export interface CrawlQueueSummaryDisplayItem<T extends CrawlQueueTaskLike> {
 export type CrawlQueueDisplayItem<T extends CrawlQueueTaskLike> = CrawlQueueTaskDisplayItem<T> | CrawlQueueSummaryDisplayItem<T>
 
 export const PROCESS_CANDIDATE_KIND: 'discovery_process_candidate'
+export const BACKFILL_SITE_KIND: 'discovery_backfill_site'
 export const CRAWL_TASK_GROUP_THRESHOLD: 3
 export const CRAWL_TASK_DETAIL_LIMIT: 1
 export const CRAWL_TASK_GROUP_WINDOW_MS: number
