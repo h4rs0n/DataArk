@@ -25,11 +25,27 @@ func (assessor fixtureArticleAssessor) Assess(context.Context, ArticleAssessment
 	return assessor.result, assessor.err
 }
 
+type contentAwareArticleAssessor struct{}
+
+func (contentAwareArticleAssessor) Name() string          { return "semantic_fixture" }
+func (contentAwareArticleAssessor) Version() string       { return "1" }
+func (contentAwareArticleAssessor) PolicyVersion() string { return ArticleQualityPolicyVersion }
+func (contentAwareArticleAssessor) Assess(_ context.Context, input ArticleAssessmentInput) (ArticleAssessmentResult, error) {
+	quality, depth, evergreen := .15, .10, .15
+	if strings.Contains(input.BodyText, "measurement 42") {
+		quality, depth, evergreen = .85, .80, .75
+	}
+	return ArticleAssessmentResult{
+		Quality: quality, Depth: depth, Evergreen: evergreen, Confidence: .90,
+		Reasons: []string{"content-only fixture evidence", "content-only fixture limitation"},
+	}, nil
+}
+
 func TestArticleAssessmentInputExcludesSourceAggregates(t *testing.T) {
 	typeOfInput := reflect.TypeOf(ArticleAssessmentInput{})
 	for index := 0; index < typeOfInput.NumField(); index++ {
 		name := strings.ToLower(typeOfInput.Field(index).Name)
-		for _, forbidden := range []string{"source", "site", "yield", "graph", "feedback", "reputation", "average", "hit", "qualityhistory"} {
+		for _, forbidden := range []string{"source", "site", "yield", "graph", "feedback", "reputation", "average", "hit", "qualityhistory", "author", "publication", "url", "html", "published"} {
 			if strings.Contains(name, forbidden) {
 				t.Fatalf("ArticleAssessmentInput field %q crosses forbidden source boundary %q", name, forbidden)
 			}
@@ -43,6 +59,7 @@ func TestLowHitSourceHighArticlesAreAssessedIndependently(t *testing.T) {
 	config.DISCOVERYARTICLEQUALITYTHRESHOLD = 0.45
 	t.Cleanup(func() { config.DISCOVERYARTICLEQUALITYTHRESHOLD = oldThreshold })
 	now := time.Date(2026, 7, 14, 4, 0, 0, 0, time.UTC)
+	semantic := contentAwareArticleAssessor{}
 	ordinaryBody := strings.Repeat("routine status update. ", 18)
 	highBody := strings.Repeat("Evidence from measurement 42 supports this durable method because the experiment compares alternatives, records counterexamples, explains the mechanism, and reaches a reproducible conclusion. ", 12)
 
@@ -55,7 +72,7 @@ func TestLowHitSourceHighArticlesAreAssessedIndependently(t *testing.T) {
 			title = fmt.Sprintf("Independent investigation %03d", index)
 		}
 		candidate := createAssessmentCandidate(t, "Long-tail B", fmt.Sprintf("https://b.example/posts/%03d", index), title, body, now)
-		if err := AssessCandidate(context.Background(), candidate.ID, nil); err != nil {
+		if err := AssessCandidate(context.Background(), candidate.ID, semantic); err != nil {
 			t.Fatal(err)
 		}
 		bCandidates = append(bCandidates, candidate)
@@ -63,7 +80,7 @@ func TestLowHitSourceHighArticlesAreAssessedIndependently(t *testing.T) {
 	aOrdinary := createAssessmentCandidate(t, "Seed A", "https://a.example/ordinary", "Ordinary seed note", ordinaryBody, now)
 	aHigh := createAssessmentCandidate(t, "Seed A", "https://a.example/high", "Independent investigation 097", highBody, now)
 	for _, candidate := range []DiscoveryCandidate{aOrdinary, aHigh} {
-		if err := AssessCandidate(context.Background(), candidate.ID, nil); err != nil {
+		if err := AssessCandidate(context.Background(), candidate.ID, semantic); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -105,7 +122,7 @@ func TestOptionalAssessorFailureFallsBackAndVersionsRemainImmutable(t *testing.T
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if candidate.AssessmentState != DiscoveryAssessmentReady || candidate.CurrentAssessmentID == nil || candidate.AssessmentError != "fixture LLM unavailable" || candidate.EligibilityState != DiscoveryEligibilityEligible {
+	if candidate.AssessmentState != DiscoveryAssessmentDegraded || candidate.CurrentAssessmentID == nil || candidate.AssessmentError != "article-quality-v1+fixture: fixture LLM unavailable" || candidate.EligibilityState != DiscoveryEligibilityEligible {
 		t.Fatalf("fallback candidate = %#v", candidate)
 	}
 	var assessments []DiscoveryArticleAssessment
@@ -147,6 +164,37 @@ func TestOptionalAssessorFailureFallsBackAndVersionsRemainImmutable(t *testing.T
 	}
 	if historyAssessmentID != oldAssessmentID || snapshotTitle != "Published assessment" {
 		t.Fatalf("assessment history changed: %d %q", historyAssessmentID, snapshotTitle)
+	}
+}
+
+func TestSemanticQualityFloorIsTwentyAndConfidenceDoesNotGate(t *testing.T) {
+	setupSQLiteDB(t)
+	oldThreshold := config.DISCOVERYARTICLEQUALITYTHRESHOLD
+	config.DISCOVERYARTICLEQUALITYTHRESHOLD = .20
+	t.Cleanup(func() { config.DISCOVERYARTICLEQUALITYTHRESHOLD = oldThreshold })
+	now := time.Date(2026, 8, 10, 11, 0, 0, 0, time.UTC)
+	below := createAssessmentCandidate(t, "Fixture", "https://example.com/below", "Below floor", strings.Repeat("substance ", 80), now)
+	atFloor := createAssessmentCandidate(t, "Fixture", "https://example.com/at-floor", "At floor", strings.Repeat("substance ", 80), now)
+	for _, fixture := range []struct {
+		candidate DiscoveryCandidate
+		quality   float64
+	}{
+		{below, .19},
+		{atFloor, .20},
+	} {
+		assessor := fixtureArticleAssessor{name: "floor_fixture", version: fmt.Sprintf("%.2f", fixture.quality), result: ArticleAssessmentResult{Quality: fixture.quality, Depth: .1, Evergreen: .1, Confidence: 0, Reasons: []string{"quality boundary", "low confidence is not a gate"}}}
+		if err := AssessCandidate(context.Background(), fixture.candidate.ID, assessor); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.First(&below, below.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&atFloor, atFloor.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if below.EligibilityState != DiscoveryEligibilityIneligible || atFloor.EligibilityState != DiscoveryEligibilityEligible {
+		t.Fatalf("quality floor results below=%#v atFloor=%#v", below, atFloor)
 	}
 }
 

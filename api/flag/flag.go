@@ -41,7 +41,7 @@ func ParseFlag() {
 	DiscoveryBackfillMaxIntervalFlag := stdflag.String("discover-backfill-max-interval", "168h", "Assign maximum wait between unfinished historical backfill batches")
 	DiscoveryArticleMinCharsFlag := stdflag.Int("discover-article-min-chars", 120, "Assign minimum extracted article text length")
 	DiscoveryProcessingMaxAttemptsFlag := stdflag.Int("discover-processing-max-attempts", 5, "Assign maximum transient article processing attempts")
-	DiscoveryArticleQualityThresholdFlag := stdflag.Float64("discover-article-quality-threshold", 0.45, "Assign minimum article-level quality required for eligibility")
+	DiscoveryArticleQualityThresholdFlag := stdflag.Float64("discover-article-quality-threshold", 0.20, "Assign minimum article-level quality required for eligibility")
 	DiscoveryScheduleMinIntervalFlag := stdflag.String("discover-schedule-min-interval", "1h", "Assign minimum interval after applying extra crawl budget")
 	DiscoveryInventoryFreshDaysFlag := stdflag.Int("discover-inventory-fresh-days", 30, "Assign recent article window used by candidate inventory")
 	DiscoveryInventoryWarningDaysFlag := stdflag.Float64("discover-inventory-warning-days", 7, "Assign candidate inventory warning threshold in days")
@@ -60,6 +60,8 @@ func ParseFlag() {
 	LLMChatModelFlag := stdflag.String("llm-chat-model", "", "Assign LLM chat model")
 	LLMEmbeddingModelFlag := stdflag.String("llm-embedding-model", "", "Assign LLM embedding model")
 	LLMTimeoutFlag := stdflag.String("llm-timeout", "30s", "Assign LLM request timeout")
+	ArticleAssessmentModeFlag := stdflag.String("article-assessment-mode", "observe", "Assign article assessment activation mode: observe or active")
+	ArticleAssessmentConcurrencyFlag := stdflag.Int("article-assessment-concurrency", 2, "Assign maximum concurrent article assessment LLM calls")
 	EmbeddingDimensionFlag := stdflag.Int("embedding-dimension", 0, "Assign embedding vector dimension")
 	RSSHubBaseURLFlag := stdflag.String("rsshub-base-url", "", "Assign optional RSSHub base URL")
 	stdflag.Parse()
@@ -116,6 +118,14 @@ func ParseFlag() {
 	config.LLMCHATMODEL = strings.TrimSpace(*LLMChatModelFlag)
 	config.LLMEMBEDDINGMODEL = strings.TrimSpace(*LLMEmbeddingModelFlag)
 	config.LLMTIMEOUT = strings.TrimSpace(*LLMTimeoutFlag)
+	config.ARTICLEASSESSMENTMODE = strings.ToLower(strings.TrimSpace(*ArticleAssessmentModeFlag))
+	if config.ARTICLEASSESSMENTMODE != "active" {
+		config.ARTICLEASSESSMENTMODE = "observe"
+	}
+	config.ARTICLEASSESSMENTCONCURRENCY = *ArticleAssessmentConcurrencyFlag
+	if config.ARTICLEASSESSMENTCONCURRENCY < 1 {
+		config.ARTICLEASSESSMENTCONCURRENCY = 2
+	}
 	config.EMBEDDINGDIMENSION = *EmbeddingDimensionFlag
 	config.RSSHUBBASEURL = strings.TrimRight(strings.TrimSpace(*RSSHubBaseURLFlag), "/")
 }

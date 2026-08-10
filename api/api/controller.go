@@ -105,6 +105,13 @@ var (
 		}
 		return controller.Run(ctx)
 	}
+	prepareArticleAssessmentBackfill = func(ctx context.Context, options discovery.ArticleAssessmentBatchOptions) (discovery.ArticleAssessmentBatchResult, error) {
+		queue, _ := jobqueue.Default()
+		return discovery.PrepareArticleAssessmentBackfill(ctx, recommendation.ConfiguredArticleAssessor(), queue, options)
+	}
+	rollbackArticleAssessments = func(ctx context.Context, options discovery.ArticleAssessmentBatchOptions) (discovery.ArticleAssessmentBatchResult, error) {
+		return discovery.RollbackArticleAssessment(ctx, recommendation.ConfiguredArticleAssessor(), options)
+	}
 	startDiscoveryScheduler      = discovery.StartDiscoveryScheduler
 	startRecommendationScheduler = recommendation.StartRecommendationScheduler
 	startSharedJobQueue          = startApplicationJobQueue
@@ -644,6 +651,52 @@ func RunDiscoveryCrawlQueue(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "爬取任务队列已开始执行", "Data": snapshot})
+}
+
+func BackfillArticleAssessments(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	var options discovery.ArticleAssessmentBatchOptions
+	if err := c.ShouldBindJSON(&options); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "请输入有效的 assessment 回填参数", "Error": err.Error()})
+		return
+	}
+	result, err := prepareArticleAssessmentBackfill(c.Request.Context(), options)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "准备 article assessment 回填失败", "Error": err.Error(), "Data": result})
+		return
+	}
+	status := http.StatusAccepted
+	message := "article assessment 回填已加入队列"
+	if options.DryRun {
+		status = http.StatusOK
+		message = "article assessment 回填预检完成"
+	}
+	c.JSON(status, gin.H{"Status": "1", "Message": message, "Data": result})
+}
+
+func RollbackArticleAssessments(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	var options discovery.ArticleAssessmentBatchOptions
+	if err := c.ShouldBindJSON(&options); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "请输入有效的 assessment 回滚参数", "Error": err.Error()})
+		return
+	}
+	result, err := rollbackArticleAssessments(c.Request.Context(), options)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "article assessment 回滚失败", "Error": err.Error(), "Data": result})
+		return
+	}
+	status := http.StatusAccepted
+	message := "article assessment 回滚完成"
+	if options.DryRun {
+		status = http.StatusOK
+		message = "article assessment 回滚预检完成"
+	}
+	c.JSON(status, gin.H{"Status": "1", "Message": message, "Data": result})
 }
 
 func ListDiscoveryDomainBlacklist(c *gin.Context) {
@@ -1523,6 +1576,8 @@ func WebStarter(debugMode bool) {
 		protected.GET("/discovery/sites/:id/operations", GetDiscoverySiteOperations)
 		protected.GET("/admin/discovery/crawl-queue", GetDiscoveryCrawlQueue)
 		protected.POST("/admin/discovery/crawl-queue/run", RunDiscoveryCrawlQueue)
+		protected.POST("/admin/discovery/article-assessments/backfill", BackfillArticleAssessments)
+		protected.POST("/admin/discovery/article-assessments/rollback", RollbackArticleAssessments)
 		protected.GET("/admin/discovery/domain-blacklist", ListDiscoveryDomainBlacklist)
 		protected.POST("/admin/discovery/domain-blacklist", CreateDiscoveryDomainBlacklist)
 		protected.DELETE("/admin/discovery/domain-blacklist/:id", DeleteDiscoveryDomainBlacklist)

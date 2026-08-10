@@ -45,17 +45,21 @@ type EnrichmentResult struct {
 }
 
 type ArticleAssessmentInput struct {
+	CandidateID uint
 	Title       string
 	BodyText    string
-	PublishedAt *time.Time
 }
 
 type ArticleAssessmentResult struct {
-	QualityScore  float64  `json:"qualityScore"`
-	DepthScore    float64  `json:"depthScore"`
-	Reasons       []string `json:"reasons"`
-	Model         string   `json:"-"`
-	PromptVersion string   `json:"-"`
+	QualityScore           int      `json:"qualityScore"`
+	DepthScore             int      `json:"depthScore"`
+	EvergreenScore         int      `json:"evergreenScore"`
+	Reasons                []string `json:"reasons"`
+	Model                  string   `json:"-"`
+	PromptVersion          string   `json:"-"`
+	EvidenceTokens         int      `json:"-"`
+	OriginalEvidenceTokens int      `json:"-"`
+	EvidenceTruncated      bool     `json:"-"`
 }
 
 type RerankInput struct {

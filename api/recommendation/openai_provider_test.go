@@ -9,17 +9,22 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 )
 
 type fakeOpenAIDoer struct {
+	mu        sync.Mutex
 	responses []string
+	statuses  []int
 	paths     []string
 	payloads  []map[string]interface{}
 	err       error
 }
 
 func (fake *fakeOpenAIDoer) Do(req *http.Request) (*http.Response, error) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
 	fake.paths = append(fake.paths, req.URL.Path)
 	requestBody, err := io.ReadAll(req.Body)
 	if err != nil {
@@ -38,11 +43,72 @@ func (fake *fakeOpenAIDoer) Do(req *http.Request) (*http.Response, error) {
 		body = fake.responses[0]
 		fake.responses = fake.responses[1:]
 	}
+	status := http.StatusOK
+	if len(fake.statuses) > 0 {
+		status = fake.statuses[0]
+		fake.statuses = fake.statuses[1:]
+	}
 	return &http.Response{
-		StatusCode: http.StatusOK,
+		StatusCode: status,
 		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     make(http.Header),
 	}, nil
+}
+
+func TestArticleAssessmentStructuredOutputDowngradesOnceAcrossConcurrentCalls(t *testing.T) {
+	resetAssessmentOutputCapabilitiesForTest()
+	valid := `{"choices":[{"message":{"content":"{\"qualityScore\":72,\"depthScore\":64,\"evergreenScore\":81,\"reasons\":[\"specific evidence\",\"limited comparison\"]}"}}]}`
+	responses := []string{
+		`{"choices":[{"message":{"content":"{\"qualityScore\":72"}}]}`,
+		valid, valid, valid, valid, valid,
+	}
+	client := &fakeOpenAIDoer{responses: responses}
+	provider := OpenAICompatibleProvider{BaseURL: "https://fallback.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
+	var group sync.WaitGroup
+	errorsByCall := make(chan error, 5)
+	for index := 0; index < 5; index++ {
+		group.Add(1)
+		go func(candidateID uint) {
+			defer group.Done()
+			_, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{CandidateID: candidateID, Title: "Title", BodyText: "Body"})
+			errorsByCall <- err
+		}(uint(index + 1))
+	}
+	group.Wait()
+	close(errorsByCall)
+	for err := range errorsByCall {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(client.payloads) != 6 {
+		t.Fatalf("requests = %d, want one probe plus five compatible calls", len(client.payloads))
+	}
+	schemaCalls := 0
+	for _, payload := range client.payloads {
+		format := requireMap(t, payload["response_format"])
+		if format["type"] == articleAssessmentResponseSchemaMode {
+			schemaCalls++
+		}
+	}
+	if schemaCalls != 1 {
+		t.Fatalf("schema calls = %d, payloads=%#v", schemaCalls, client.payloads)
+	}
+}
+
+func TestArticleAssessmentDoesNotTreatRateLimitAsFormatFailure(t *testing.T) {
+	resetAssessmentOutputCapabilitiesForTest()
+	client := &fakeOpenAIDoer{
+		responses: []string{`{"error":{"message":"rate exceeded"}}`},
+		statuses:  []int{http.StatusTooManyRequests},
+	}
+	provider := OpenAICompatibleProvider{BaseURL: "https://rate.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
+	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err == nil {
+		t.Fatal("expected rate-limit error")
+	}
+	if len(client.payloads) != 1 {
+		t.Fatalf("rate-limit requests = %d", len(client.payloads))
+	}
 }
 
 func TestOpenAICompatibleProviderEmbed(t *testing.T) {
@@ -110,15 +176,16 @@ func TestOpenAICompatibleProviderEnrichAndRerank(t *testing.T) {
 }
 
 func TestOpenAICompatibleProviderArticleAssessmentUsesCompactSchemaAndQwenSwitch(t *testing.T) {
+	resetAssessmentOutputCapabilitiesForTest()
 	client := &fakeOpenAIDoer{responses: []string{
-		`{"choices":[{"message":{"content":"{\"qualityScore\":0.82,\"depthScore\":0.71,\"reasons\":[\"Evidence is specific\",\"Analysis is concise\"]}"}}]}`,
+		`{"choices":[{"message":{"content":"{\"qualityScore\":82,\"depthScore\":71,\"evergreenScore\":64,\"reasons\":[\"Evidence is specific\",\"Analysis is concise\"]}"}}]}`,
 	}}
 	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "qwen3.5-plus", HTTPClient: client}
 	result, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Article body"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.QualityScore != 0.82 || result.DepthScore != 0.71 || len(result.Reasons) != 2 {
+	if result.QualityScore != 82 || result.DepthScore != 71 || result.EvergreenScore != 64 || len(result.Reasons) != 2 {
 		t.Fatalf("result = %#v", result)
 	}
 	payload := client.payloads[0]
@@ -135,20 +202,42 @@ func TestOpenAICompatibleProviderArticleAssessmentUsesCompactSchemaAndQwenSwitch
 	}
 	schema := requireMap(t, jsonSchema["schema"])
 	properties := requireMap(t, schema["properties"])
-	if schema["additionalProperties"] != false || len(properties) != 3 {
+	if schema["additionalProperties"] != false || len(properties) != 4 {
 		t.Fatalf("schema = %#v", schema)
 	}
-	for _, field := range []string{"qualityScore", "depthScore", "reasons"} {
+	for _, field := range []string{"qualityScore", "depthScore", "evergreenScore", "reasons"} {
 		if _, ok := properties[field]; !ok {
 			t.Fatalf("schema properties = %#v", properties)
 		}
 	}
 }
 
+func TestArticleAssessmentOutputRejectsEverySchemaViolationLocally(t *testing.T) {
+	tests := []string{
+		`{"depthScore":50,"evergreenScore":50,"reasons":["one","two"]}`,
+		`{"qualityScore":50.5,"depthScore":50,"evergreenScore":50,"reasons":["one","two"]}`,
+		`{"qualityScore":101,"depthScore":50,"evergreenScore":50,"reasons":["one","two"]}`,
+		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one"]}`,
+		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["` + strings.Repeat("x", 121) + `","two"]}`,
+		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one","two"],"unused":true}`,
+	}
+	for _, payload := range tests {
+		var output articleAssessmentOutput
+		decodeErr := decodeChatJSON(payload, &output, true)
+		if decodeErr == nil {
+			_, decodeErr = output.result()
+		}
+		if decodeErr == nil {
+			t.Fatalf("invalid output accepted: %s", payload)
+		}
+	}
+}
+
 func TestOpenAICompatibleProviderLogsUsageWithoutPayloadText(t *testing.T) {
+	resetAssessmentOutputCapabilitiesForTest()
 	logOutput := captureStandardLog(t)
 	client := &fakeOpenAIDoer{responses: []string{
-		`{"choices":[{"message":{"content":"{\"qualityScore\":0.8,\"depthScore\":0.7,\"reasons\":[\"completion-text-sentinel\"]}","reasoning_content":"reasoning-text-sentinel"}}],"usage":{"prompt_tokens":101,"completion_tokens":20,"total_tokens":121,"prompt_tokens_details":{"cached_tokens":11},"completion_tokens_details":{"reasoning_tokens":0}}}`,
+		`{"choices":[{"message":{"content":"{\"qualityScore\":80,\"depthScore\":70,\"evergreenScore\":60,\"reasons\":[\"completion-text-sentinel\",\"No major limitation\"]}","reasoning_content":"reasoning-text-sentinel"}}],"usage":{"prompt_tokens":101,"completion_tokens":20,"total_tokens":121,"prompt_tokens_details":{"cached_tokens":11},"completion_tokens_details":{"reasoning_tokens":0}}}`,
 	}}
 	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "deepseek-v4", HTTPClient: client}
 	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "prompt-text-sentinel"}); err != nil {
@@ -157,6 +246,9 @@ func TestOpenAICompatibleProviderLogsUsageWithoutPayloadText(t *testing.T) {
 	event := decodeSingleLLMEvent(t, logOutput.String())
 	if event["status"] != "success" || event["llm_stage"] != llmStageArticleAssessment || event["llm_model"] != "deepseek-v4" {
 		t.Fatalf("event identity = %#v", event)
+	}
+	if event["llm_response_mode"] != articleAssessmentResponseSchemaMode || event["llm_attempt"] != float64(1) || event["llm_evidence_tokens"] == nil || event["llm_original_evidence_tokens"] == nil {
+		t.Fatalf("assessment call metadata = %#v", event)
 	}
 	if duration, ok := event["duration_ms"].(float64); !ok || duration < 1 {
 		t.Fatalf("duration_ms = %#v", event["duration_ms"])
@@ -179,19 +271,21 @@ func TestOpenAICompatibleProviderLogsUsageWithoutPayloadText(t *testing.T) {
 }
 
 func TestOpenAICompatibleProviderLogsUsageWhenStrictAssessmentOutputIsInvalid(t *testing.T) {
+	resetAssessmentOutputCapabilitiesForTest()
 	logOutput := captureStandardLog(t)
 	client := &fakeOpenAIDoer{responses: []string{
-		`{"choices":[{"message":{"content":"{\"qualityScore\":0.8,\"depthScore\":0.7,\"reasons\":[\"ok\"],\"unused\":\"must fail\"}"}}],"usage":{"prompt_tokens":80,"completion_tokens":16,"total_tokens":96,"completion_tokens_details":{"reasoning_tokens":3}}}`,
+		`{"choices":[{"message":{"content":"{\"qualityScore\":80,\"depthScore\":70,\"evergreenScore\":60,\"reasons\":[\"ok\",\"limit\"],\"unused\":\"must fail\"}"}}],"usage":{"prompt_tokens":80,"completion_tokens":16,"total_tokens":96,"completion_tokens_details":{"reasoning_tokens":3}}}`,
+		`{"choices":[{"message":{"content":"{\"qualityScore\":80,\"depthScore\":70,\"evergreenScore\":60,\"reasons\":[\"ok\",\"limit\"],\"unused\":\"must fail\"}"}}],"usage":{"prompt_tokens":81,"completion_tokens":17,"total_tokens":98}}`,
 	}}
 	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
 	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("error = %v", err)
 	}
-	event := decodeSingleLLMEvent(t, logOutput.String())
-	if event["status"] != "failed" || event["error_type"] != "invalid_output" {
-		t.Fatalf("event = %#v", event)
+	events := decodeLLMEvents(t, logOutput.String())
+	if len(events) != 2 || events[0]["status"] != "failed" || events[1]["status"] != "failed" || events[1]["error_type"] != "invalid_output" {
+		t.Fatalf("events = %#v", events)
 	}
-	usage := requireMap(t, event["llm_usage"])
+	usage := requireMap(t, events[0]["llm_usage"])
 	if usage["prompt_tokens"] != float64(80) || usage["reasoning_tokens"] != float64(3) {
 		t.Fatalf("usage = %#v", usage)
 	}
@@ -255,4 +349,19 @@ func decodeSingleLLMEvent(t *testing.T, output string) map[string]interface{} {
 		t.Fatalf("event = %#v", event)
 	}
 	return event
+}
+
+func decodeLLMEvents(t *testing.T, output string) []map[string]interface{} {
+	t.Helper()
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	events := make([]map[string]interface{}, 0, len(lines))
+	for _, line := range lines {
+		payload := strings.TrimPrefix(strings.TrimSpace(line), "dataark_event ")
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			t.Fatalf("decode event: %v; line=%q", err, line)
+		}
+		events = append(events, event)
+	}
+	return events
 }

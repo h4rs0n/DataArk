@@ -21,6 +21,7 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 		config.RECOMMENDATIONCANDIDATEPOOLSIZE, config.RECOMMENDATIONRERANKLIMIT,
 		config.RECOMMENDATIONEXPLORATIONRATE, config.LLMBASEURL, config.LLMAPIKEY, config.LLMCHATMODEL,
 		config.LLMEMBEDDINGMODEL, config.LLMTIMEOUT, config.EMBEDDINGDIMENSION, config.RSSHUBBASEURL,
+		config.ARTICLEASSESSMENTMODE, config.ARTICLEASSESSMENTCONCURRENCY,
 	}
 	t.Cleanup(func() {
 		os.Args = oldArgs
@@ -54,6 +55,8 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 		config.LLMTIMEOUT = oldConfig[24].(string)
 		config.EMBEDDINGDIMENSION = oldConfig[25].(int)
 		config.RSSHUBBASEURL = oldConfig[26].(string)
+		config.ARTICLEASSESSMENTMODE = oldConfig[27].(string)
+		config.ARTICLEASSESSMENTCONCURRENCY = oldConfig[28].(int)
 	})
 
 	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
@@ -86,6 +89,8 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 		"-llm-chat-model", "qwen",
 		"-llm-embedding-model", "embed",
 		"-llm-timeout", "20s",
+		"-article-assessment-mode", "active",
+		"-article-assessment-concurrency", "3",
 		"-embedding-dimension", "768",
 		"-rsshub-base-url", "http://rsshub:1200/",
 	}
@@ -118,5 +123,8 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 	}
 	if config.LLMBASEURL != "http://ollama:11434" || config.LLMAPIKEY != "llm-key" || config.LLMCHATMODEL != "qwen" || config.LLMEMBEDDINGMODEL != "embed" || config.LLMTIMEOUT != "20s" || config.EMBEDDINGDIMENSION != 768 || config.RSSHUBBASEURL != "http://rsshub:1200" {
 		t.Fatalf("unexpected llm config")
+	}
+	if config.ARTICLEASSESSMENTMODE != "active" || config.ARTICLEASSESSMENTCONCURRENCY != 3 {
+		t.Fatalf("unexpected assessment config: mode=%q concurrency=%d", config.ARTICLEASSESSMENTMODE, config.ARTICLEASSESSMENTCONCURRENCY)
 	}
 }

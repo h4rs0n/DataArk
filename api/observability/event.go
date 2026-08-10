@@ -22,26 +22,31 @@ var (
 // Event has a fixed operational schema. Its failure diagnostics are normalized
 // before logging and cannot carry complete URLs or unbounded payloads.
 type Event struct {
-	Name         string    `json:"event"`
-	OccurredAt   time.Time `json:"occurred_at"`
-	JobID        string    `json:"job_id,omitempty"`
-	FetchRunID   uint      `json:"fetch_run_id,omitempty"`
-	SiteID       uint      `json:"site_id,omitempty"`
-	SourceID     uint      `json:"source_id,omitempty"`
-	CandidateID  uint      `json:"candidate_id,omitempty"`
-	UserID       uint      `json:"user_id,omitempty"`
-	DayID        uint      `json:"day_id,omitempty"`
-	LocalDate    string    `json:"local_date,omitempty"`
-	Status       string    `json:"status,omitempty"`
-	ErrorType    string    `json:"error_type,omitempty"`
-	Domain       string    `json:"domain,omitempty"`
-	HTTPStatus   int       `json:"http_status,omitempty"`
-	ErrorMessage string    `json:"error_message,omitempty"`
-	Count        int       `json:"count,omitempty"`
-	LLMStage     string    `json:"llm_stage,omitempty"`
-	LLMModel     string    `json:"llm_model,omitempty"`
-	LLMDuration  int64     `json:"duration_ms,omitempty"`
-	LLMUsage     *LLMUsage `json:"llm_usage,omitempty"`
+	Name                      string    `json:"event"`
+	OccurredAt                time.Time `json:"occurred_at"`
+	JobID                     string    `json:"job_id,omitempty"`
+	FetchRunID                uint      `json:"fetch_run_id,omitempty"`
+	SiteID                    uint      `json:"site_id,omitempty"`
+	SourceID                  uint      `json:"source_id,omitempty"`
+	CandidateID               uint      `json:"candidate_id,omitempty"`
+	UserID                    uint      `json:"user_id,omitempty"`
+	DayID                     uint      `json:"day_id,omitempty"`
+	LocalDate                 string    `json:"local_date,omitempty"`
+	Status                    string    `json:"status,omitempty"`
+	ErrorType                 string    `json:"error_type,omitempty"`
+	Domain                    string    `json:"domain,omitempty"`
+	HTTPStatus                int       `json:"http_status,omitempty"`
+	ErrorMessage              string    `json:"error_message,omitempty"`
+	Count                     int       `json:"count,omitempty"`
+	LLMStage                  string    `json:"llm_stage,omitempty"`
+	LLMModel                  string    `json:"llm_model,omitempty"`
+	LLMResponseMode           string    `json:"llm_response_mode,omitempty"`
+	LLMAttempt                int       `json:"llm_attempt,omitempty"`
+	LLMEvidenceTokens         int       `json:"llm_evidence_tokens,omitempty"`
+	LLMOriginalEvidenceTokens int       `json:"llm_original_evidence_tokens,omitempty"`
+	LLMEvidenceTruncated      bool      `json:"llm_evidence_truncated,omitempty"`
+	LLMDuration               int64     `json:"duration_ms,omitempty"`
+	LLMUsage                  *LLMUsage `json:"llm_usage,omitempty"`
 }
 
 // LLMUsage contains provider-reported counters only. It deliberately cannot
@@ -115,6 +120,10 @@ func normalizeEvent(event Event) Event {
 	event.ErrorType = strings.TrimSpace(event.ErrorType)
 	event.LLMStage = boundedEventValue(event.LLMStage, 64)
 	event.LLMModel = boundedEventValue(event.LLMModel, 255)
+	event.LLMResponseMode = boundedEventValue(event.LLMResponseMode, 32)
+	event.LLMAttempt = nonNegativeCount(event.LLMAttempt)
+	event.LLMEvidenceTokens = nonNegativeCount(event.LLMEvidenceTokens)
+	event.LLMOriginalEvidenceTokens = nonNegativeCount(event.LLMOriginalEvidenceTokens)
 	if event.LLMDuration < 0 {
 		event.LLMDuration = 0
 	}

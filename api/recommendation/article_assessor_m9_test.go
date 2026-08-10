@@ -15,7 +15,7 @@ type capturingAssessmentProvider struct {
 func (provider *capturingAssessmentProvider) AssessArticle(_ context.Context, input ArticleAssessmentInput) (ArticleAssessmentResult, error) {
 	provider.input = input
 	return ArticleAssessmentResult{
-		QualityScore: 0.91, DepthScore: 0.84, Reasons: []string{"Strong evidence", "Useful depth"},
+		QualityScore: 91, DepthScore: 84, EvergreenScore: 79, Reasons: []string{"Strong evidence", "Useful depth"},
 		Model: "fixture-llm", PromptVersion: "assessment-v2",
 	}, nil
 }
@@ -36,11 +36,11 @@ func TestOpenAICompatibleArticleAssessorPersistsEnhancedVersionWithoutSourceInpu
 		t.Fatal(err)
 	}
 	provider := &capturingAssessmentProvider{}
-	assessor := EnrichmentArticleAssessor{Provider: provider, Model: "fixture-llm"}
+	assessor := EnrichmentArticleAssessor{Provider: provider, Model: "fixture-llm", Mode: "active"}
 	if err := discovery.AssessCandidate(context.Background(), candidate.ID, assessor); err != nil {
 		t.Fatal(err)
 	}
-	if provider.input.Title != candidate.Title || provider.input.BodyText != body {
+	if provider.input.CandidateID != candidate.ID || provider.input.Title != candidate.Title || provider.input.BodyText != body {
 		t.Fatalf("enhanced assessor input = %#v", provider.input)
 	}
 	var assessments []discovery.DiscoveryArticleAssessment
@@ -56,7 +56,7 @@ func TestOpenAICompatibleArticleAssessorPersistsEnhancedVersionWithoutSourceInpu
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if candidate.CurrentAssessmentID == nil || *candidate.CurrentAssessmentID != assessments[1].ID || candidate.QualityScore != 0.91 || candidate.AssessmentState != discovery.DiscoveryAssessmentReady {
+	if candidate.CurrentAssessmentID == nil || *candidate.CurrentAssessmentID != assessments[1].ID || candidate.QualityScore != 0.70 || candidate.DepthScore != 0.65 || candidate.AssessmentState != discovery.DiscoveryAssessmentReady {
 		t.Fatalf("active enhanced assessment = %#v", candidate)
 	}
 	if err := db.Model(&candidate).Updates(map[string]interface{}{"enrichment_status": RecommendationEnrichmentStatusReady, "published_at": now}).Error; err != nil {
