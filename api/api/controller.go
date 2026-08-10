@@ -2,6 +2,7 @@ package api
 
 import (
 	"DataArk/archive"
+	"DataArk/assessmenteval"
 	"DataArk/assets"
 	"DataArk/auth"
 	"DataArk/backup"
@@ -111,6 +112,24 @@ var (
 	}
 	rollbackArticleAssessments = func(ctx context.Context, options discovery.ArticleAssessmentBatchOptions) (discovery.ArticleAssessmentBatchResult, error) {
 		return discovery.RollbackArticleAssessment(ctx, recommendation.ConfiguredArticleAssessor(), options)
+	}
+	getArticleAssessmentWorkflow = func() (assessmenteval.WorkflowSummary, error) {
+		return assessmenteval.LatestWorkflowSummary(database.DB(), time.Now())
+	}
+	createArticleAssessmentWorkflow = func(userID uint) (assessmenteval.WorkflowSummary, error) {
+		return assessmenteval.StartWorkflow(database.DB(), userID, time.Now())
+	}
+	getArticleAssessmentWorkflowItem = func(runID uint, pass, position int) (assessmenteval.WorkflowItemView, error) {
+		return assessmenteval.GetWorkflowItem(database.DB(), runID, pass, position)
+	}
+	saveArticleAssessmentWorkflowLabel = func(runID, userID uint, pass int, sampleID string, input assessmenteval.WorkflowLabelInput) (assessmenteval.WorkflowSummary, error) {
+		return assessmenteval.SaveWorkflowLabel(database.DB(), runID, userID, pass, sampleID, input, time.Now())
+	}
+	advanceArticleAssessmentWorkflow = func(runID uint) (assessmenteval.WorkflowSummary, error) {
+		return assessmenteval.AdvanceWorkflow(database.DB(), runID, time.Now())
+	}
+	evaluateArticleAssessmentWorkflow = func(runID uint) (assessmenteval.WorkflowSummary, error) {
+		return assessmenteval.StartEvaluation(database.DB(), runID, recommendation.ConfiguredOpenAICompatibleProvider(), time.Now())
 	}
 	startDiscoveryScheduler      = discovery.StartDiscoveryScheduler
 	startRecommendationScheduler = recommendation.StartRecommendationScheduler
@@ -697,6 +716,123 @@ func RollbackArticleAssessments(c *gin.Context) {
 		message = "article assessment 回滚预检完成"
 	}
 	c.JSON(status, gin.H{"Status": "1", "Message": message, "Data": result})
+}
+
+func GetArticleAssessmentWorkflow(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	summary, err := getArticleAssessmentWorkflow()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "加载人工标注工作流失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "人工标注工作流加载成功", "Data": summary})
+}
+
+func CreateArticleAssessmentWorkflow(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	summary, err := createArticleAssessmentWorkflow(userID)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"Status": "0", "Message": "创建人工标注样本失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"Status": "1", "Message": "已创建 120 篇人工标注样本", "Data": summary})
+}
+
+func GetArticleAssessmentWorkflowItem(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	runID, ok := parseUintParam(c, "runId")
+	if !ok {
+		return
+	}
+	passValue, passErr := strconv.Atoi(strings.TrimSpace(c.Param("pass")))
+	positionValue, positionErr := strconv.Atoi(strings.TrimSpace(c.Param("position")))
+	if passErr != nil || positionErr != nil || passValue < 1 || passValue > 3 || positionValue < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "标注轮次或文章位置无效"})
+		return
+	}
+	item, err := getArticleAssessmentWorkflowItem(runID, passValue, positionValue)
+	if err != nil {
+		status := http.StatusConflict
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"Status": "0", "Message": "加载盲标文章失败", "Error": err.Error()})
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "盲标文章加载成功", "Data": item})
+}
+
+func SaveArticleAssessmentWorkflowLabel(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	userID, authenticated := requireCurrentUserID(c)
+	if !authenticated {
+		return
+	}
+	runID, ok := parseUintParam(c, "runId")
+	if !ok {
+		return
+	}
+	passValue, err := strconv.Atoi(strings.TrimSpace(c.Param("pass")))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "标注轮次无效"})
+		return
+	}
+	var input assessmenteval.WorkflowLabelInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "请输入有效的人工评分", "Error": err.Error()})
+		return
+	}
+	summary, err := saveArticleAssessmentWorkflowLabel(runID, userID, passValue, c.Param("sampleId"), input)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"Status": "0", "Message": "保存人工评分失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "人工评分已保存", "Data": summary})
+}
+
+func AdvanceArticleAssessmentWorkflow(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	runID, ok := parseUintParam(c, "runId")
+	if !ok {
+		return
+	}
+	summary, err := advanceArticleAssessmentWorkflow(runID)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"Status": "0", "Message": "当前人工标注阶段无法完成", "Error": err.Error(), "Data": summary})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "人工标注工作流已进入下一阶段", "Data": summary})
+}
+
+func EvaluateArticleAssessmentWorkflow(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	runID, ok := parseUintParam(c, "runId")
+	if !ok {
+		return
+	}
+	summary, err := evaluateArticleAssessmentWorkflow(runID)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"Status": "0", "Message": "启动模型验收失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "模型双跑验收已在后台启动", "Data": summary})
 }
 
 func ListDiscoveryDomainBlacklist(c *gin.Context) {
@@ -1578,6 +1714,12 @@ func WebStarter(debugMode bool) {
 		protected.POST("/admin/discovery/crawl-queue/run", RunDiscoveryCrawlQueue)
 		protected.POST("/admin/discovery/article-assessments/backfill", BackfillArticleAssessments)
 		protected.POST("/admin/discovery/article-assessments/rollback", RollbackArticleAssessments)
+		protected.GET("/admin/recommendations/article-assessment-workflow", GetArticleAssessmentWorkflow)
+		protected.POST("/admin/recommendations/article-assessment-workflow/runs", CreateArticleAssessmentWorkflow)
+		protected.GET("/admin/recommendations/article-assessment-workflow/runs/:runId/items/:pass/:position", GetArticleAssessmentWorkflowItem)
+		protected.PUT("/admin/recommendations/article-assessment-workflow/runs/:runId/labels/:pass/:sampleId", SaveArticleAssessmentWorkflowLabel)
+		protected.POST("/admin/recommendations/article-assessment-workflow/runs/:runId/advance", AdvanceArticleAssessmentWorkflow)
+		protected.POST("/admin/recommendations/article-assessment-workflow/runs/:runId/evaluate", EvaluateArticleAssessmentWorkflow)
 		protected.GET("/admin/discovery/domain-blacklist", ListDiscoveryDomainBlacklist)
 		protected.POST("/admin/discovery/domain-blacklist", CreateDiscoveryDomainBlacklist)
 		protected.DELETE("/admin/discovery/domain-blacklist/:id", DeleteDiscoveryDomainBlacklist)

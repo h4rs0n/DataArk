@@ -152,6 +152,13 @@ func configuredOpenAICompatibleProvider() OpenAICompatibleProvider {
 	}
 }
 
+// ConfiguredOpenAICompatibleProvider returns the production assessment
+// provider without exposing its credentials through an HTTP response. It is
+// used by the owner-only, server-side article assessment evaluation workflow.
+func ConfiguredOpenAICompatibleProvider() OpenAICompatibleProvider {
+	return configuredOpenAICompatibleProvider()
+}
+
 func GetRecommendationSettings(userID uint) (*RecommendationSettings, error) {
 	if db == nil || userID == 0 {
 		settings := DefaultRecommendationSettings(userID)

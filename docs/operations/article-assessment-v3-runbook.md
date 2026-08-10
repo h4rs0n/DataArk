@@ -1,6 +1,6 @@
 # Article Assessment v3 Operations Runbook
 
-This runbook is the release gate for `article-value-v3`. The evaluator judges one article from its title and already-extracted plain body text. It never receives raw HTML, source or site identity, author reputation, popularity, publication date, graph position, or user feedback. The model receives at most an approximately 6,000-token evidence package; oversized bodies retain beginning, middle, and ending excerpts. Assessment and rerank calls disable supported model reasoning modes, cap completion at 1,024 tokens, and write per-attempt stage, response mode, evidence size, duration, and provider prompt/completion/reasoning/cache token counts to retained `llm_call` logs. Payload text is intentionally never logged.
+This runbook is the release gate for `article-value-v3`. Article assessment receives only the title and already-extracted plain body text. It never receives raw HTML, source or site identity, author reputation, popularity, publication date, graph position, or user feedback. The model receives at most an approximately 6,000-token evidence package; oversized bodies retain beginning, middle, and ending excerpts. Assessment and rerank calls disable supported model reasoning modes, cap completion at 1,024 tokens, and write per-attempt stage, response mode, evidence size, duration, and provider token counts to retained `llm_call` logs. Payload text is never logged.
 
 ## Rollout modes and configuration
 
@@ -15,72 +15,33 @@ ARTICLE_ASSESSMENT_CONCURRENCY=2
 
 The structured response has exactly three integer scores from 0 through 100 and exactly two short reasons: `qualityScore`, `depthScore`, `evergreenScore`, and `reasons`. The provider probes strict JSON Schema once per endpoint/model process and makes at most one compatible JSON-object retry. Authentication, rate-limit, and timeout failures are not format-retried.
 
-## Build the private human gold set
+## Use the recommendation-center human workflow
 
-The labels come from DataArk's current PostgreSQL inventory, specifically each representative candidate's immutable current `discovery_article_content_versions` row. They do not come from BlogClaw, public benchmarks, a site's reputation, or an LLM. Sampling is deterministic for a fixed seed, includes 80 Chinese/English core items across five body-length buckets plus 40 score/boundary/disagreement/overlong stress items, deduplicates content hashes, and permits at most two articles per host.
+Sign in as the owner and open **推荐中心 → 人工标注工作流**. The page and all corresponding APIs are owner-only. A new run selects the gold set from the current PostgreSQL inventory, specifically each representative candidate's immutable current `discovery_article_content_versions` row. Labels never come from BlogClaw, public benchmarks, site reputation, or an LLM.
 
-Build the tool, create a private directory outside the repository, and generate pass one:
+Click **创建标注批次** once. The server persists a frozen 120-item manifest in `article_assessment_workflow_runs` and `article_assessment_workflow_items`; it references immutable content-version rows rather than placing full article bodies in downloadable files. Sampling is deterministic for the stored seed, deduplicates content hashes, permits at most two articles per host, and contains 80 Chinese/English core articles across five body-length buckets plus 40 stress articles: eight each for low active score, quality boundary, saturated high score, model/rule disagreement, and overlong body.
 
-```sh
-cd api
-go build -o /tmp/article-assessment-eval ./cmd/article-assessment-eval
+The browser requests one current article at a time. Its response contains title, clean body text, language, character count, anonymous sample ID, and the current human label only. It does not contain host, source, stratum, baseline score, rule score, or model score. Responses use `Cache-Control: no-store`.
 
-DATAARK_ASSESSMENT_DSN='host=<host> port=5432 dbname=<db> user=<user> password=<password> sslmode=disable' \
-  /tmp/article-assessment-eval sample \
-  --seed article-value-v3-gold-v1 \
-  --out-dir /tmp/dataark-article-assessment-gold
-```
+For each article, enter integer quality, depth, and evergreen scores from 0 through 100, a concise reason, and a genre. Mark an article `extractionBad` when clean-text extraction is materially broken; mark it `unjudgeable` when no defensible scores can be assigned. The rubric bands are 0–19 no meaningful value, 20–39 weak, 40–59 ordinary, 60–74 good, 75–89 excellent, and 90–100 rare and exceptional. Judge intrinsic article content only.
 
-Open `pass1.html` locally with network access disabled and label all 120 articles. The self-contained page stores progress in browser local storage and exports a JSON file without article bodies. Keep `manifest.json`, HTML, exported labels, scores, logs, and reports private and outside Git; the manifest and HTML contain article text.
+The first pass contains all 120 articles. Every save is durable in PostgreSQL, so closing the browser does not lose progress. When progress reaches 120/120, click **完成第一轮**. This freezes pass one and records the start of the blind interval.
 
-At least 72 hours after pass one was completed, create the blind 30-item repeat page. The command rejects an early attempt, and the page contains neither prior labels nor baseline/model scores:
+The second-pass button remains disabled until at least 72 hours after pass-one completion. When the countdown reaches zero, click **开始第二轮**. The server fixes a blind 30-item subset containing 20 core and 10 stress articles in a new deterministic order. The page does not expose pass-one answers. Complete and freeze all 30.
 
-```sh
-/tmp/article-assessment-eval pass2 \
-  --manifest /tmp/dataark-article-assessment-gold/manifest.json \
-  --pass1-labels /private/path/article-assessment-pass-1.json
-```
+After pass two, the server identifies any repeated item whose score crosses a rubric band or differs by more than 15 points on any axis. Those articles enter **冲突复核**. Complete the final scores for every conflict. If there are no conflicts, the workflow moves directly to `human_complete`.
 
-After pass two, create an adjudication page when repeat scores cross a rubric band or differ by more than 15 points:
+## Run model evaluation and inspect the gate
 
-```sh
-/tmp/article-assessment-eval adjudicate \
-  --manifest /tmp/dataark-article-assessment-gold/manifest.json \
-  --pass1-labels /private/path/article-assessment-pass-1.json \
-  --pass2-labels /private/path/article-assessment-pass-2.json
-```
+After human gold is complete, click **运行模型双跑验收**. The server uses the configured production OpenAI-compatible endpoint and model, with concurrency two, and scores every article twice. The request returns immediately while 240 score results and every payload-safe call event are persisted in workflow tables. The page polls progress; a server restart marks an interrupted evaluation retryable instead of silently treating it as complete.
 
-## Score and evaluate
+Failed model outputs are retained as failed score records. After all work finishes, the server builds and persists the fixed gate report. The recommendation-center page displays aggregate metrics and every activation check. Do not activate unless `activationReady` is true. Gates cover human repeat rank, error, and score-band agreement; model rank, error, head/tail recognition, baseline improvement, eligibility behavior, and repeat stability; at least 98% valid output; zero provider-reported reasoning tokens; prompt-token p95 no more than 7,500; and no prompt above 8,500 tokens.
 
-Run two model passes with the production endpoint/model. Credentials are environment-only; the default concurrency is two. The command writes a private score file and a structured per-attempt token log:
-
-```sh
-LLM_BASE_URL='<openai-compatible-base-url>' \
-LLM_API_KEY='<secret>' \
-LLM_CHAT_MODEL='<model>' \
-LLM_TIMEOUT='300s' \
-  /tmp/article-assessment-eval score \
-  --manifest /tmp/dataark-article-assessment-gold/manifest.json \
-  --repeat 2 \
-  --concurrency 2
-```
-
-Generate the gate report, adding `--adjudication <exported-json>` when conflicts were adjudicated:
-
-```sh
-/tmp/article-assessment-eval report \
-  --manifest /tmp/dataark-article-assessment-gold/manifest.json \
-  --pass1-labels /private/path/article-assessment-pass-1.json \
-  --pass2-labels /private/path/article-assessment-pass-2.json \
-  --scores /tmp/dataark-article-assessment-gold/scores.json \
-  --llm-log /tmp/dataark-article-assessment-gold/llm-calls.log
-```
-
-Do not activate unless `activationReady` is true. The fixed gates cover human repeat consistency; quality/depth/evergreen rank and error; top/bottom quintiles; improvement over the stored active baseline; the 20-point eligibility gate; model repeat stability; at least 98% valid output; zero provider-reported reasoning tokens; prompt-token p95 no more than 7,500; and no prompt above 8,500 tokens.
+The old `api/cmd/article-assessment-eval` executable, self-contained HTML generator, browser-local storage, downloadable manifests, and local JSON/log/report files have been removed. The database workflow is now the only supported human-label and evaluation path.
 
 ## Activate, backfill, and recover
 
-After the report passes, deploy `ARTICLE_ASSESSMENT_MODE=active` and observe new articles for 48 hours. Confirm `llm_call` reasoning tokens remain zero, output validity and latency are stable, and eligibility/ranking distributions are not saturated. Then use the owner-only endpoints. Always preview first:
+After the page reports `activationReady=true`, deploy `ARTICLE_ASSESSMENT_MODE=active` and observe new articles for 48 hours. Confirm `llm_call` reasoning tokens remain zero, output validity and latency are stable, and eligibility/ranking distributions are not saturated. Then use the owner-only endpoints, always previewing first:
 
 ```text
 POST /api/admin/discovery/article-assessments/backfill
@@ -92,7 +53,7 @@ POST /api/admin/discovery/article-assessments/backfill
 
 The hard maximum is 250. A stored observe-mode v3 row is activated without another model call. Otherwise the candidate is marked assessment-pending and the existing idempotent process-candidate queue is used. The old current pointer remains valid until success. Queue insertion failure leaves durable pending state for startup recovery. A v3 failure is skipped by later ordinary batches; set `retryFailures:true` only after its cause is corrected.
 
-Rollback never deletes assessments or edits published recommendation snapshots. Preview and then reactivate the latest prior same-content assessment (or the v3 deterministic row) with:
+Rollback never deletes assessments or edits published recommendation snapshots. Preview and then reactivate the latest prior same-content assessment, or the v3 deterministic row, with:
 
 ```text
 POST /api/admin/discovery/article-assessments/rollback
@@ -102,4 +63,4 @@ POST /api/admin/discovery/article-assessments/rollback
 {"limit":250,"dryRun":false}
 ```
 
-If model quality degrades during rollout, first return the service to observe mode so new model rows cannot become active, then run bounded rollback batches. Preserve all rows and logs for diagnosis.
+If model quality degrades during rollout, first return the service to observe mode so new model rows cannot become active, then run bounded rollback batches. Preserve assessment rows, workflow rows, and logs for diagnosis.

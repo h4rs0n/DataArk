@@ -34,6 +34,10 @@ type OpenAICompatibleProvider struct {
 	EmbeddingModel string
 	Timeout        time.Duration
 	HTTPClient     HTTPDoer
+	// CallObserver receives the same payload-safe event written to the normal
+	// application log. Evaluation workflows use it to persist aggregate token
+	// and latency evidence without copying prompts or model output.
+	CallObserver func(observability.Event)
 }
 
 type chatJSONOptions struct {
@@ -376,6 +380,9 @@ func (provider OpenAICompatibleProvider) logChatCall(options chatJSONOptions, mo
 		event.ErrorType = classifyLLMCallError(callErr)
 	}
 	observability.Log(event)
+	if provider.CallObserver != nil {
+		provider.CallObserver(event)
+	}
 }
 
 const llmCallEventName = "llm_call"

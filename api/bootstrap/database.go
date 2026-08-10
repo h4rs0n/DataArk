@@ -2,12 +2,14 @@ package bootstrap
 
 import (
 	"DataArk/archive"
+	"DataArk/assessmenteval"
 	"DataArk/auth"
 	"DataArk/database"
 	"DataArk/discovery"
 	"DataArk/recommendation"
 	"fmt"
 	"log"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -34,6 +36,9 @@ func InitDB() {
 	if err := migrateV3Compatibility(database.DB()); err != nil {
 		log.Fatal("failed to migrate v3 compatibility data", err)
 	}
+	if err := assessmenteval.RecoverInterruptedEvaluations(database.DB(), time.Now()); err != nil {
+		log.Fatal("failed to recover article assessment evaluation workflow", err)
+	}
 	auth.CreateDefaultAdmin()
 }
 
@@ -43,6 +48,7 @@ func migrateV3Compatibility(database *gorm.DB) error {
 	}
 	if database.Dialector.Name() != "postgres" {
 		models := append(discovery.V3Models(), recommendation.V3Models()...)
+		models = append(models, assessmenteval.WorkflowModels()...)
 		if err := database.AutoMigrate(models...); err != nil {
 			return fmt.Errorf("auto-migrate v3 models: %w", err)
 		}

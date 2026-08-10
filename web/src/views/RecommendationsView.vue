@@ -333,6 +333,10 @@
           </section>
         </a-tab-pane>
 
+        <a-tab-pane v-if="isOwner" key="assessment-workflow" title="人工标注工作流">
+          <ArticleAssessmentWorkflow :active="activeTab === 'assessment-workflow'" />
+        </a-tab-pane>
+
         <a-tab-pane key="settings" title="推荐设置">
           <section class="panel settings-grid">
             <form class="settings-form" @submit.prevent="saveSettings">
@@ -484,6 +488,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message, Notification } from '@arco-design/web-vue'
 import DigestSummary from '@/components/recommendations/DigestSummary.vue'
+import ArticleAssessmentWorkflow from '@/components/recommendations/ArticleAssessmentWorkflow.vue'
 import RecommendationArticleCard from '@/components/recommendations/RecommendationArticleCard.vue'
 import SiteInsightPanel from '@/components/recommendations/SiteInsightPanel.vue'
 import { groupCrawlQueueTasks } from '@/utils/crawlQueueGrouping.mjs'

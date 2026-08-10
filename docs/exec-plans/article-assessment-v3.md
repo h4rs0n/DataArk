@@ -6,7 +6,7 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 DataArk recommends individual articles, but its current semantic assessor asks a model for only vague quality and depth scores, copies those values into dimensions the model never judged, sends unbounded extracted text, and activates scores that cluster near 1.0. After this change, every article is judged independently using a bounded title-and-clean-text evidence package, an anchored three-score rubric, deterministic evidence caps, and a compatible structured-output protocol. Operators can evaluate the new policy against a blind human-labelled sample before activating it, then re-assess old inventory in recoverable batches without replacing a working score on failure.
 
-The behavior is observable in four ways. Unit tests show that raw HTML and source identity never reach the model, oversized text is sampled from its beginning, middle, and end, and only quality, depth, evergreen value, and two reasons are accepted. Structured `llm_call` logs show the evidence budget and response mode for every provider attempt. The offline evaluation command creates a deterministic local HTML labelling artifact and reports human consistency and model ranking metrics. Owner-only backfill and rollback endpoints change active assessments in batches of at most 250 while preserving immutable assessment rows and published recommendation snapshots.
+The behavior is observable in four ways. Unit tests show that raw HTML and source identity never reach the model, oversized text is sampled from its beginning, middle, and end, and only quality, depth, evergreen value, and two reasons are accepted. Structured `llm_call` logs show the evidence budget and response mode for every provider attempt. The owner-only recommendation-center workflow persists a deterministic two-pass blind sample, adjudication, model repeats, and activation metrics without downloadable article artifacts. Owner-only backfill and rollback endpoints change active assessments in batches of at most 250 while preserving immutable assessment rows and published recommendation snapshots.
 
 ## Progress
 
@@ -19,6 +19,9 @@ The behavior is observable in four ways. Unit tests show that raw HTML and sourc
 - [x] (2026-08-10 13:18+08:00) Added deterministic database sampling, private offline labelling/adjudication HTML, two-run scoring, and evaluation reporting.
 - [x] (2026-08-10 13:20+08:00) Updated flags, Compose defaults, README guidance, and the dedicated operations runbook.
 - [x] (2026-08-10 13:24+08:00) Passed focused tests, the full backend suite, critical race tests, Go vet, Compose configuration validation, and whitespace review.
+- [x] (2026-08-10 14:25+08:00) Replaced the offline HTML/JSON labelling path with an owner-only database workflow and a dedicated recommendation-center tab.
+- [x] (2026-08-10 14:35+08:00) Added durable pass progress, the enforced 72-hour transition, blind 30-item repeat selection, conflict adjudication, background two-run model scoring, safe usage persistence, and the activation report.
+- [x] (2026-08-10 16:17+08:00) Validated the online workflow with focused and full backend tests, race detection, Go vet, frontend tests/type-check/build, Compose image build, production migration 23, live authorization response, and embedded-tab inspection.
 
 ## Surprises & Discoveries
 
@@ -36,6 +39,10 @@ The behavior is observable in four ways. Unit tests show that raw HTML and sourc
   Evidence: the local schema-violation matrix now rejects missing, fractional, out-of-range, extra, overlong, and incorrectly counted fields independently of provider schema enforcement.
 - Observation: `CandidateID` contains the substring `date`, so source-boundary reflection tests must use semantic forbidden names rather than an unqualified `date` substring.
   Evidence: the first full test run caught the false positive; the final full run passed after retaining explicit `publication` and `published` exclusions.
+- Observation: a downloadable self-contained HTML page necessarily contains all selected article bodies and browser-local state, even when it has no network dependencies.
+  Evidence: the original `api/assessmenteval/html.go` embedded the entire blind page payload as base64 and relied on `localStorage`; the replacement API returns one blind item at a time with `Cache-Control: no-store`.
+- Observation: Compose had built the new image while retaining the two-hour-old API container on the first ordinary `up -d`; comparing image IDs exposed the stale process.
+  Evidence: the built image was `sha256:243bf…` while the container still referenced `sha256:5cca…`; `up -d --force-recreate dataarkapi` loaded the new binary, and startup logged successful migration to version 23.
 
 ## Decision Log
 
@@ -60,6 +67,9 @@ The behavior is observable in four ways. Unit tests show that raw HTML and sourc
 - Decision: Default production rollout to observe mode and re-assess old inventory in manually triggered batches of at most 250.
   Rationale: Existing scores remain available while the new scale is measured, provider quota and RPM stay bounded, and each activation remains reversible.
   Date/Author: 2026-08-10 / user and Codex.
+- Decision: Supersede private offline HTML and CLI artifacts with an owner-only workflow inside the recommendation center.
+  Rationale: The operator asked to make human labelling part of the product and remove offline processing. Server-side rows survive browser closure and restarts, enforce the 72-hour boundary centrally, keep hidden baseline/source fields out of blind HTTP responses, and let the configured production model generate the gate report without copying credentials or full article manifests to local files.
+  Date/Author: 2026-08-10 / user and Codex.
 
 ## Outcomes & Retrospective
 
@@ -67,7 +77,7 @@ Article assessment now receives only candidate identity, title, and clean body t
 
 Discovery persists only quality, depth, evergreen value, confidence, and reasons for v3 rows. It no longer copies quality into legacy dimensions or treats confidence as an eligibility gate. Observe mode is the default, failures retain a usable prior pointer, and new degraded articles use a conservative deterministic row. Owner-only backfill and rollback endpoints are bounded at 250 and covered for dry run, direct observe-row activation, idempotence, partial queue failure recovery, and pointer preservation.
 
-`api/cmd/article-assessment-eval` now selects the human sample from immutable current database content versions, generates private self-contained HTML for the two blind passes and adjudication, scores twice with concurrency two, and reports human consistency, model/baseline ranking, error, head/tail, gate, repeat, token, and protocol metrics. No real article or label artifact was generated or committed during implementation. The service deliberately remains in observe mode until one human completes the two passes at least 72 hours apart and the resulting report says `activationReady:true`.
+The original `api/cmd/article-assessment-eval`, self-contained HTML generator, browser-local persistence, and filesystem JSON/log readers have now been removed. `api/assessmenteval/workflow.go` persists the frozen sample, labels, repeat subset, conflicts, model scores, safe call metrics, and final report in PostgreSQL. `web/src/components/recommendations/ArticleAssessmentWorkflow.vue` exposes the workflow only to owners under the recommendation center and fetches one blind article at a time. The live Compose database migrated additively from 22 to 23 and the replacement container serves the new tab while rejecting unauthenticated workflow requests with 401. The service deliberately remains in observe mode until one human completes the two passes at least 72 hours apart and the resulting report says `activationReady:true`.
 
 Validation passed with `go test ./... -count=1`; `go test -race ./articlevalue ./assessmenteval ./discovery ./recommendation ./observability ./api ./jobqueue -count=1`; `go vet ./...`; `docker compose -f docker/docker-compose.yml config --quiet`; and `git diff --check`.
 
@@ -89,7 +99,9 @@ Third, simplify the discovery assessment result and deterministic assessor aroun
 
 Fourth, add observe and active modes plus a two-call assessment concurrency guard. In observe mode, persist valid v3 model rows but retain the current pointer. In active mode, atomically activate a valid v3 row. Add owner-only dry-run-capable backfill and rollback endpoints. Backfill first activates an already persisted matching v3 row, otherwise marks candidates pending and reuses the existing idempotent process-candidate queue. A queue insertion failure is recoverable because pending state is durable. Rollback selects the most recent non-v3 valid row for the same content version, falling back to the v3 deterministic row, and never edits published recommendation items.
 
-Fifth, create `api/cmd/article-assessment-eval`. Its sample command reads immutable representative content versions, applies fixed hash ordering and a maximum of two articles per host, and writes a private self-contained pass-one HTML file plus a manifest. The core 80-item language/length quotas are Chinese 11/18/14/4/2 and English 5/10/11/4/1 across the five agreed character buckets. The remaining 40 items are eight each from low active score, 0.45–0.55 boundary, 0.95-or-higher score, model/rule disagreement, and 20,000-or-more-character bodies. The pass-two command refuses to create its blind 30-item page until 72 hours after pass one. The report command identifies cross-band or greater-than-15-point conflicts, accepts adjudication output, computes rank, error, head/tail, gate, saturation, protocol, stability, duration, and token metrics, and compares v3 against the stored active baseline. Generated HTML uses no network resources, escapes embedded JSON safely, stores progress in browser local storage, and exports labels without body text.
+Fifth, build deterministic sample and report primitives in `api/assessmenteval`. Sampling reads immutable representative content versions, applies fixed hash ordering and a maximum of two articles per host. The core 80-item language/length quotas are Chinese 11/18/14/4/2 and English 5/10/11/4/1 across the five agreed character buckets. The remaining 40 items are eight each from low active score, 0.45–0.55 boundary, 0.95-or-higher score, model/rule disagreement, and 20,000-or-more-character bodies. Report logic identifies cross-band or greater-than-15-point conflicts and computes rank, error, head/tail, gate, saturation, protocol, stability, duration, and token metrics against the stored active baseline.
+
+Sixth, replace the initial offline adapter with `api/assessmenteval/workflow.go`, migration `000023_article_assessment_workflow.sql`, owner-only controller endpoints, and `web/src/components/recommendations/ArticleAssessmentWorkflow.vue`. A workflow row freezes one sample; item rows retain only hidden sample metadata and immutable content-version references; label rows enforce editable phases; score and call rows retain repeat output and payload-safe usage. The item API serves only title, body, language, character count, sample ID, and the current label. The service centrally freezes pass one, enforces 72 hours, selects the blind repeat, derives conflicts, launches two-concurrency model scoring, and persists the report. Remove `api/cmd/article-assessment-eval`, `api/assessmenteval/html.go`, and filesystem artifact helpers after their behavior is covered by database workflow tests.
 
 Finally, document the new flags and rollout commands, add comprehensive tests, exercise the real gold workflow only with user-provided local credentials and artifacts, and switch from observe to active only when all fixed gates pass. Run 48 hours on new articles before manually starting each 250-item backfill batch.
 
@@ -109,7 +121,7 @@ Validate configuration and patch hygiene from the repository root:
     git diff --check
     git status --short
 
-The evaluation command syntax will be documented in its `--help` output and the operations runbook. All generated manifests, HTML, labels, scores, and reports default to a newly created directory under `/tmp` and must remain outside Git.
+The recommendation-center page is the supported evaluation entry point. No manifest, article HTML, label, score, or report file is generated under `/tmp`; all workflow state is durable in the application database and remains protected by the existing owner authorization boundary.
 
 ## Validation and Acceptance
 
@@ -119,24 +131,28 @@ Compatibility tests must prove that a supported provider receives one schema req
 
 Assessment tests must prove the four evidence cap bands, the 0.20 eligibility floor, conservative degraded fallback, preservation of an old active row on model failure, observe versus active behavior, source-independent equality, immutable content-version history, idempotent backfill, partial queue failure recovery, and rollback.
 
-The human labels are acceptable when quality repeat Spearman is at least 0.85, depth and evergreen repeat Spearman are at least 0.75, per-axis repeat MAE is no more than 10, and score-band agreement is at least 80 percent. Model activation requires core quality Spearman at least 0.70, Kendall at least 0.50, quality MAE no more than 12, depth and evergreen Spearman at least 0.60, top- and bottom-quintile hit rates at least 70 percent, quality Spearman at least 0.10 above the stored active baseline, at least 95 percent eligible recall for human quality at least 40, at least 70 percent rejection for human quality below 20, and repeat-model MAE no more than 5 with at least 90 percent band agreement. Valid output rate after compatibility fallback must be at least 98 percent, reasoning tokens must remain zero, prompt-token p95 must not exceed 7,500, and no prompt may exceed 8,500 tokens.
+The online workflow must additionally prove that only owners can create/read/mutate a run, an item response contains no host/stratum/baseline/model fields, progress survives a new request, pass two cannot start before 72 hours, exactly 30 repeat items are selected, conflicts require adjudication, and a server restart changes `evaluating` to retryable `evaluation_failed`. The human labels are acceptable when quality repeat Spearman is at least 0.85, depth and evergreen repeat Spearman are at least 0.75, per-axis repeat MAE is no more than 10, and score-band agreement is at least 80 percent. Model activation requires core quality Spearman at least 0.70, Kendall at least 0.50, quality MAE no more than 12, depth and evergreen Spearman at least 0.60, top- and bottom-quintile hit rates at least 70 percent, quality Spearman at least 0.10 above the stored active baseline, at least 95 percent eligible recall for human quality at least 40, at least 70 percent rejection for human quality below 20, and repeat-model MAE no more than 5 with at least 90 percent band agreement. Valid output rate after compatibility fallback must be at least 98 percent, reasoning tokens must remain zero, prompt-token p95 must not exceed 7,500, and no prompt may exceed 8,500 tokens.
 
 ## Idempotence and Recovery
 
-Assessment rows remain immutable and uniquely versioned. Re-running sampling with the same seed and unchanged content versions produces the same manifest. Re-running a score or report command replaces only explicitly named local artifacts. Pass-two generation derives its subset from manifest hashes and is repeatable after the 72-hour boundary.
+Assessment rows remain immutable and uniquely versioned. Each workflow freezes its stored seed, content-version references, baseline scores, and order. Repeating a transition is rejected after the phase is frozen; retrying a failed model evaluation increments an evaluation generation and retains prior score/call audit rows. Pass-two generation derives its subset from manifest hashes and is repeatable after the 72-hour boundary.
 
 Observe mode and dry-run endpoints do not change active pointers. Backfill never clears a working pointer before success. If enqueueing stops halfway, pending candidates are found by existing recovery. Repeating a batch skips the configured model and policy rows already present. Rollback changes only the current pointer and candidate score projection; it does not delete v3 assessments or mutate recommendation history.
 
 ## Artifacts and Notes
 
-Do not place real article text, gold labels, model answers, credentials, or generated reports in this repository. Record only aggregate metrics and redacted command transcripts in this plan. Preserve the user's unrelated modifications to `go.work.sum`, `makefile`, `web/public/favicon.ico`, `.codex`, and `passwd.txt`.
+Do not place real article text, gold labels, model answers, credentials, or generated reports in this repository. They now remain in the application database behind owner-only APIs. Record only aggregate metrics and redacted command transcripts in this plan. Preserve the user's unrelated modifications to `go.work.sum`, `makefile`, `web/public/favicon.ico`, `.codex`, and `passwd.txt`.
 
 ## Interfaces and Dependencies
 
 The provider response adds `evergreenScore` and removes no externally served HTTP response field. Historical assessment JSON remains backward compatible because the GORM model keeps legacy columns. New candidate assessment state `degraded` is additive.
 
-The server gains `-article-assessment-mode` with values `observe` and `active`, and `-article-assessment-concurrency` with default 2. Docker configuration exposes matching environment values. No new third-party runtime dependency is required; synchronization, hashing, statistics, HTML generation, and local persistence use the Go standard library and existing GORM/PostgreSQL dependencies.
+The server gains `-article-assessment-mode` with values `observe` and `active`, and `-article-assessment-concurrency` with default 2. Docker configuration exposes matching environment values. Migration 23 adds workflow run, item, label, score, and safe call-audit tables. Owner-only endpoints under `/api/admin/recommendations/article-assessment-workflow` expose summary, run creation, one blind item, label upsert, phase advancement, and evaluation start. No new third-party runtime dependency is required; synchronization, hashing, statistics, persistence, and UI use existing Go, GORM/PostgreSQL, Vue, and Arco dependencies.
 
 Revision note (2026-08-10): Initial self-contained plan created after the product and rollout decisions were finalized with the user.
 
 Revision note (2026-08-10): Recorded the completed implementation, final validation evidence, and the intentional human-label/activation handoff.
+
+Revision note (2026-08-10): Replaced the original private offline artifact handoff with the user-requested recommendation-center workflow, documented its durable schema/API/security boundary, and recorded removal of the CLI/HTML/filesystem adapter.
+
+Revision note (2026-08-10): Recorded final online-workflow validation, the successful production-shaped migration to version 23, and the Compose stale-container discovery/recovery.

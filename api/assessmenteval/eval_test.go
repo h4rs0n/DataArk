@@ -88,22 +88,18 @@ func TestBuildManifestUsesFixedQuotasStressStrataAndHostCap(t *testing.T) {
 	}
 }
 
-func TestBlindSecondPassRequiresSeventyTwoHoursAndContainsThirtyItems(t *testing.T) {
-	completed := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	manifest, err := BuildManifest(syntheticCandidateRecords(), "fixture-seed", completed)
+func TestBlindSecondPassSelectionContainsThirtyHiddenItems(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	manifest, err := BuildManifest(syntheticCandidateRecords(), "fixture-seed", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	passOne := LabelSet{Version: LabelVersion, ManifestDigest: manifest.Digest, Pass: 1, CompletedAt: completed}
-	if _, _, err := BuildPassTwoHTML(manifest, passOne, completed.Add(BlindPassDelay-time.Minute)); err == nil {
-		t.Fatal("pass two was created before the blind interval elapsed")
-	}
-	payload, ids, err := BuildPassTwoHTML(manifest, passOne, completed.Add(BlindPassDelay))
+	ids, err := SelectPassTwoSampleIDs(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ids) != 30 || !strings.Contains(string(payload), "DataArk Article Assessment Blind Labelling") || strings.Contains(string(payload), manifest.Items[0].Host) {
-		t.Fatalf("pass-two ids=%d private page structure invalid", len(ids))
+	if len(ids) != 30 {
+		t.Fatalf("pass-two ids=%d", len(ids))
 	}
 }
 
@@ -125,7 +121,7 @@ func TestBuildReportComputesPerfectControlledEvaluation(t *testing.T) {
 	for index, item := range manifest.Items {
 		passOne.Labels = append(passOne.Labels, Label{SampleID: item.SampleID, Scores: fixtureScores(index), Reason: "fixture", Genre: "analysis"})
 	}
-	_, repeatedIDs, err := BuildPassTwoHTML(manifest, passOne, now)
+	repeatedIDs, err := SelectPassTwoSampleIDs(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
