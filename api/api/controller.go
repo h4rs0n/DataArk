@@ -158,8 +158,7 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 	}
 	handlers := jobqueue.Handlers{
 		FetchSource: func(ctx context.Context, sourceID uint) error {
-			_, err := discovery.FetchDiscoverySourceByID(ctx, sourceID)
-			return ignoreBlacklisted(err)
+			return ignoreBlacklisted(discovery.RunFetchDiscoverySourceJob(ctx, sourceID))
 		},
 		ScanBlogroll: func(ctx context.Context, siteID uint) error {
 			return ignoreBlacklisted(discovery.RunScanBlogrollJob(ctx, siteID))

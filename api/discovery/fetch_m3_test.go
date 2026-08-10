@@ -208,6 +208,52 @@ func TestFailureBackoffRecoversAndLowHitSchedulesRemainFinite(t *testing.T) {
 	}
 }
 
+func TestFetchSourceJobSkipsDisabledAndFutureSources(t *testing.T) {
+	setupSQLiteDB(t)
+	clock := &advancingClock{now: time.Date(2026, 8, 11, 3, 0, 0, 0, time.UTC)}
+	oldClock := discoveryClock
+	oldFetcher := fetchDiscoveryRequest
+	discoveryClock = clock
+	var calls int
+	fetchDiscoveryRequest = func(_ context.Context, _ FetchRequest) (FetchResult, error) {
+		calls++
+		return FetchResult{StatusCode: http.StatusOK, Body: []byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`)}, nil
+	}
+	t.Cleanup(func() {
+		discoveryClock = oldClock
+		fetchDiscoveryRequest = oldFetcher
+	})
+
+	future := clock.Now().Add(time.Hour)
+	past := clock.Now().Add(-time.Minute)
+	pausedSite := DiscoverySite{RootURL: "https://paused.example/", HostKey: "paused.example", Status: DiscoverySiteStatusPaused, DiscoveryMethod: DiscoveryMethodManualSeed, CrawlAllowed: true, FirstDiscoveredAt: clock.Now()}
+	if err := db.Create(&pausedSite).Error; err != nil {
+		t.Fatal(err)
+	}
+	disabled := DiscoverySource{Name: "Disabled", URL: "https://disabled.example/feed.xml", Type: DiscoverySourceTypeFeed, EndpointType: DiscoveryEndpointFeed, Enabled: false, NextDueAt: &past}
+	scheduled := DiscoverySource{Name: "Future", URL: "https://future.example/feed.xml", Type: DiscoverySourceTypeFeed, EndpointType: DiscoveryEndpointFeed, Enabled: true, NextDueAt: &future}
+	legacyScheduled := DiscoverySource{Name: "Legacy Future", URL: "https://legacy-future.example/feed.xml", Type: DiscoverySourceTypeFeed, EndpointType: DiscoveryEndpointFeed, Enabled: true, NextFetchAt: &future}
+	paused := DiscoverySource{Name: "Paused", URL: "https://paused.example/feed.xml", Type: DiscoverySourceTypeFeed, SiteID: &pausedSite.ID, EndpointType: DiscoveryEndpointFeed, Enabled: true, NextDueAt: &past}
+	due := DiscoverySource{Name: "Due", URL: "https://due.example/feed.xml", Type: DiscoverySourceTypeFeed, EndpointType: DiscoveryEndpointFeed, Enabled: true, NextDueAt: &past}
+	for _, source := range []*DiscoverySource{&disabled, &scheduled, &legacyScheduled, &paused, &due} {
+		if err := db.Create(source).Error; err != nil {
+			t.Fatal(err)
+		}
+		if source == &disabled {
+			// GORM applies the schema's default:true when a false bool is inserted.
+			if err := db.Model(source).UpdateColumn("enabled", false).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := RunFetchDiscoverySourceJob(context.Background(), source.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("network fetches = %d, want only the due source", calls)
+	}
+}
+
 func TestHostLimiterEnforcesConcurrencyAndMinimumInterval(t *testing.T) {
 	clock := &advancingClock{now: time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)}
 	var mu sync.Mutex

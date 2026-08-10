@@ -29,6 +29,14 @@ next_due_at <= ? OR
 		return err
 	}
 	for _, source := range sources {
+		deferred, reconcileErr := reconcileSourceFailureCooldown(&source, now)
+		if reconcileErr != nil {
+			recoveryErrors = append(recoveryErrors, reconcileErr)
+			continue
+		}
+		if deferred {
+			continue
+		}
 		if domainBlacklistMatchesURL(blacklist, source.URL) {
 			continue
 		}
@@ -86,4 +94,33 @@ next_due_at <= ? OR
 		}
 	}
 	return errors.Join(recoveryErrors...)
+}
+
+func reconcileSourceFailureCooldown(source *DiscoverySource, now time.Time) (bool, error) {
+	if db == nil || source == nil || source.ID == 0 || source.FailureCount <= 0 || source.LastAttemptAt == nil {
+		return false, nil
+	}
+	category := persistedSourceFailureCategory(*source)
+	delay := ConfiguredSourceSchedulePolicy(discoveryClock).FailureDelay(source.ID, source.FailureCount, category)
+	notBefore := source.LastAttemptAt.Add(delay)
+	updates := map[string]interface{}{}
+	if source.NextDueAt == nil || source.NextDueAt.Before(notBefore) {
+		updates["next_due_at"] = &notBefore
+		updates["next_fetch_at"] = &notBefore
+		updates["backoff_until"] = &notBefore
+		source.NextDueAt = &notBefore
+		source.NextFetchAt = &notBefore
+		source.BackoffUntil = &notBefore
+	}
+	if category != "" && category != source.BackoffReason {
+		updates["backoff_reason"] = category
+		source.BackoffReason = category
+	}
+	if len(updates) > 0 {
+		updates["updated_at"] = now
+		if err := db.Model(source).Updates(updates).Error; err != nil {
+			return false, err
+		}
+	}
+	return notBefore.After(now), nil
 }

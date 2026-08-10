@@ -114,6 +114,44 @@ func TestRecoverDueSourcesUsesSubscriptionTierOrder(t *testing.T) {
 	}
 }
 
+func TestRecoverDueSourcesReconcilesLegacyFailureCooldown(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 8, 11, 3, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Minute)
+	recentAttempt := now.Add(-2 * time.Hour)
+	oldAttempt := now.Add(-2 * 24 * time.Hour)
+	structural := DiscoverySource{
+		Name: "Structural", URL: "https://structural.example/feed.xml", Type: DiscoverySourceTypeFeed,
+		EndpointType: DiscoveryEndpointFeed, Enabled: true, FailureCount: 1, LastAttemptAt: &recentAttempt,
+		NextDueAt: &past, NextFetchAt: &past, BackoffUntil: &past, BackoffReason: "content_type",
+	}
+	timeout := DiscoverySource{
+		Name: "Timeout", URL: "https://timeout.example/feed.xml", Type: DiscoverySourceTypeFeed,
+		EndpointType: DiscoveryEndpointFeed, Enabled: true, FailureCount: 1, LastAttemptAt: &oldAttempt,
+		NextDueAt: &past, NextFetchAt: &past, BackoffUntil: &past, BackoffReason: "timeout",
+	}
+	if err := db.Create(&structural).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&timeout).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	queue := &recoveryRecordingQueue{}
+	if err := RecoverDueJobs(context.Background(), queue, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.fetches) != 1 || queue.fetches[0] != timeout.ID {
+		t.Fatalf("recovered fetches = %#v, want only timeout source %d", queue.fetches, timeout.ID)
+	}
+	if err := db.First(&structural, structural.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if structural.NextDueAt == nil || !structural.NextDueAt.After(now) || structural.BackoffUntil == nil || !structural.BackoffUntil.Equal(*structural.NextDueAt) {
+		t.Fatalf("reconciled structural source = %#v", structural)
+	}
+}
+
 func TestRecoverySkipsSitemapWithoutExplicitOwnerRequest(t *testing.T) {
 	setupSQLiteDB(t)
 	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)

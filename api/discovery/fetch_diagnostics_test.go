@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -109,5 +110,88 @@ func TestResponseValidationDiagnosticsIncludeStatus(t *testing.T) {
 				t.Fatalf("details = %#v", details)
 			}
 		})
+	}
+}
+
+func TestFeedResponseCompatibilityRemainsBounded(t *testing.T) {
+	rdfBody := []byte(`<?xml version="1.0"?><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><channel rdf:about="https://example.com/feed"><title>RDF</title><link>https://example.com/</link><description>RDF</description></channel><item rdf:about="https://example.com/post"><title>Post</title><link>https://example.com/post</link></item></rdf:RDF>`)
+	rssBody := []byte(`<?xml version="1.0"?><rss version="2.0"><channel><title>RSS</title></channel></rss>`)
+	largeRSSBody := []byte(`<rss version="2.0"><channel><description>` + strings.Repeat("x", (2<<20)+(32<<10)) + `</description></channel></rss>`)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/rdf":
+			writer.Header().Set("Content-Type", "application/rdf+xml; charset=UTF-8")
+			_, _ = writer.Write(rdfBody)
+		case "/generic":
+			writer.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = writer.Write(rssBody)
+		case "/large":
+			writer.Header().Set("Content-Type", "application/rss+xml")
+			_, _ = writer.Write(largeRSSBody)
+		case "/html":
+			writer.Header().Set("Content-Type", "text/html")
+			_, _ = writer.Write([]byte(`<html><body>not a feed</body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	fetcher := HTTPClientFetcher{Client: server.Client(), Validator: allowTestURL}
+	for _, path := range []string{"/rdf", "/generic", "/large"} {
+		if _, err := fetcher.Fetch(context.Background(), FetchRequest{URL: server.URL + path, Kind: FetchKindFeed}); err != nil {
+			t.Fatalf("fetch %s: %v", path, err)
+		}
+	}
+	if _, err := fetcher.Fetch(context.Background(), FetchRequest{URL: server.URL + "/html", Kind: FetchKindFeed}); !errors.Is(err, ErrHTTPFetchContentType) {
+		t.Fatalf("HTML feed response error = %v", err)
+	}
+	if defaultFetchBodyLimit(FetchKindFeed) != 8<<20 {
+		t.Fatalf("feed body limit = %d, want %d", defaultFetchBodyLimit(FetchKindFeed), 8<<20)
+	}
+}
+
+func TestFeedParseFailureIsSafeAndCategorized(t *testing.T) {
+	setupSQLiteDB(t)
+	oldFetcher := fetchDiscoveryRequest
+	fetchDiscoveryRequest = func(_ context.Context, _ FetchRequest) (FetchResult, error) {
+		return FetchResult{
+			StatusCode: http.StatusOK, FinalURL: "https://example.com/wp-json/wp/v2/pages/7", ContentType: "application/json",
+			Body: []byte(`{"title":{"rendered":"private response excerpt"},"link":"https://example.com/"}`),
+		}, nil
+	}
+	t.Cleanup(func() { fetchDiscoveryRequest = oldFetcher })
+
+	source := DiscoverySource{Name: "Invalid metadata", URL: "https://example.com/wp-json/wp/v2/pages/7", Type: DiscoverySourceTypeFeed, EndpointType: DiscoveryEndpointFeed, Enabled: true}
+	if err := db.Create(&source).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err := FetchDiscoverySource(context.Background(), &source)
+	if !errors.Is(err, ErrFeedParse) {
+		t.Fatalf("parse error = %v", err)
+	}
+	if strings.Contains(err.Error(), "private response excerpt") || strings.Contains(err.Error(), "rendered") {
+		t.Fatalf("parse response leaked through error: %q", err.Error())
+	}
+	var detailer observability.FailureDetailer
+	if !errors.As(err, &detailer) {
+		t.Fatalf("missing failure details in %T", err)
+	}
+	details := detailer.ObservabilityFailure()
+	if details.ErrorType != "feed_parse" || details.Domain != "example.com" || details.HTTPStatus != http.StatusOK {
+		t.Fatalf("parse details = %#v", details)
+	}
+	if err := db.First(&source, source.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if source.FailureCount != 1 || source.BackoffReason != "feed_parse" || strings.Contains(source.LastError, "rendered") {
+		t.Fatalf("persisted source failure = %#v", source)
+	}
+}
+
+func TestDiscoveryFetchErrorCategoryDistinguishesDNSAndTLS(t *testing.T) {
+	if got := discoveryFetchErrorCategory(&net.DNSError{Err: "no such host", Name: "missing.example"}); got != "dns" {
+		t.Fatalf("DNS category = %q", got)
+	}
+	if got := discoveryFetchErrorCategory(errors.New("remote error: tls: handshake failure")); got != "tls" {
+		t.Fatalf("TLS category = %q", got)
 	}
 }

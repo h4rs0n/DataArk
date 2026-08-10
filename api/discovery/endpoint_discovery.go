@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	neturl "net/url"
 	"strings"
@@ -292,8 +293,16 @@ func uniqueNormalizedURLs(values []string) []string {
 }
 
 func isFeedMediaType(value string) bool {
-	value = strings.ToLower(value)
-	return strings.Contains(value, "rss") || strings.Contains(value, "atom") || strings.Contains(value, "feed+json") || value == "application/json" || strings.Contains(value, "xml")
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(value))
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(mediaType) {
+	case "application/rss+xml", "application/atom+xml", "application/rdf+xml", "application/feed+json", "application/xml", "text/xml":
+		return true
+	default:
+		return false
+	}
 }
 
 func configuredRSSHubEndpoint(crawlConfig string) string {

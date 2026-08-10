@@ -183,3 +183,23 @@ func TestSitemapIndexParserKeepsOnlySameSiteChildren(t *testing.T) {
 		t.Fatalf("parser created sitemap endpoints: %d, %v", sitemapEndpoints, err)
 	}
 }
+
+func TestDeclaredFeedMediaTypesExcludeWordPressMetadata(t *testing.T) {
+	body := []byte(`<html><head>
+<link rel="alternate" type="application/rss+xml" href="/feed.xml">
+<link rel="alternate" type="application/rdf+xml; charset=UTF-8" href="/feed/rdf">
+<link rel="alternate" type="application/feed+json" href="/feed.json">
+<link rel="alternate" type="application/json" href="/wp-json/wp/v2/pages/7">
+<link rel="alternate" type="application/json+oembed" href="/wp-json/oembed/1.0/embed">
+<link rel="alternate" type="text/xml+oembed" href="/wp-json/oembed/1.0/embed?format=xml">
+<link rel="EditURI" type="application/rsd+xml" href="/xmlrpc.php?rsd">
+</head></html>`)
+	links, err := discoverHomepageEndpoints(body, "https://example.com/", "https://example.com/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"https://example.com/feed.json", "https://example.com/feed.xml", "https://example.com/feed/rdf"}
+	if fmt.Sprint(links.feeds) != fmt.Sprint(want) {
+		t.Fatalf("declared feeds = %#v, want %#v", links.feeds, want)
+	}
+}

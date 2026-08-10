@@ -15,7 +15,7 @@ import (
 
 const (
 	defaultHTMLFetchBodyLimit    int64 = 4 << 20
-	defaultFeedFetchBodyLimit    int64 = 2 << 20
+	defaultFeedFetchBodyLimit    int64 = 8 << 20
 	defaultSitemapFetchBodyLimit int64 = 8 << 20
 	defaultArticleFetchBodyLimit int64 = 8 << 20
 	defaultRobotsFetchBodyLimit  int64 = 512 << 10
@@ -197,7 +197,7 @@ func (fetcher HTTPClientFetcher) Fetch(ctx context.Context, input FetchRequest) 
 	}
 	contentType := response.Header.Get("Content-Type")
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && response.StatusCode != http.StatusNotModified {
-		if !allowedContentType(input.Kind, contentType) {
+		if !allowedContentType(input.Kind, contentType, body) {
 			contentTypeError := fmt.Errorf("%w: %s for %s", ErrHTTPFetchContentType, contentType, input.Kind)
 			return FetchResult{}, withFetchDiagnostic(contentTypeError, responseURL, response.StatusCode, "content_type")
 		}
@@ -238,7 +238,7 @@ func defaultFetchBodyLimit(kind FetchKind) int64 {
 func acceptHeader(kind FetchKind) string {
 	switch kind {
 	case FetchKindFeed:
-		return "application/rss+xml, application/atom+xml, application/feed+json, application/json, application/xml, text/xml;q=0.9"
+		return "application/rss+xml, application/atom+xml, application/rdf+xml, application/feed+json, application/json, application/xml, text/xml;q=0.9"
 	case FetchKindSitemap:
 		return "application/xml, text/xml, text/plain;q=0.8"
 	case FetchKindRobots:
@@ -248,15 +248,22 @@ func acceptHeader(kind FetchKind) string {
 	}
 }
 
-func allowedContentType(kind FetchKind, value string) bool {
+func allowedContentType(kind FetchKind, value string, body []byte) bool {
 	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(value))
 	if err != nil {
-		return false
+		return kind == FetchKindFeed && strings.TrimSpace(value) == "" && looksLikeFeed(body)
 	}
 	mediaType = strings.ToLower(mediaType)
 	switch kind {
 	case FetchKindFeed:
-		return mediaType == "application/rss+xml" || mediaType == "application/atom+xml" || mediaType == "application/feed+json" || mediaType == "application/json" || mediaType == "application/xml" || mediaType == "text/xml"
+		switch mediaType {
+		case "application/rss+xml", "application/atom+xml", "application/rdf+xml", "application/feed+json", "application/json", "application/xml", "text/xml":
+			return true
+		case "text/plain", "text/html", "application/octet-stream":
+			return looksLikeFeed(body)
+		default:
+			return false
+		}
 	case FetchKindSitemap:
 		return mediaType == "application/xml" || mediaType == "text/xml" || mediaType == "text/plain"
 	case FetchKindRobots:
@@ -264,6 +271,18 @@ func allowedContentType(kind FetchKind, value string) bool {
 	default:
 		return mediaType == "text/html" || mediaType == "application/xhtml+xml"
 	}
+}
+
+func looksLikeFeed(body []byte) bool {
+	prefix := body
+	if len(prefix) > 4096 {
+		prefix = prefix[:4096]
+	}
+	value := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(string(prefix), "\ufeff")))
+	if strings.HasPrefix(value, "{") {
+		return strings.Contains(value, `"version"`) && strings.Contains(value, "jsonfeed.org/version/")
+	}
+	return strings.Contains(value, "<rss") || strings.Contains(value, "<feed") || strings.Contains(value, "<rdf:rdf")
 }
 
 // JobEnqueuer accepts only stable identifiers. Implementations must make each

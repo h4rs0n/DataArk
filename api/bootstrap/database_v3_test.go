@@ -265,7 +265,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 24 || migrations[len(migrations)-1].Version != 24 {
+	if len(migrations) != 25 || migrations[len(migrations)-1].Version != 25 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -448,6 +448,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"pass_one_skipped_at", "pass_one_skipped_by", "Data-preserving rollback"} {
 		if !strings.Contains(string(optionalLabels), required) {
 			t.Fatalf("optional article assessment labels migration missing %q", required)
+		}
+	}
+	failureRecovery, err := appmigrations.FS.ReadFile("000025_discovery_failure_recovery.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"invalid_feed_metadata", "application/rdf+xml", "body_too_large", "discovery_fetch_runs", "intentionally retained"} {
+		if !strings.Contains(string(failureRecovery), required) {
+			t.Fatalf("discovery failure recovery migration missing %q", required)
 		}
 	}
 }

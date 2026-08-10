@@ -34,6 +34,8 @@ const (
 	DiscoveryCandidateEnrichmentStatusPending = "pending"
 )
 
+var ErrFeedParse = errors.New("feed payload could not be parsed")
+
 var fetchDiscoveryRequest = func(ctx context.Context, request FetchRequest) (FetchResult, error) {
 	return ConfiguredHTTPFetcher().Fetch(ctx, request)
 }
@@ -235,6 +237,41 @@ func FetchDiscoverySourceByID(ctx context.Context, id uint) (*DiscoveryFetchResu
 	return FetchDiscoverySource(ctx, &source)
 }
 
+// RunFetchDiscoverySourceJob discards stale queued work without issuing a
+// network request. Direct owner refreshes continue to use
+// FetchDiscoverySourceByID and intentionally bypass the schedule check.
+func RunFetchDiscoverySourceJob(ctx context.Context, id uint) error {
+	if db == nil {
+		return nil
+	}
+	var source DiscoverySource
+	if err := db.First(&source, id).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if !source.Enabled {
+		return nil
+	}
+	if !discoverySourceOperationallyCrawlable(&source) {
+		return nil
+	}
+	now := discoveryClock.Now()
+	deferred, err := reconcileSourceFailureCooldown(&source, now)
+	if err != nil {
+		return err
+	}
+	nextDueAt := source.NextDueAt
+	if nextDueAt == nil {
+		nextDueAt = source.NextFetchAt
+	}
+	if deferred || (nextDueAt != nil && nextDueAt.After(now)) {
+		return nil
+	}
+	_, err = FetchDiscoverySource(ctx, &source)
+	return err
+}
+
 func FetchDiscoverySource(ctx context.Context, source *DiscoverySource) (*DiscoveryFetchResult, error) {
 	if source == nil {
 		return nil, errors.New("missing discovery source")
@@ -344,13 +381,16 @@ func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discove
 			return nil, 0, 0, &fetchResult, withHTTPStatusDiagnostic(statusError, fetchResult, source.URL)
 		}
 		candidates, err := parseFeedCandidates(fetchResult.Body)
+		if err != nil {
+			return nil, 0, 0, &fetchResult, withFetchDiagnostic(ErrFeedParse, fetchResult.FinalURLOr(source.URL), fetchResult.StatusCode, "feed_parse")
+		}
 		for index := range candidates {
 			candidates[index].DiscoveryMethod = DiscoveryMethodFeed
 			candidates[index].SourcePageURL = source.URL
 			candidates[index].MetadataConfidence = metadataConfidenceForMethod(DiscoveryMethodFeed)
 			candidates[index].PublishedConfidence = "feed"
 		}
-		return scoreAndLimitCandidates(candidates), 1, 0, &fetchResult, err
+		return scoreAndLimitCandidates(candidates), 1, 0, &fetchResult, nil
 	case DiscoverySourceTypeSite:
 		site, err := siteForDiscoverySource(*source)
 		if err != nil {
@@ -436,7 +476,11 @@ func fetchFeedCandidates(ctx context.Context, rawURL string) ([]discoveredCandid
 		statusError := fmt.Errorf("%w: %d", ErrHTTPFetchStatus, result.StatusCode)
 		return nil, withHTTPStatusDiagnostic(statusError, result, rawURL)
 	}
-	return parseFeedCandidates(result.Body)
+	candidates, err := parseFeedCandidates(result.Body)
+	if err != nil {
+		return nil, withFetchDiagnostic(ErrFeedParse, result.FinalURLOr(rawURL), result.StatusCode, "feed_parse")
+	}
+	return candidates, nil
 }
 
 func parseFeedCandidates(body []byte) ([]discoveredCandidate, error) {
@@ -595,7 +639,7 @@ func discoverLinksFromHTML(body []byte, baseURL *neturl.URL) ([]string, []string
 				href := attrValue(node, "href")
 				rel := strings.ToLower(attrValue(node, "rel"))
 				linkType := strings.ToLower(attrValue(node, "type"))
-				if href != "" && strings.Contains(rel, "alternate") && (strings.Contains(linkType, "rss") || strings.Contains(linkType, "atom") || strings.Contains(linkType, "xml")) {
+				if href != "" && strings.Contains(rel, "alternate") && isFeedMediaType(linkType) {
 					if absoluteURL, ok := sameHostURL(href, baseURL); ok {
 						feedSet[absoluteURL] = struct{}{}
 					}

@@ -103,9 +103,28 @@ func (policy SourceSchedulePolicy) DecideNextSuccess(source DiscoverySource, sit
 }
 
 func (policy SourceSchedulePolicy) NextFailure(sourceID uint, failureCount int) time.Time {
-	if failureCount < 1 {
-		failureCount = 1
+	return policy.DecideNextFailure(sourceID, failureCount, "").NextDueAt
+}
+
+func (policy SourceSchedulePolicy) DecideNextFailure(sourceID uint, failureCount int, category string) SourceScheduleDecision {
+	base, maximum := policy.failureBackoffProfile(category)
+	delay := stableFailureDelay(sourceID, failureCount, category, base, maximum)
+	explanation := strings.TrimSpace(category)
+	if explanation == "" {
+		explanation = "generic"
 	}
+	return SourceScheduleDecision{
+		Basis: "failure_backoff", Base: base, Chosen: delay,
+		NextDueAt: policy.Clock.Now().Add(delay), Explanation: explanation,
+	}
+}
+
+func (policy SourceSchedulePolicy) FailureDelay(sourceID uint, failureCount int, category string) time.Duration {
+	base, maximum := policy.failureBackoffProfile(category)
+	return stableFailureDelay(sourceID, failureCount, category, base, maximum)
+}
+
+func (policy SourceSchedulePolicy) failureBackoffProfile(category string) (time.Duration, time.Duration) {
 	base := policy.BackoffBase
 	if base <= 0 {
 		base = 5 * time.Minute
@@ -114,6 +133,36 @@ func (policy SourceSchedulePolicy) NextFailure(sourceID uint, failureCount int) 
 	if maximum < base {
 		maximum = 24 * time.Hour
 	}
+	switch strings.TrimSpace(category) {
+	case "timeout":
+		base = maximumDuration(base, 30*time.Minute)
+		maximum = maximumDuration(maximum, 24*time.Hour)
+	case "network":
+		base = maximumDuration(base, 2*time.Hour)
+		maximum = maximumDuration(maximum, 7*24*time.Hour)
+	case "dns":
+		base = maximumDuration(base, 6*time.Hour)
+		maximum = maximumDuration(maximum, 14*24*time.Hour)
+	case "tls":
+		base = maximumDuration(base, 12*time.Hour)
+		maximum = maximumDuration(maximum, 14*24*time.Hour)
+	case "http_status":
+		base = maximumDuration(base, 6*time.Hour)
+		maximum = maximumDuration(maximum, 7*24*time.Hour)
+	case "content_type", "feed_parse", "processing", "handler", "body_too_large", "unsafe_url", "too_many_redirects":
+		base = maximumDuration(base, 24*time.Hour)
+		maximum = maximumDuration(maximum, 30*24*time.Hour)
+	}
+	if maximum < base {
+		maximum = base
+	}
+	return base, maximum
+}
+
+func stableFailureDelay(sourceID uint, failureCount int, category string, base time.Duration, maximum time.Duration) time.Duration {
+	if failureCount < 1 {
+		failureCount = 1
+	}
 	exponent := math.Min(float64(failureCount-1), 16)
 	delay := time.Duration(float64(base) * math.Pow(2, exponent))
 	if delay > maximum || delay < 0 {
@@ -121,11 +170,18 @@ func (policy SourceSchedulePolicy) NextFailure(sourceID uint, failureCount int) 
 	}
 	// Stable jitter prevents synchronized retries while keeping tests repeatable.
 	hash := fnv.New32a()
-	_, _ = hash.Write([]byte(strconv.FormatUint(uint64(sourceID), 10) + ":" + strconv.Itoa(failureCount)))
+	_, _ = hash.Write([]byte(strconv.FormatUint(uint64(sourceID), 10) + ":" + strconv.Itoa(failureCount) + ":" + strings.TrimSpace(category)))
 	jitterFraction := (float64(hash.Sum32()%2001)/10000.0 - 0.1)
 	delay += time.Duration(float64(delay) * jitterFraction)
 	if delay > maximum {
 		delay = maximum
 	}
-	return policy.Clock.Now().Add(delay)
+	return delay
+}
+
+func maximumDuration(first time.Duration, second time.Duration) time.Duration {
+	if first >= second {
+		return first
+	}
+	return second
 }

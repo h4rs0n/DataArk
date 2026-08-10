@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -51,8 +52,9 @@ func finishDiscoveryFetch(source *DiscoverySource, result *DiscoveryFetchResult,
 		failureCount = source.FailureCount + 1
 		errorCategory = discoveryFetchErrorCategory(fetchErr)
 		errorSummary = fetchErr.Error()
-		next := policy.NextFailure(source.ID, failureCount)
-		scheduleDecision = &SourceScheduleDecision{Basis: "failure_backoff", Chosen: next.Sub(now), NextDueAt: next, Explanation: errorCategory}
+		decision := policy.DecideNextFailure(source.ID, failureCount, errorCategory)
+		next := decision.NextDueAt
+		scheduleDecision = &decision
 		updates["failure_count"] = failureCount
 		updates["next_fetch_at"] = &next
 		updates["next_due_at"] = &next
@@ -145,6 +147,14 @@ func duplicateResultCount(result *DiscoveryFetchResult) int {
 }
 
 func discoveryFetchErrorCategory(err error) string {
+	var categorizer interface {
+		DiscoveryFetchErrorCategory() string
+	}
+	if errors.As(err, &categorizer) {
+		if category := strings.TrimSpace(categorizer.DiscoveryFetchErrorCategory()); category != "" {
+			return category
+		}
+	}
 	switch {
 	case errors.Is(err, ErrDiscoveryDomainBlacklisted):
 		return processingErrorDomainBlacklist
@@ -162,8 +172,18 @@ func discoveryFetchErrorCategory(err error) string {
 		return "content_type"
 	case errors.Is(err, ErrHTTPFetchStatus):
 		return "http_status"
+	case errors.Is(err, ErrFeedParse):
+		return "feed_parse"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
+	}
+	var dnsError *net.DNSError
+	if errors.As(err, &dnsError) {
+		return "dns"
+	}
+	errorText := strings.ToLower(err.Error())
+	if strings.Contains(errorText, "tls:") || strings.Contains(errorText, "x509:") {
+		return "tls"
 	}
 	var networkError net.Error
 	if errors.As(err, &networkError) {
@@ -173,6 +193,21 @@ func discoveryFetchErrorCategory(err error) string {
 		return "network"
 	}
 	return "processing"
+}
+
+func persistedSourceFailureCategory(source DiscoverySource) string {
+	category := strings.TrimSpace(source.BackoffReason)
+	if category != "network" {
+		return category
+	}
+	errorText := strings.ToLower(source.LastError)
+	if strings.Contains(errorText, "no such host") || strings.Contains(errorText, "server misbehaving") || strings.Contains(errorText, "temporary failure in name resolution") {
+		return "dns"
+	}
+	if strings.Contains(errorText, "tls:") || strings.Contains(errorText, "x509:") {
+		return "tls"
+	}
+	return category
 }
 
 func applySourceFetchUpdate(source *DiscoverySource, key string, value interface{}) {

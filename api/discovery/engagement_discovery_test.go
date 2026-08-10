@@ -159,6 +159,11 @@ func TestParseFeedCandidatesSupportsRSSAtomAndJSON(t *testing.T) {
 			want: "Atom Post",
 		},
 		{
+			name: "rdf",
+			body: `<?xml version="1.0"?><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><channel rdf:about="https://example.com/feed"><title>RDF Feed</title><link>https://example.com/</link><description>RDF feed</description></channel><item rdf:about="https://example.com/rdf"><title>RDF Post</title><link>https://example.com/rdf</link><description>RDF summary</description></item></rdf:RDF>`,
+			want: "RDF Post",
+		},
+		{
 			name: "json",
 			body: `{"version":"https://jsonfeed.org/version/1.1","title":"JSON Feed","items":[{"id":"1","url":"https://example.com/json","title":"JSON Post","summary":"JSON summary"}]}`,
 			want: "JSON Post",

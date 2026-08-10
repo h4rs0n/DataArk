@@ -38,6 +38,13 @@ func (err *fetchDiagnosticError) ObservabilityFailure() observability.FailureDet
 	}
 }
 
+func (err *fetchDiagnosticError) DiscoveryFetchErrorCategory() string {
+	if err == nil {
+		return ""
+	}
+	return err.errorType
+}
+
 func withFetchDiagnostic(cause error, rawURL string, httpStatus int, errorType string) error {
 	if cause == nil {
 		return nil
