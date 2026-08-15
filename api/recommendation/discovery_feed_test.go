@@ -4,6 +4,7 @@ import (
 	"DataArk/discovery"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -108,6 +109,71 @@ func TestDiscoveryFeedShortageAndPerUserIsolation(t *testing.T) {
 		if first.Items[index].CandidateID != other.Items[index].CandidateID {
 			t.Fatalf("user-isolated unseen inventory should be independently selectable")
 		}
+	}
+	depleted, err := RefreshDiscoveryFeed(context.Background(), 2001, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if depleted.Batch == nil || depleted.Batch.ActualCount != 0 || len(depleted.Items) != 0 {
+		t.Fatalf("exhausted inventory should remain short instead of repeating: %#v", depleted)
+	}
+	if !strings.Contains(depleted.Batch.ShortageReasons, "newInventoryShortage") || strings.Contains(depleted.Batch.ShortageReasons, "reexposure_cooldown") {
+		t.Fatalf("exhausted inventory audit = %s", depleted.Batch.ShortageReasons)
+	}
+}
+
+func TestDiscoveryFeedRefreshSearchesPastExposedRetrievalPage(t *testing.T) {
+	setupSQLiteDB(t)
+	candidates := createDiscoveryFeedCandidates(t, 110)
+	now := time.Now()
+	exposed := make(map[uint]bool, 100)
+	for _, candidate := range candidates[:100] {
+		if err := discovery.RecordUserCandidateExposure(db, 4001, candidate.ID, now); err != nil {
+			t.Fatal(err)
+		}
+		exposed[candidate.ID] = true
+	}
+
+	snapshot, err := RefreshDiscoveryFeed(context.Background(), 4001, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Batch == nil || snapshot.Batch.ActualCount != 10 || len(snapshot.Items) != 10 {
+		t.Fatalf("deep unseen inventory snapshot = %#v", snapshot)
+	}
+	for _, item := range snapshot.Items {
+		if exposed[item.CandidateID] {
+			t.Fatalf("refresh repeated top-page candidate %d despite unseen inventory", item.CandidateID)
+		}
+		if item.CooldownRepeat {
+			t.Fatalf("deep unseen candidate %d was marked as a cooldown repeat", item.CandidateID)
+		}
+	}
+	if strings.Contains(snapshot.Batch.ShortageReasons, "reexposure_cooldown") || strings.Contains(snapshot.Batch.ShortageReasons, "newInventoryShortage\":true") {
+		t.Fatalf("deep unseen inventory audit = %s", snapshot.Batch.ShortageReasons)
+	}
+}
+
+func TestDiscoveryFeedRefreshAllowsMaterialContentUpdate(t *testing.T) {
+	setupSQLiteDB(t)
+	candidate := createDiscoveryFeedCandidates(t, 1)[0]
+	first, err := RefreshDiscoveryFeed(context.Background(), 5001, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 1 {
+		t.Fatalf("first feed items = %#v", first.Items)
+	}
+	if err := db.Model(&candidate).Update("content_version", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := RefreshDiscoveryFeed(context.Background(), 5001, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Items) != 1 || updated.Items[0].CandidateID != candidate.ID || !updated.Items[0].ContentUpdated || updated.Items[0].CooldownRepeat {
+		t.Fatalf("updated feed items = %#v", updated.Items)
 	}
 }
 

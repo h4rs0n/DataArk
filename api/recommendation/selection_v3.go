@@ -24,7 +24,7 @@ type recommendationSelectionReport struct {
 }
 
 type recommendationSelectionOptions struct {
-	AllowRecentExposure bool
+	UnseenOrUpdatedOnly bool
 }
 
 type recommendationHistoryEntry struct {
@@ -79,9 +79,23 @@ func selectRecommendationCandidatesV3(ctx context.Context, userID uint, settings
 	}
 	var candidates []DiscoveryCandidate
 	query := discovery.ExcludeBlacklistedCandidateDomains(db, "")
-	if err := query.Where("processing_state = ? AND eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
-		Where("dedupe_state = ? AND (representative_id IS NULL OR representative_id = id)", discovery.DiscoveryDedupeReady).
-		Order("quality_score desc, depth_score desc, score desc, last_seen_at desc, id asc").
+	if options.UnseenOrUpdatedOnly {
+		query = query.Select("discovery_candidates.*").
+			Joins("LEFT JOIN user_candidate_states AS candidate_exposure ON candidate_exposure.user_id = ? AND candidate_exposure.candidate_id = discovery_candidates.id", userID).
+			Where(`candidate_exposure.id IS NULL OR candidate_exposure.exposure_count = 0 OR EXISTS (
+SELECT 1
+FROM recommendation_items AS prior_item
+WHERE prior_item.user_id = ?
+  AND prior_item.content_version < discovery_candidates.content_version
+  AND (
+		prior_item.candidate_id = discovery_candidates.id OR
+		(discovery_candidates.dedupe_key <> '' AND prior_item.dedupe_key = discovery_candidates.dedupe_key)
+  )
+)`, userID)
+	}
+	if err := query.Where("discovery_candidates.processing_state = ? AND discovery_candidates.eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
+		Where("discovery_candidates.dedupe_state = ? AND (discovery_candidates.representative_id IS NULL OR discovery_candidates.representative_id = discovery_candidates.id)", discovery.DiscoveryDedupeReady).
+		Order("discovery_candidates.quality_score desc, discovery_candidates.depth_score desc, discovery_candidates.score desc, discovery_candidates.last_seen_at desc, discovery_candidates.id asc").
 		Limit(poolSize).Find(&candidates).Error; err != nil {
 		return nil, err
 	}
@@ -136,12 +150,9 @@ func selectRecommendationCandidatesV3(ctx context.Context, userID uint, settings
 		state, hasState := states[candidate.ID]
 		historyEntry, hasHistory := recommendationHistoryForCandidate(history, candidate)
 		contentUpdated, cooldownRepeat, exclusion := recommendationRecurrenceDecision(candidate, state, hasState, historyEntry, hasHistory, now, cooldown)
-		if exclusion != "" && !(options.AllowRecentExposure && exclusion == "reexposure_cooldown") {
+		if exclusion != "" {
 			report.Excluded[exclusion]++
 			continue
-		}
-		if exclusion == "reexposure_cooldown" {
-			cooldownRepeat = true
 		}
 		topics := parseStringList(candidate.Topics)
 		host := sourceHost(candidate.URL)
@@ -261,8 +272,9 @@ func loadRecommendationHistoryV3(userID uint) (map[string]recommendationHistoryE
 	result := make(map[string]recommendationHistoryEntry)
 	var items []RecommendationItem
 	if err := db.Table("recommendation_items AS item").Select("item.*").
-		Joins("JOIN recommendation_days AS day ON day.id = item.day_id").
-		Where("item.user_id = ? AND day.status IN ?", userID, []string{RecommendationDayStatusPublished, RecommendationDayStatusSupplemented, "generated"}).
+		Joins("LEFT JOIN recommendation_days AS day ON day.id = item.day_id").
+		Where("item.user_id = ?", userID).
+		Where("item.feed_batch_id IS NOT NULL OR day.status IN ?", []string{RecommendationDayStatusPublished, RecommendationDayStatusSupplemented, "generated"}).
 		Order("item.created_at asc, item.id asc").Scan(&items).Error; err != nil {
 		return nil, err
 	}
@@ -312,7 +324,7 @@ func recommendationRecurrenceDecision(candidate DiscoveryCandidate, state discov
 	if !hasHistory && (!hasState || state.ExposureCount == 0) {
 		return false, false, ""
 	}
-	updated := hasHistory && history.MaxContentVersion > 0 && candidate.ContentVersion > history.MaxContentVersion
+	updated := hasHistory && candidate.ContentVersion > history.MaxContentVersion
 	if updated {
 		return true, false, ""
 	}

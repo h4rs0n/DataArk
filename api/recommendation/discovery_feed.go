@@ -4,9 +4,7 @@ import (
 	"DataArk/discovery"
 	"context"
 	"encoding/json"
-	"sort"
 	"sync"
-	"time"
 
 	"gorm.io/gorm"
 )
@@ -81,30 +79,11 @@ func RefreshDiscoveryFeed(ctx context.Context, userID uint, limit int) (*Recomme
 	if err != nil {
 		return nil, err
 	}
-	current, err := GetCurrentDiscoveryFeed(userID)
-	if err != nil {
-		return nil, err
-	}
-
-	report, err := selectDailyRecommendationCandidatesV3(ctx, userID, *settings, profile, limit)
+	report, err := selectRecommendationCandidatesV3(ctx, userID, *settings, profile, limit, recommendationSelectionOptions{UnseenOrUpdatedOnly: true})
 	if err != nil {
 		return nil, err
 	}
 	selected, relaxations := diversifyRecommendationCandidatesV3(report.Candidates, limit, settings.ExplorationRate)
-	if len(selected) < limit {
-		relaxed, relaxedErr := selectRecommendationCandidatesV3(ctx, userID, *settings, profile, limit, recommendationSelectionOptions{AllowRecentExposure: true})
-		if relaxedErr != nil {
-			return nil, relaxedErr
-		}
-		beforeFallback := len(selected)
-		selected, err = appendDiscoveryFeedFallback(selected, relaxed.Candidates, current.Items, userID, limit)
-		if err != nil {
-			return nil, err
-		}
-		if len(selected) > beforeFallback {
-			relaxations = append(relaxations, "reexposure_cooldown")
-		}
-	}
 
 	now := recommendationClock.Now()
 	items := buildRecommendationItems(1, userID, selected, 1, profile.ProfileVersion, false, now)
@@ -113,6 +92,7 @@ func RefreshDiscoveryFeed(ctx context.Context, userID uint, limit int) (*Recomme
 	}
 	shortage, _ := json.Marshal(map[string]interface{}{
 		"target": limit, "actual": len(items), "softRelaxations": relaxations,
+		"newInventoryShortage": len(items) < limit,
 	})
 	batch := RecommendationFeedBatch{
 		UserID: userID, Status: RecommendationFeedBatchStatusActive,
@@ -146,84 +126,4 @@ func RefreshDiscoveryFeed(ctx context.Context, userID uint, limit int) (*Recomme
 		return nil, err
 	}
 	return &RecommendationFeedSnapshot{Batch: &batch, Items: items}, nil
-}
-
-func appendDiscoveryFeedFallback(selected []recommendationCandidateScore, candidates []recommendationCandidateScore, current []RecommendationItem, userID uint, limit int) ([]recommendationCandidateScore, error) {
-	if len(selected) >= limit {
-		return selected, nil
-	}
-	selectedIdentity := make(map[string]bool, len(selected))
-	for _, candidate := range selected {
-		selectedIdentity[recommendationCandidateIdentity(candidate.Candidate)] = true
-	}
-	currentIDs := make(map[uint]bool, len(current))
-	for _, item := range current {
-		currentIDs[item.CandidateID] = true
-	}
-	states, err := inventoryUserStates(userID, discoveryCandidatesFromScores(candidates))
-	if err != nil {
-		return nil, err
-	}
-	nonCurrent := make([]recommendationCandidateScore, 0, len(candidates))
-	fromCurrent := make([]recommendationCandidateScore, 0, len(current))
-	for _, candidate := range candidates {
-		identity := recommendationCandidateIdentity(candidate.Candidate)
-		if selectedIdentity[identity] {
-			continue
-		}
-		candidate.CooldownRepeat = true
-		if currentIDs[candidate.Candidate.ID] {
-			fromCurrent = append(fromCurrent, candidate)
-		} else {
-			nonCurrent = append(nonCurrent, candidate)
-		}
-	}
-	sortDiscoveryFeedFallback(nonCurrent, states)
-	sortDiscoveryFeedFallback(fromCurrent, states)
-	for _, tier := range [][]recommendationCandidateScore{nonCurrent, fromCurrent} {
-		for _, candidate := range tier {
-			identity := recommendationCandidateIdentity(candidate.Candidate)
-			if selectedIdentity[identity] {
-				continue
-			}
-			selected = append(selected, candidate)
-			selectedIdentity[identity] = true
-			if len(selected) >= limit {
-				return selected, nil
-			}
-		}
-	}
-	return selected, nil
-}
-
-func discoveryCandidatesFromScores(scores []recommendationCandidateScore) []DiscoveryCandidate {
-	candidates := make([]DiscoveryCandidate, 0, len(scores))
-	for _, score := range scores {
-		candidates = append(candidates, score.Candidate)
-	}
-	return candidates
-}
-
-func sortDiscoveryFeedFallback(candidates []recommendationCandidateScore, states map[uint]discovery.UserCandidateState) {
-	sort.SliceStable(candidates, func(i, j int) bool {
-		first, second := states[candidates[i].Candidate.ID], states[candidates[j].Candidate.ID]
-		if first.ExposureCount != second.ExposureCount {
-			return first.ExposureCount < second.ExposureCount
-		}
-		firstAt, secondAt := exposureTime(first), exposureTime(second)
-		if !firstAt.Equal(secondAt) {
-			return firstAt.Before(secondAt)
-		}
-		if candidates[i].FinalScore != candidates[j].FinalScore {
-			return candidates[i].FinalScore > candidates[j].FinalScore
-		}
-		return candidates[i].Candidate.ID < candidates[j].Candidate.ID
-	})
-}
-
-func exposureTime(state discovery.UserCandidateState) time.Time {
-	if state.LastExposedAt == nil {
-		return time.Time{}
-	}
-	return *state.LastExposedAt
 }
