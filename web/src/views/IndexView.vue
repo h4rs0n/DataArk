@@ -12,7 +12,7 @@
         <template #icon>
           <icon-fire />
         </template>
-        推荐
+        推荐中心
       </a-button>
       <a-button type="primary" @click="goToArchive" class="action-button">
         <template #icon>

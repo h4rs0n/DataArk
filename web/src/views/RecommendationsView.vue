@@ -11,8 +11,8 @@
       <header class="page-header">
         <div class="header-mark"><icon-robot /></div>
         <div>
-          <h1>推荐中心</h1>
-          <p>今日推荐、历史日报、内容发现和推荐偏好统一管理。</p>
+          <h1>推荐</h1>
+          <p>推荐中心、今日推荐、历史日报、内容发现和推荐偏好统一管理。</p>
         </div>
         <a-button :loading="loading" @click="loadAll">
           <template #icon><icon-refresh /></template>
@@ -21,6 +21,50 @@
       </header>
 
       <a-tabs v-model:active-key="activeTab" class="tabs">
+        <a-tab-pane key="feed" title="推荐中心">
+          <section class="panel">
+            <div class="section-title">
+              <div>
+                <h2>猜你喜欢</h2>
+                <span>根据阅读与反馈偏好，每次推荐最多 10 篇符合条件的文章</span>
+              </div>
+              <a-button @click="loadDiscoveryFeed">
+                <template #icon><icon-refresh /></template>
+                刷新
+              </a-button>
+            </div>
+            <a-spin :loading="discoveryFeedLoading" class="discovery-feed-spin">
+              <a-empty v-if="discoveryFeed.items.length === 0" description="暂无符合推荐条件的文章" />
+              <div v-else class="recommendation-list">
+                <RecommendationArticleCard
+                  v-for="item in discoveryFeed.items"
+                  :key="item.id"
+                  :item="item"
+                  :archiving="archivingCandidateId === item.candidateId"
+                  :current-action="feedbackByItem[item.id]?.action"
+                  :feedback-loading="feedbackLoadingId === item.id"
+                  @open="openCandidate"
+                  @archive="archiveCandidate"
+                  @context="openItemContext"
+                  @mark-read="markCandidateRead"
+                  @feedback="(action) => sendFeedback(item, action)"
+                  @scope="(scope) => openImpactDialog(item, scope)"
+                  @revert="revertFeedback(item)"
+                />
+              </div>
+              <p v-if="discoveryFeed.batch && discoveryFeed.batch.actualCount < discoveryFeed.batch.requestedCount" class="feed-shortage">
+                当前仅有 {{ discoveryFeed.batch.actualCount }} 篇符合推荐条件
+              </p>
+              <div class="feed-refresh-row">
+                <a-button type="primary" :loading="refreshingDiscoveryFeed" @click="refreshDiscoveryFeedBatch">
+                  <template #icon><icon-refresh /></template>
+                  换一换
+                </a-button>
+              </div>
+            </a-spin>
+          </section>
+        </a-tab-pane>
+
         <a-tab-pane key="today" title="今日推荐">
           <section class="panel">
             <div class="section-title">
@@ -137,7 +181,7 @@
             </form>
 
             <div class="source-list">
-              <article v-for="source in sources" :key="source.id" class="source-row">
+              <article v-for="source in pagedSources" :key="source.id" class="source-row">
                 <div class="item-main">
                   <h3>{{ source.name }}</h3>
                   <p>{{ source.url }}</p>
@@ -156,89 +200,17 @@
                 </a-space>
               </article>
             </div>
+            <a-pagination
+              v-if="sources.length > sourcePageSize"
+              v-model:current="sourcePage"
+              v-model:page-size="sourcePageSize"
+              :total="sources.length"
+              :page-size-options="[10, 20, 50]"
+              class="source-pagination"
+              show-total
+              show-page-size
+            />
             <SiteInsightPanel :source="selectedSource" :graph="siteGraph" :operations="siteOperations" :backfills="siteBackfills" :is-owner="isOwner" @reload="reloadSiteInsight" @backfill="requestBackfill" @sitemap-backfill="requestSitemapBackfill" />
-          </section>
-
-          <section class="panel">
-            <div class="section-title">
-              <div>
-                <h2>{{ candidateStatus === 'new' ? '猜你喜欢' : '候选文章' }}</h2>
-                <span>{{ candidateStatus === 'new' ? '根据阅读与反馈偏好，每次推荐最多 10 篇符合条件的文章' : '查看已经阅读、忽略或加入归档队列的候选文章' }}</span>
-              </div>
-              <label class="inline-field" for="candidate-status">
-                <span>状态</span>
-                <select id="candidate-status" v-model="candidateStatus" name="candidate-status" @change="loadCandidates">
-                  <option value="new">待读</option>
-                  <option value="read">已读</option>
-                  <option value="ignored">已忽略</option>
-                  <option value="archived">已入库</option>
-                </select>
-              </label>
-            </div>
-            <a-spin v-if="candidateStatus === 'new'" :loading="discoveryFeedLoading" class="discovery-feed-spin">
-              <a-empty v-if="discoveryFeed.items.length === 0" description="暂无符合推荐条件的文章" />
-              <div v-else class="recommendation-list">
-                <RecommendationArticleCard
-                  v-for="item in discoveryFeed.items"
-                  :key="item.id"
-                  :item="item"
-                  :archiving="archivingCandidateId === item.candidateId"
-                  :current-action="feedbackByItem[item.id]?.action"
-                  :feedback-loading="feedbackLoadingId === item.id"
-                  @open="openCandidate"
-                  @archive="archiveCandidate"
-                  @context="openItemContext"
-                  @mark-read="markCandidateRead"
-                  @feedback="(action) => sendFeedback(item, action)"
-                  @scope="(scope) => openImpactDialog(item, scope)"
-                  @revert="revertFeedback(item)"
-                />
-              </div>
-              <p v-if="discoveryFeed.batch && discoveryFeed.batch.actualCount < discoveryFeed.batch.requestedCount" class="feed-shortage">
-                当前仅有 {{ discoveryFeed.batch.actualCount }} 篇符合推荐条件
-              </p>
-              <div class="feed-refresh-row">
-                <a-button type="primary" :loading="refreshingDiscoveryFeed" @click="refreshDiscoveryFeedBatch">
-                  <template #icon><icon-refresh /></template>
-                  换一换
-                </a-button>
-              </div>
-            </a-spin>
-            <a-empty v-else-if="candidates.length === 0" description="暂无候选文章" />
-            <div v-else class="item-list">
-              <article v-for="candidate in candidates" :key="candidate.id" class="compact-card">
-                <div class="item-main">
-                  <h3>
-                    <a
-                      class="candidate-title-link"
-                      :href="candidate.url"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      @click="markCandidateRead(candidate)"
-                    >
-                      {{ candidate.title || candidate.url }}
-                    </a>
-                  </h3>
-                  <p>{{ candidate.summary || candidate.url }}</p>
-                  <span>{{ candidate.sourceName }} · 处理 {{ candidate.processingState || 'unknown' }} · 资格 {{ candidate.eligibilityState || 'unknown' }} · 去重 {{ candidate.dedupeState || 'unknown' }}</span>
-                  <small>评估 {{ candidate.assessmentState || 'pending' }} · 正文 v{{ candidate.contentVersion || 0 }} · {{ candidate.userState?.currentFeedback || '无个人反馈' }}</small>
-                </div>
-                <a-space class="candidate-actions" wrap>
-                  <a-button @click="openCandidate(candidate)">
-                    <template #icon><icon-link /></template>
-                    原文
-                  </a-button>
-                  <a-button type="primary" :loading="archivingCandidateId === candidate.id" @click="archiveCandidate(candidate.id)">
-                    <template #icon><icon-storage /></template>
-                    入库
-                  </a-button>
-                  <a-button status="danger" @click="ignoreCandidate(candidate.id)">
-                    <template #icon><icon-close /></template>
-                    忽略
-                  </a-button>
-                </a-space>
-              </article>
-            </div>
           </section>
         </a-tab-pane>
 
@@ -494,7 +466,6 @@ import SiteInsightPanel from '@/components/recommendations/SiteInsightPanel.vue'
 import { groupCrawlQueueTasks } from '@/utils/crawlQueueGrouping.mjs'
 import {
   IconArrowLeft,
-  IconClose,
   IconDelete,
   IconEye,
   IconLink,
@@ -502,7 +473,6 @@ import {
   IconRefresh,
   IconRobot,
   IconSettings,
-  IconStorage,
   IconSync,
 } from '@arco-design/web-vue/es/icon'
 
@@ -688,7 +658,7 @@ const emptyCrawlQueue = (): CrawlQueueSnapshot => ({
 })
 
 const router = useRouter()
-const activeTab = ref('today')
+const activeTab = ref('feed')
 const loading = ref(false)
 const generating = ref(false)
 const savingSettings = ref(false)
@@ -705,13 +675,21 @@ const addingBlacklist = ref(false)
 const deletingBlacklistId = ref<number | null>(null)
 const rankingWindow = ref<'7d' | 'all'>('7d')
 const keywordWindow = ref<'7d' | 'all'>('7d')
-const candidateStatus = ref('new')
 const historyDate = ref(formatLocalDate(new Date()))
 const rankings = ref<ArchiveRankingItem[]>([])
 const archiveRecommendations = ref<ArchiveRecommendationItem[]>([])
 const keywords = ref<KeywordItem[]>([])
 const sources = ref<DiscoverySource[]>([])
-const candidates = ref<DiscoveryCandidate[]>([])
+const sourcePage = ref(1)
+const sourcePageSize = ref(10)
+const pagedSources = computed(() => {
+  const start = (sourcePage.value - 1) * sourcePageSize.value
+  return sources.value.slice(start, start + sourcePageSize.value)
+})
+watch(() => sources.value.length, (total) => {
+  const maxPage = Math.max(1, Math.ceil(total / sourcePageSize.value))
+  if (sourcePage.value > maxPage) sourcePage.value = maxPage
+})
 const discoveryFeed = ref<RecommendationFeedSnapshot>({ batch: null, items: [] })
 const crawlQueue = ref<CrawlQueueSnapshot>(emptyCrawlQueue())
 const domainBlacklist = ref<DomainBlacklistEntry[]>([])
@@ -831,7 +809,7 @@ const loadCrawlQueue = async (silent = false) => {
     if (!silent) crawlQueueLoading.value = true
     crawlQueue.value = await requestJSON<CrawlQueueSnapshot>('/api/admin/discovery/crawl-queue?limit=50', { headers: authHeaders() })
     if (wasRunning && crawlQueue.value.state !== 'running') {
-      await Promise.all([loadSources(), loadCandidates()])
+      await Promise.all([loadSources(), loadDiscoveryFeed()])
     }
   } catch (error) {
     if (!silent) Message.error(error instanceof Error ? error.message : '加载爬取任务队列失败')
@@ -883,7 +861,7 @@ const addDomainBlacklist = async () => {
     })
     blacklistForm.domain = ''
     blacklistForm.reason = ''
-    await Promise.all([loadDomainBlacklist(true), loadCrawlQueue(true), loadCandidates()])
+    await Promise.all([loadDomainBlacklist(true), loadCrawlQueue(true), loadDiscoveryFeed()])
     Message.success(`域名已加入黑名单，剔除 ${mutation.affectedCandidates || 0} 篇候选文章`)
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '添加域名黑名单失败')
@@ -896,7 +874,7 @@ const deleteDomainBlacklist = async (id: number) => {
   try {
     deletingBlacklistId.value = id
     const mutation = await requestJSON<DomainBlacklistMutation>(`/api/admin/discovery/domain-blacklist/${id}`, { method: 'DELETE', headers: authHeaders() })
-    await Promise.all([loadDomainBlacklist(true), loadCrawlQueue(true), loadCandidates()])
+    await Promise.all([loadDomainBlacklist(true), loadCrawlQueue(true), loadDiscoveryFeed()])
     Message.success(`域名黑名单已删除，恢复 ${mutation.affectedCandidates || 0} 篇候选文章`)
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '删除域名黑名单失败')
@@ -984,14 +962,6 @@ const refreshDiscoveryFeedBatch = async () => {
   }
 }
 
-const loadCandidates = async () => {
-  if (candidateStatus.value === 'new') {
-    await loadDiscoveryFeed()
-    return
-  }
-  candidates.value = (await requestJSON<DiscoveryCandidate[]>(`/api/discovery/candidates?status=${candidateStatus.value}&limit=80`, { headers: authHeaders() })) ?? []
-}
-
 const loadAll = async () => {
   try {
     loading.value = true
@@ -1005,7 +975,7 @@ const loadAll = async () => {
       loadKeywords(),
       loadArchiveRecommendations(),
       loadSources(),
-      loadCandidates(),
+      loadDiscoveryFeed(),
     ])
     if (activeTab.value === 'queue' && isOwner.value) await refreshQueueTab()
   } catch (error) {
@@ -1087,7 +1057,7 @@ const fetchSource = async (sourceId: number) => {
   try {
     fetchingSourceId.value = sourceId
     await requestJSON(`/api/discovery/sources/${sourceId}/fetch`, { method: 'POST', headers: authHeaders() })
-    await Promise.all([loadSources(), loadCandidates()])
+    await Promise.all([loadSources(), loadDiscoveryFeed()])
     Message.success('内容源刷新完成')
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '刷新内容源失败')
@@ -1215,7 +1185,6 @@ const markCandidateRead = async (candidate: DiscoveryCandidate) => {
   if (!candidate?.url) return
   try {
     await requestJSON(`/api/discovery/candidates/${candidate.id}/read`, { method: 'POST', headers: authHeaders() })
-    await loadCandidates()
   } catch { /* Opening the article should not depend on recording read state. */ }
 }
 
@@ -1229,21 +1198,12 @@ const archiveCandidate = async (candidateId: number) => {
   try {
     archivingCandidateId.value = candidateId
     await requestJSON(`/api/discovery/candidates/${candidateId}/archive`, { method: 'POST', headers: authHeaders() })
-    await loadCandidates()
+    await loadDiscoveryFeed()
     Message.success('已加入归档队列')
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '加入归档失败')
   } finally {
     archivingCandidateId.value = null
-  }
-}
-
-const ignoreCandidate = async (candidateId: number) => {
-  try {
-    await requestJSON(`/api/discovery/candidates/${candidateId}/ignore`, { method: 'POST', headers: authHeaders() })
-    await loadCandidates()
-  } catch (error) {
-    Message.error(error instanceof Error ? error.message : '忽略候选失败')
   }
 }
 
@@ -1453,6 +1413,11 @@ onBeforeUnmount(clearCrawlQueueTimer)
   gap: 12px;
 }
 
+.source-pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+
 .discovery-feed-spin {
   display: block;
   width: 100%;
@@ -1496,19 +1461,6 @@ onBeforeUnmount(clearCrawlQueueTimer)
   font-size: 17px;
   line-height: 1.35;
   overflow-wrap: anywhere;
-}
-
-.candidate-title-link {
-  color: #1d2129;
-  text-decoration: none;
-  transition: color 0.2s ease;
-}
-
-.candidate-title-link:hover,
-.candidate-title-link:focus-visible {
-  color: #165dff;
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 
 .item-main p,

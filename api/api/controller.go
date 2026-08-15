@@ -55,7 +55,6 @@ var (
 	updateDiscoverySource               = discovery.UpdateDiscoverySource
 	deleteDiscoverySource               = discovery.DeleteDiscoverySource
 	fetchDiscoverySourceByID            = discovery.FetchDiscoverySourceByID
-	listDiscoveryCandidates             = discovery.ListDiscoveryCandidatesForUser
 	getDiscoverySiteGraph               = discovery.GetSiteGraph
 	listBackfillCoverage                = discovery.ListBackfillCoverage
 	updateDiscoverySiteStatus           = discovery.UpdateDiscoverySiteOperationalStatus
@@ -64,7 +63,6 @@ var (
 	getDiscoverySiteOperations          = discovery.GetDiscoverySiteOperations
 	getDiscoveryCandidate               = discovery.GetDiscoveryCandidate
 	markCandidateRead                   = discovery.MarkUserCandidateRead
-	markCandidateIgnored                = discovery.MarkUserCandidateIgnored
 	markCandidateArchived               = discovery.MarkUserCandidateArchived
 	getRecommendationSettings           = recommendation.GetRecommendationSettings
 	saveRecommendationSettings          = recommendation.SaveRecommendationSettings
@@ -921,19 +919,6 @@ func DeleteDiscoveryDomainBlacklist(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "域名黑名单已删除", "Data": mutation})
 }
 
-func ListDiscoveryCandidates(c *gin.Context) {
-	userID, ok := requireCurrentUserID(c)
-	if !ok {
-		return
-	}
-	candidates, err := listDiscoveryCandidates(userID, c.Query("status"), queryInt(c, "limit", 50))
-	if err != nil {
-		c.JSON(500, gin.H{"Status": "0", "Message": "查询候选文章失败", "Error": err.Error()})
-		return
-	}
-	c.JSON(200, gin.H{"Status": "1", "Message": "查询候选文章成功", "Data": candidates})
-}
-
 func MarkDiscoveryCandidateRead(c *gin.Context) {
 	userID, authenticated := requireCurrentUserID(c)
 	if !authenticated {
@@ -949,23 +934,6 @@ func MarkDiscoveryCandidateRead(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"Status": "1", "Message": "候选文章已标记阅读", "Data": candidate})
-}
-
-func IgnoreDiscoveryCandidate(c *gin.Context) {
-	userID, authenticated := requireCurrentUserID(c)
-	if !authenticated {
-		return
-	}
-	candidateID, ok := parseUintParam(c, "id")
-	if !ok {
-		return
-	}
-	candidate, err := markCandidateIgnored(userID, candidateID)
-	if err != nil {
-		c.JSON(500, gin.H{"Status": "0", "Message": "忽略候选文章失败", "Error": err.Error()})
-		return
-	}
-	c.JSON(200, gin.H{"Status": "1", "Message": "候选文章已忽略", "Data": candidate})
 }
 
 func ArchiveDiscoveryCandidate(c *gin.Context) {
@@ -1751,10 +1719,8 @@ func WebStarter(debugMode bool) {
 		protected.GET("/admin/discovery/domain-blacklist", ListDiscoveryDomainBlacklist)
 		protected.POST("/admin/discovery/domain-blacklist", CreateDiscoveryDomainBlacklist)
 		protected.DELETE("/admin/discovery/domain-blacklist/:id", DeleteDiscoveryDomainBlacklist)
-		protected.GET("/discovery/candidates", ListDiscoveryCandidates)
 		protected.POST("/discovery/candidates/:id/read", MarkDiscoveryCandidateRead)
 		protected.POST("/discovery/candidates/:id/archive", ArchiveDiscoveryCandidate)
-		protected.POST("/discovery/candidates/:id/ignore", IgnoreDiscoveryCandidate)
 		protected.GET("/recommendations/today", GetRecommendationToday)
 		protected.GET("/recommendations/discovery-feed", GetDiscoveryRecommendationFeed)
 		protected.POST("/recommendations/discovery-feed/refresh", RefreshDiscoveryRecommendationFeed)
