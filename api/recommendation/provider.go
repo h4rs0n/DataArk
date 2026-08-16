@@ -92,3 +92,29 @@ type RerankItem struct {
 	Reason      string
 	Confidence  float64
 }
+
+type DigestSummaryGenerator interface {
+	GenerateDigestSummary(ctx context.Context, input DigestSummaryInput) (DigestSummaryOutput, error)
+}
+
+type DigestSummaryInput struct {
+	Date  string
+	Items []DigestSummaryItem
+}
+
+type DigestSummaryItem struct {
+	Rank    int      `json:"rank"`
+	Title   string   `json:"title"`
+	Summary string   `json:"summary"`
+	Source  string   `json:"source"`
+	Topics  []string `json:"topics"`
+	Reason  string   `json:"reason"`
+}
+
+type DigestSummaryOutput struct {
+	Overview      string   `json:"overview"`
+	Highlights    []string `json:"highlights"`
+	Topics        []string `json:"topics"`
+	Model         string   `json:"-"`
+	PromptVersion string   `json:"-"`
+}

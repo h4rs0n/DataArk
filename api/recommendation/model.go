@@ -35,29 +35,36 @@ type RecommendationSettings struct {
 }
 
 type RecommendationDay struct {
-	ID                 uint                 `json:"id" gorm:"primaryKey"`
-	UserID             uint                 `json:"userId" gorm:"uniqueIndex:idx_recommendation_days_user_date;not null"`
-	RecommendationDate string               `json:"date" gorm:"uniqueIndex:idx_recommendation_days_user_date;not null;size:10"`
-	Timezone           string               `json:"timezone" gorm:"not null;size:64"`
-	Status             string               `json:"status" gorm:"index;not null;size:32"`
-	PolicyVersion      string               `json:"policyVersion" gorm:"index;not null;default:v2;size:64"`
-	ShortageReasons    string               `json:"shortageReasons" gorm:"type:text"`
-	RequestedCount     int                  `json:"requestedCount" gorm:"not null;default:10"`
-	ActualCount        int                  `json:"actualCount" gorm:"not null;default:0"`
-	ProfileVersion     uint                 `json:"profileVersion"`
-	LLMModel           string               `json:"llmModel" gorm:"size:255"`
-	PromptVersion      string               `json:"promptVersion" gorm:"size:64"`
-	FailureReason      string               `json:"failureReason" gorm:"type:text"`
-	Degraded           bool                 `json:"degraded" gorm:"index;not null;default:false"`
-	DegradationReason  string               `json:"degradationReason" gorm:"type:text"`
-	SupplementPolicy   string               `json:"supplementPolicy" gorm:"size:64"`
-	GeneratedAt        *time.Time           `json:"generatedAt"`
-	PublishedAt        *time.Time           `json:"publishedAt" gorm:"index"`
-	SupplementedAt     *time.Time           `json:"supplementedAt" gorm:"index"`
-	AuditVersion       uint                 `json:"auditVersion" gorm:"not null;default:1"`
-	Items              []RecommendationItem `json:"items" gorm:"foreignKey:DayID"`
-	CreatedAt          time.Time            `json:"createdAt"`
-	UpdatedAt          time.Time            `json:"updatedAt"`
+	ID                   uint                 `json:"id" gorm:"primaryKey"`
+	UserID               uint                 `json:"userId" gorm:"uniqueIndex:idx_recommendation_days_user_date;not null"`
+	RecommendationDate   string               `json:"date" gorm:"uniqueIndex:idx_recommendation_days_user_date;not null;size:10"`
+	Timezone             string               `json:"timezone" gorm:"not null;size:64"`
+	Status               string               `json:"status" gorm:"index;not null;size:32"`
+	PolicyVersion        string               `json:"policyVersion" gorm:"index;not null;default:v2;size:64"`
+	ShortageReasons      string               `json:"shortageReasons" gorm:"type:text"`
+	RequestedCount       int                  `json:"requestedCount" gorm:"not null;default:10"`
+	ActualCount          int                  `json:"actualCount" gorm:"not null;default:0"`
+	ProfileVersion       uint                 `json:"profileVersion"`
+	LLMModel             string               `json:"llmModel" gorm:"size:255"`
+	PromptVersion        string               `json:"promptVersion" gorm:"size:64"`
+	FailureReason        string               `json:"failureReason" gorm:"type:text"`
+	Degraded             bool                 `json:"degraded" gorm:"index;not null;default:false"`
+	DegradationReason    string               `json:"degradationReason" gorm:"type:text"`
+	SupplementPolicy     string               `json:"supplementPolicy" gorm:"size:64"`
+	GeneratedAt          *time.Time           `json:"generatedAt"`
+	PublishedAt          *time.Time           `json:"publishedAt" gorm:"index"`
+	SupplementedAt       *time.Time           `json:"supplementedAt" gorm:"index"`
+	SummaryText          string               `json:"summaryText" gorm:"type:text"`
+	SummaryHighlights    string               `json:"summaryHighlights" gorm:"type:text"`
+	SummaryTopics        string               `json:"summaryTopics" gorm:"type:text"`
+	SummaryModel         string               `json:"summaryModel" gorm:"size:255"`
+	SummaryPromptVersion string               `json:"summaryPromptVersion" gorm:"size:64"`
+	SummaryActualCount   int                  `json:"summaryActualCount" gorm:"not null;default:0"`
+	SummaryGeneratedAt   *time.Time           `json:"summaryGeneratedAt"`
+	AuditVersion         uint                 `json:"auditVersion" gorm:"not null;default:1"`
+	Items                []RecommendationItem `json:"items" gorm:"foreignKey:DayID"`
+	CreatedAt            time.Time            `json:"createdAt"`
+	UpdatedAt            time.Time            `json:"updatedAt"`
 }
 
 type RecommendationItem struct {

@@ -67,6 +67,7 @@ var (
 	getRecommendationSettings           = recommendation.GetRecommendationSettings
 	saveRecommendationSettings          = recommendation.SaveRecommendationSettings
 	getRecommendationDaySnapshot        = recommendation.GetRecommendationDaySnapshot
+	getRecommendationDaySummary         = recommendation.GetRecommendationDaySummary
 	getCurrentDiscoveryFeed             = recommendation.GetCurrentDiscoveryFeed
 	refreshDiscoveryFeed                = recommendation.RefreshDiscoveryFeed
 	recommendationDateForUser           = recommendation.RecommendationDateForUser
@@ -981,6 +982,24 @@ func GetRecommendationToday(c *gin.Context) {
 	c.JSON(200, gin.H{"Status": "1", "Message": "查询今日推荐成功", "Data": snapshot})
 }
 
+func GetRecommendationTodaySummary(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
+		return
+	}
+	date, err := recommendationDateForUser(userID, recommendationNow())
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "计算用户本地日期失败", "Error": err.Error()})
+		return
+	}
+	summary, err := getRecommendationDaySummary(c.Request.Context(), userID, date)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "生成今日推荐总结失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询今日推荐总结成功", "Data": summary})
+}
+
 func GetDiscoveryRecommendationFeed(c *gin.Context) {
 	userID, ok := requireCurrentUserID(c)
 	if !ok {
@@ -1722,6 +1741,7 @@ func WebStarter(debugMode bool) {
 		protected.POST("/discovery/candidates/:id/read", MarkDiscoveryCandidateRead)
 		protected.POST("/discovery/candidates/:id/archive", ArchiveDiscoveryCandidate)
 		protected.GET("/recommendations/today", GetRecommendationToday)
+		protected.GET("/recommendations/today/summary", GetRecommendationTodaySummary)
 		protected.GET("/recommendations/discovery-feed", GetDiscoveryRecommendationFeed)
 		protected.POST("/recommendations/discovery-feed/refresh", RefreshDiscoveryRecommendationFeed)
 		protected.GET("/recommendations/history", GetRecommendationHistory)

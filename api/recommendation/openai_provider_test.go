@@ -175,6 +175,55 @@ func TestOpenAICompatibleProviderEnrichAndRerank(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleProviderGenerateDigestSummary(t *testing.T) {
+	client := &fakeOpenAIDoer{responses: []string{
+		`{"choices":[{"message":{"content":"{\"overview\":\"今日两篇技术文章。\",\"highlights\":[\"Go 并发实践\"],\"topics\":[\"go\",\"systems\"]}"}}]}`,
+	}}
+	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
+	output, err := provider.GenerateDigestSummary(context.Background(), DigestSummaryInput{
+		Date: "2026-06-01",
+		Items: []DigestSummaryItem{
+			{Rank: 1, Title: "Go concurrency", Summary: "About goroutines", Source: "go.example", Topics: []string{"go"}, Reason: "matches profile"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Overview != "今日两篇技术文章。" || len(output.Highlights) != 1 || len(output.Topics) != 2 {
+		t.Fatalf("output = %#v", output)
+	}
+	if output.Model != "MiMo-V2.5-Pro" || output.PromptVersion != "openai-compatible-digest-summary-v1" {
+		t.Fatalf("identity = %#v", output)
+	}
+	payload := client.payloads[0]
+	if payload["max_tokens"] != float64(llmDigestSummaryMaxTokens) {
+		t.Fatalf("max_tokens = %#v", payload["max_tokens"])
+	}
+	responseFormat := requireMap(t, payload["response_format"])
+	if responseFormat["type"] != "json_object" {
+		t.Fatalf("response format = %#v", responseFormat)
+	}
+	messages, ok := payload["messages"].([]interface{})
+	if !ok || len(messages) != 2 {
+		t.Fatalf("messages = %#v", payload["messages"])
+	}
+	userMessage := requireMap(t, messages[1])
+	content, _ := userMessage["content"].(string)
+	if !strings.Contains(content, "2026-06-01") || !strings.Contains(content, "Go concurrency") {
+		t.Fatalf("user message = %q", content)
+	}
+}
+
+func TestOpenAICompatibleProviderGenerateDigestSummaryRejectsInvalidOutput(t *testing.T) {
+	client := &fakeOpenAIDoer{responses: []string{
+		`{"choices":[{"message":{"content":"{\"overview\":\"\",\"highlights\":[]}"}}]}`,
+	}}
+	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
+	if _, err := provider.GenerateDigestSummary(context.Background(), DigestSummaryInput{Date: "2026-06-01"}); err == nil {
+		t.Fatal("expected validation error for empty overview")
+	}
+}
+
 func TestOpenAICompatibleProviderArticleAssessmentUsesCompactSchemaAndQwenSwitch(t *testing.T) {
 	resetAssessmentOutputCapabilitiesForTest()
 	client := &fakeOpenAIDoer{responses: []string{

@@ -83,6 +83,25 @@
               </a-space>
             </div>
 
+            <div class="today-summary">
+              <a-spin v-if="todaySummaryLoading" :size="16" tip="正在生成今日总结…" class="today-summary-loading" />
+              <template v-else-if="todaySummary?.available">
+                <p class="today-summary-overview">{{ todaySummary.overview }}</p>
+                <ul v-if="todaySummary.highlights.length" class="today-summary-highlights">
+                  <li v-for="(highlight, index) in todaySummary.highlights" :key="index">{{ highlight }}</li>
+                </ul>
+                <div v-if="todaySummary.topics.length" class="today-summary-topics">
+                  <a-tag v-for="topic in todaySummary.topics" :key="topic" size="small">{{ topic }}</a-tag>
+                </div>
+                <small class="today-summary-meta">
+                  {{ todaySummary.model === 'rule-based' ? '统计总结' : 'AI 总结' }}
+                  <template v-if="todaySummary.generatedAt"> · 生成于 {{ formatDateTime(todaySummary.generatedAt) }}</template>
+                </small>
+              </template>
+              <p v-else-if="todaySummaryError" class="today-summary-error">总结暂不可用：{{ todaySummaryError }}</p>
+              <p v-else-if="todaySummary" class="today-summary-empty">{{ todaySummary.reason || '今日推荐生成后将自动总结' }}</p>
+            </div>
+
             <DigestSummary :day="todaySnapshot.day" />
 
             <a-empty v-if="todaySnapshot.items.length === 0" description="暂无今日推荐" />
@@ -566,6 +585,18 @@ interface RecommendationSnapshot {
   items: RecommendationItem[]
 }
 
+interface TodayDigestSummary {
+  date: string
+  available: boolean
+  overview: string
+  highlights: string[]
+  topics: string[]
+  model: string
+  promptVersion: string
+  generatedAt?: string
+  reason?: string
+}
+
 interface RecommendationFeedBatch {
   id: number
   userId: number
@@ -705,6 +736,9 @@ const contextDrawerVisible = ref(false)
 const contextLoading = ref(false)
 const itemContext = ref<any>()
 const todaySnapshot = ref<RecommendationSnapshot>(emptySnapshot(formatLocalDate(new Date())))
+const todaySummary = ref<TodayDigestSummary | null>(null)
+const todaySummaryLoading = ref(false)
+const todaySummaryError = ref('')
 const historySnapshot = ref<RecommendationSnapshot>(emptySnapshot(historyDate.value))
 const sourceForm = reactive({ name: '', url: '', type: 'feed' })
 const blacklistForm = reactive({ domain: '', reason: '' })
@@ -781,6 +815,19 @@ const requestJSON = async <T>(url: string, options: RequestInit = {}): Promise<T
 const loadToday = async () => {
   todaySnapshot.value = normalizeSnapshot(await requestJSON<RecommendationSnapshot>('/api/recommendations/today', { headers: authHeaders() }))
   await Promise.all(todaySnapshot.value.items.map(loadItemFeedback))
+}
+
+const loadTodaySummary = async () => {
+  todaySummaryLoading.value = true
+  todaySummaryError.value = ''
+  try {
+    todaySummary.value = await requestJSON<TodayDigestSummary>('/api/recommendations/today/summary', { headers: authHeaders() })
+  } catch (error) {
+    todaySummary.value = null
+    todaySummaryError.value = error instanceof Error ? error.message : '总结生成失败'
+  } finally {
+    todaySummaryLoading.value = false
+  }
 }
 
 const loadIdentity = async () => {
@@ -968,6 +1015,7 @@ const loadAll = async () => {
     await Promise.all([
       loadIdentity(),
       loadToday(),
+      loadTodaySummary(),
       loadHistory(),
       loadSettings(),
       loadBlocks(),
@@ -991,6 +1039,7 @@ const supplementDaily = async (date: string) => {
     const query = date ? `?date=${encodeURIComponent(date)}` : ''
     todaySnapshot.value = normalizeSnapshot(await requestJSON<RecommendationSnapshot>(`/api/admin/recommendations/supplement${query}`, { method: 'POST', headers: authHeaders() }))
     await loadHistory()
+    void loadTodaySummary()
     Message.success('日报已按缺口追加')
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '补充日报失败')
@@ -1403,6 +1452,54 @@ onBeforeUnmount(clearCrawlQueueTimer)
 .recommendation-card small {
   color: #86909c;
   font-size: 13px;
+}
+
+.today-summary {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  background: #f7f8fa;
+  border-radius: 8px;
+  min-height: 48px;
+}
+
+.today-summary-loading {
+  display: flex;
+  align-items: center;
+}
+
+.today-summary-overview {
+  margin: 0;
+  color: #1d2129;
+  line-height: 1.7;
+}
+
+.today-summary-highlights {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: #4e5969;
+}
+
+.today-summary-highlights li {
+  margin-top: 4px;
+}
+
+.today-summary-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.today-summary-meta {
+  display: block;
+  margin-top: 8px;
+  color: #86909c;
+}
+
+.today-summary-error,
+.today-summary-empty {
+  margin: 0;
+  color: #86909c;
 }
 
 .recommendation-list,
