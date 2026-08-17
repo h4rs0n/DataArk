@@ -55,15 +55,27 @@ func (fake *fakeOpenAIDoer) Do(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func TestArticleAssessmentStructuredOutputDowngradesOnceAcrossConcurrentCalls(t *testing.T) {
+func TestArticleAssessmentUnsupportedSchemaCachesJSONObjectForLaterCalls(t *testing.T) {
 	resetAssessmentOutputCapabilitiesForTest()
 	valid := chatCompletionWithContent(articleAssessmentJSON(72, 64, 81, "specific evidence", "limited comparison"))
-	responses := []string{
-		`{"choices":[{"message":{"content":"{\"qualityScore\":72"}}]}`,
-		valid, valid, valid, valid, valid,
+	client := &fakeOpenAIDoer{
+		responses: []string{`{"error":{"message":"response_format json_schema is not supported"}}`, valid, valid, valid, valid, valid, valid},
+		statuses:  []int{http.StatusBadRequest, http.StatusOK, http.StatusOK, http.StatusOK, http.StatusOK, http.StatusOK, http.StatusOK},
 	}
-	client := &fakeOpenAIDoer{responses: responses}
 	provider := OpenAICompatibleProvider{BaseURL: "https://fallback.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
+	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{CandidateID: 1, Title: "Title", BodyText: "Body"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.payloads) != 2 {
+		t.Fatalf("probe requests = %d, want schema rejection plus one json_object", len(client.payloads))
+	}
+	if requireMap(t, client.payloads[0]["response_format"])["type"] != articleAssessmentResponseSchemaMode {
+		t.Fatalf("first format = %#v", client.payloads[0]["response_format"])
+	}
+	if requireMap(t, client.payloads[1]["response_format"])["type"] != articleAssessmentResponseObjectMode {
+		t.Fatalf("second format = %#v", client.payloads[1]["response_format"])
+	}
+
 	var group sync.WaitGroup
 	errorsByCall := make(chan error, 5)
 	for index := 0; index < 5; index++ {
@@ -72,7 +84,7 @@ func TestArticleAssessmentStructuredOutputDowngradesOnceAcrossConcurrentCalls(t 
 			defer group.Done()
 			_, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{CandidateID: candidateID, Title: "Title", BodyText: "Body"})
 			errorsByCall <- err
-		}(uint(index + 1))
+		}(uint(index + 2))
 	}
 	group.Wait()
 	close(errorsByCall)
@@ -81,13 +93,13 @@ func TestArticleAssessmentStructuredOutputDowngradesOnceAcrossConcurrentCalls(t 
 			t.Fatal(err)
 		}
 	}
-	if len(client.payloads) != 6 {
-		t.Fatalf("requests = %d, want one probe plus five compatible calls", len(client.payloads))
+	if len(client.payloads) != 7 {
+		t.Fatalf("requests = %d, want one probe plus six json_object calls", len(client.payloads))
 	}
 	schemaCalls := 0
 	for _, payload := range client.payloads {
-		format := requireMap(t, payload["response_format"])
-		if format["type"] == articleAssessmentResponseSchemaMode {
+		assertChatSampling(t, payload)
+		if requireMap(t, payload["response_format"])["type"] == articleAssessmentResponseSchemaMode {
 			schemaCalls++
 		}
 	}
@@ -165,9 +177,7 @@ func TestOpenAICompatibleProviderEnrichAndRerank(t *testing.T) {
 		t.Fatalf("paths = %#v", client.paths)
 	}
 	for index, payload := range client.payloads {
-		if payload["max_tokens"] != float64(llmChatMaxTokens) {
-			t.Fatalf("payload %d max_tokens = %#v", index, payload["max_tokens"])
-		}
+		assertChatSampling(t, payload)
 		thinking, ok := payload["thinking"].(map[string]interface{})
 		if !ok || thinking["type"] != "disabled" {
 			t.Fatalf("payload %d thinking = %#v", index, payload["thinking"])
@@ -196,9 +206,7 @@ func TestOpenAICompatibleProviderGenerateDigestSummary(t *testing.T) {
 		t.Fatalf("identity = %#v", output)
 	}
 	payload := client.payloads[0]
-	if payload["max_tokens"] != float64(llmDigestSummaryMaxTokens) {
-		t.Fatalf("max_tokens = %#v", payload["max_tokens"])
-	}
+	assertChatSampling(t, payload)
 	responseFormat := requireMap(t, payload["response_format"])
 	if responseFormat["type"] != "json_object" {
 		t.Fatalf("response format = %#v", responseFormat)
@@ -238,7 +246,8 @@ func TestOpenAICompatibleProviderArticleAssessmentUsesCompactSchemaAndQwenSwitch
 		t.Fatalf("result = %#v", result)
 	}
 	payload := client.payloads[0]
-	if payload["max_tokens"] != float64(llmChatMaxTokens) || payload["enable_thinking"] != false {
+	assertChatSampling(t, payload)
+	if payload["enable_thinking"] != false {
 		t.Fatalf("request controls = %#v", payload)
 	}
 	responseFormat := requireMap(t, payload["response_format"])
@@ -333,21 +342,145 @@ func TestOpenAICompatibleProviderLogsUsageWithoutPayloadText(t *testing.T) {
 func TestOpenAICompatibleProviderLogsUsageWhenStrictAssessmentOutputIsInvalid(t *testing.T) {
 	resetAssessmentOutputCapabilitiesForTest()
 	logOutput := captureStandardLog(t)
-	client := &fakeOpenAIDoer{responses: []string{
-		`{"choices":[{"message":{"content":"{\"qualityScore\":80,\"depthScore\":70,\"evergreenScore\":60,\"reasons\":[\"ok\",\"limit\"],\"summary\":\"ok\",\"keywords\":[\"a\",\"b\",\"c\"],\"unused\":\"must fail\"}"}}],"usage":{"prompt_tokens":80,"completion_tokens":16,"total_tokens":96,"completion_tokens_details":{"reasoning_tokens":3}}}`,
-		`{"choices":[{"message":{"content":"{\"qualityScore\":80,\"depthScore\":70,\"evergreenScore\":60,\"reasons\":[\"ok\",\"limit\"],\"summary\":\"ok\",\"keywords\":[\"a\",\"b\",\"c\"],\"unused\":\"must fail\"}"}}],"usage":{"prompt_tokens":81,"completion_tokens":17,"total_tokens":98}}`,
-	}}
+	invalid := `{"choices":[{"message":{"content":"{\"qualityScore\":80,\"depthScore\":70,\"evergreenScore\":60,\"reasons\":[\"ok\",\"limit\"],\"summary\":\"ok\",\"keywords\":[\"a\",\"b\",\"c\"],\"unused\":\"must fail\"}"}}],"usage":{"prompt_tokens":80,"completion_tokens":16,"total_tokens":96,"completion_tokens_details":{"reasoning_tokens":3}}}`
+	responses := make([]string, articleAssessmentSchemaMaxAttempts+1)
+	for index := range responses {
+		responses[index] = invalid
+	}
+	client := &fakeOpenAIDoer{responses: responses}
 	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
 	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("error = %v", err)
 	}
 	events := decodeLLMEvents(t, logOutput.String())
-	if len(events) != 2 || events[0]["status"] != "failed" || events[1]["status"] != "failed" || events[1]["error_type"] != "invalid_output" {
-		t.Fatalf("events = %#v", events)
+	if len(events) != articleAssessmentSchemaMaxAttempts+1 {
+		t.Fatalf("event count = %d, want %d; events=%#v", len(events), articleAssessmentSchemaMaxAttempts+1, events)
+	}
+	for index, event := range events {
+		if event["status"] != "failed" || event["error_type"] != "invalid_output" {
+			t.Fatalf("event %d = %#v", index, event)
+		}
+		if event["llm_attempt"] != float64(index+1) {
+			t.Fatalf("event %d llm_attempt = %#v", index, event["llm_attempt"])
+		}
+		message, _ := event["error_message"].(string)
+		if !strings.Contains(message, "unknown field") {
+			t.Fatalf("event %d error_message = %q", index, message)
+		}
+		wantMode := articleAssessmentResponseSchemaMode
+		if index == articleAssessmentSchemaMaxAttempts {
+			wantMode = articleAssessmentResponseObjectMode
+		}
+		if event["llm_response_mode"] != wantMode {
+			t.Fatalf("event %d llm_response_mode = %#v", index, event["llm_response_mode"])
+		}
 	}
 	usage := requireMap(t, events[0]["llm_usage"])
 	if usage["prompt_tokens"] != float64(80) || usage["reasoning_tokens"] != float64(3) {
 		t.Fatalf("usage = %#v", usage)
+	}
+	if strings.Contains(logOutput.String(), "must fail") {
+		t.Fatalf("completion text leaked in %q", logOutput.String())
+	}
+}
+
+func TestArticleAssessmentRetriesSchemaWithConcreteValidatorError(t *testing.T) {
+	resetAssessmentOutputCapabilitiesForTest()
+	invalid := `{"qualityScore":80,"depthScore":70,"evergreenScore":60,"reasons":["ok","limit"],"summary":"ok","keywords":["a","b","c"],"unused":true}`
+	client := &fakeOpenAIDoer{responses: []string{
+		chatCompletionWithContent(invalid),
+		chatCompletionWithContent(articleAssessmentJSON(80, 70, 60, "ok", "limit")),
+	}}
+	provider := OpenAICompatibleProvider{BaseURL: "https://retry.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
+	result, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.QualityScore != 80 || len(client.payloads) != 2 {
+		t.Fatalf("result=%#v requests=%d", result, len(client.payloads))
+	}
+	if requireMap(t, client.payloads[0]["response_format"])["type"] != articleAssessmentResponseSchemaMode {
+		t.Fatalf("first format = %#v", client.payloads[0]["response_format"])
+	}
+	if requireMap(t, client.payloads[1]["response_format"])["type"] != articleAssessmentResponseSchemaMode {
+		t.Fatalf("retry format = %#v", client.payloads[1]["response_format"])
+	}
+	assertChatSampling(t, client.payloads[1])
+	messages := payloadMessages(t, client.payloads[1])
+	if len(messages) < 4 {
+		t.Fatalf("retry messages = %#v", messages)
+	}
+	assistant := requireMap(t, messages[len(messages)-2])
+	if assistant["role"] != "assistant" || assistant["content"] != invalid {
+		t.Fatalf("assistant replay = %#v", assistant)
+	}
+	user := requireMap(t, messages[len(messages)-1])
+	content, _ := user["content"].(string)
+	if user["role"] != "user" || !strings.Contains(content, `unknown field "unused"`) || !strings.Contains(content, "Parser/validator error:") {
+		t.Fatalf("retry user = %q", content)
+	}
+	if strings.Contains(content, "invalid chat json") {
+		t.Fatalf("retry user used classification wrapper: %q", content)
+	}
+}
+
+func TestArticleAssessmentFallsBackToJSONObjectAfterFiveSchemaRetriesWithoutCaching(t *testing.T) {
+	resetAssessmentOutputCapabilitiesForTest()
+	invalid := chatCompletionWithContent(`{"qualityScore":80,"depthScore":70,"evergreenScore":60,"reasons":["ok","limit"],"summary":"ok","keywords":["a","b","c"],"unused":true}`)
+	valid := chatCompletionWithContent(articleAssessmentJSON(72, 64, 81, "specific evidence", "limited comparison"))
+	responses := make([]string, articleAssessmentSchemaMaxAttempts+2)
+	for index := 0; index < articleAssessmentSchemaMaxAttempts; index++ {
+		responses[index] = invalid
+	}
+	responses[articleAssessmentSchemaMaxAttempts] = valid
+	responses[articleAssessmentSchemaMaxAttempts+1] = valid
+	client := &fakeOpenAIDoer{responses: responses}
+	provider := OpenAICompatibleProvider{BaseURL: "https://uncached.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
+	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{CandidateID: 1, Title: "Title", BodyText: "Body"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.payloads) != articleAssessmentSchemaMaxAttempts+1 {
+		t.Fatalf("first article requests = %d", len(client.payloads))
+	}
+	for index := 0; index < articleAssessmentSchemaMaxAttempts; index++ {
+		if requireMap(t, client.payloads[index]["response_format"])["type"] != articleAssessmentResponseSchemaMode {
+			t.Fatalf("attempt %d format = %#v", index+1, client.payloads[index]["response_format"])
+		}
+	}
+	objectPayload := client.payloads[articleAssessmentSchemaMaxAttempts]
+	if requireMap(t, objectPayload["response_format"])["type"] != articleAssessmentResponseObjectMode {
+		t.Fatalf("fallback format = %#v", objectPayload["response_format"])
+	}
+	user := lastUserMessage(t, objectPayload)
+	if !strings.Contains(user, `unknown field "unused"`) || strings.Contains(user, "invalid chat json") {
+		t.Fatalf("fallback user = %q", user)
+	}
+
+	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{CandidateID: 2, Title: "Title", BodyText: "Body"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.payloads) != articleAssessmentSchemaMaxAttempts+2 {
+		t.Fatalf("second article requests = %d", len(client.payloads))
+	}
+	if requireMap(t, client.payloads[articleAssessmentSchemaMaxAttempts+1]["response_format"])["type"] != articleAssessmentResponseSchemaMode {
+		t.Fatalf("second article should probe schema again, format=%#v", client.payloads[articleAssessmentSchemaMaxAttempts+1]["response_format"])
+	}
+}
+
+func TestArticleAssessmentRetryCauseUsesMissingFieldNames(t *testing.T) {
+	resetAssessmentOutputCapabilitiesForTest()
+	missing := `{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one","two"]}`
+	client := &fakeOpenAIDoer{responses: []string{
+		chatCompletionWithContent(missing),
+		chatCompletionWithContent(articleAssessmentJSON(50, 50, 50, "one", "two")),
+	}}
+	provider := OpenAICompatibleProvider{BaseURL: "https://missing.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
+	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err != nil {
+		t.Fatal(err)
+	}
+	content := lastUserMessage(t, client.payloads[1])
+	if !strings.Contains(content, "Missing required fields: summary, keywords.") {
+		t.Fatalf("retry user = %q", content)
 	}
 }
 
@@ -375,6 +508,49 @@ func requireMap(t *testing.T, value interface{}) map[string]interface{} {
 		t.Fatalf("value is not an object: %#v", value)
 	}
 	return result
+}
+
+func assertChatSampling(t *testing.T, payload map[string]interface{}) {
+	t.Helper()
+	want := map[string]interface{}{
+		"temperature":        llmChatTemperature,
+		"top_p":              llmChatTopP,
+		"top_k":              float64(llmChatTopK),
+		"min_p":              llmChatMinP,
+		"presence_penalty":   llmChatPresencePenalty,
+		"repetition_penalty": llmChatRepetitionPenalty,
+		"max_tokens":         float64(llmChatMaxTokens),
+	}
+	for field, expected := range want {
+		if payload[field] != expected {
+			t.Fatalf("payload[%s] = %#v, want %#v", field, payload[field], expected)
+		}
+	}
+}
+
+func payloadMessages(t *testing.T, payload map[string]interface{}) []interface{} {
+	t.Helper()
+	messages, ok := payload["messages"].([]interface{})
+	if !ok {
+		t.Fatalf("messages = %#v", payload["messages"])
+	}
+	return messages
+}
+
+func lastUserMessage(t *testing.T, payload map[string]interface{}) string {
+	t.Helper()
+	var content string
+	for _, raw := range payloadMessages(t, payload) {
+		message := requireMap(t, raw)
+		if message["role"] == "user" {
+			text, _ := message["content"].(string)
+			content = text
+		}
+	}
+	if content == "" {
+		t.Fatalf("missing user message in %#v", payload["messages"])
+	}
+	return content
 }
 
 func articleAssessmentJSON(quality int, depth int, evergreen int, reason1 string, reason2 string) string {

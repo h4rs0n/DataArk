@@ -28,14 +28,35 @@ func assessmentOutputCapabilityFor(provider OpenAICompatibleProvider) *assessmen
 	return created
 }
 
-func shouldRetryArticleAssessmentAsJSONObject(err error) bool {
+// currentMode 短锁读取已缓存的响应格式，调用方不得在 HTTP 期间持有这把锁。
+func (capability *assessmentOutputCapability) currentMode() string {
+	capability.mu.Lock()
+	defer capability.mu.Unlock()
+	return capability.mode
+}
+
+// rememberMode 记录本进程对该 endpoint+model 可用的响应格式。
+func (capability *assessmentOutputCapability) rememberMode(mode string) {
+	capability.mu.Lock()
+	defer capability.mu.Unlock()
+	capability.mode = mode
+}
+
+// isArticleAssessmentOutputRetryable 判定模型输出本身坏了，可用具体校验根因再打 json_schema。
+func isArticleAssessmentOutputRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
 	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "invalid chat json") || strings.Contains(message, "empty chat completion") {
-		return true
+	return strings.Contains(message, "invalid chat json") || strings.Contains(message, "empty chat completion")
+}
+
+// isArticleAssessmentUnsupportedSchema 判定网关拒绝 json_schema，应立刻改 json_object 且不必把 HTTP 正文喂给模型。
+func isArticleAssessmentUnsupportedSchema(err error) bool {
+	if err == nil {
+		return false
 	}
+	message := strings.ToLower(err.Error())
 	statusAllowsFallback := false
 	for _, status := range []int{400, 404, 415, 422} {
 		if strings.Contains(message, fmt.Sprintf("status %d", status)) {
