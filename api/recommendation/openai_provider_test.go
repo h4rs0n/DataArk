@@ -407,13 +407,10 @@ func TestArticleAssessmentRetriesSchemaWithConcreteValidatorError(t *testing.T) 
 	}
 	assertChatSampling(t, client.payloads[1])
 	messages := payloadMessages(t, client.payloads[1])
-	if len(messages) < 4 {
+	if len(messages) != 3 {
 		t.Fatalf("retry messages = %#v", messages)
 	}
-	assistant := requireMap(t, messages[len(messages)-2])
-	if assistant["role"] != "assistant" || assistant["content"] != invalid {
-		t.Fatalf("assistant replay = %#v", assistant)
-	}
+	assertNoAssistantReplay(t, client.payloads[1], invalid)
 	user := requireMap(t, messages[len(messages)-1])
 	content, _ := user["content"].(string)
 	if user["role"] != "user" || !strings.Contains(content, `unknown field "unused"`) || !strings.Contains(content, "Parser/validator error:") {
@@ -455,6 +452,14 @@ func TestArticleAssessmentFallsBackToJSONObjectAfterFiveSchemaRetriesWithoutCach
 	if !strings.Contains(user, `unknown field "unused"`) || strings.Contains(user, "invalid chat json") {
 		t.Fatalf("fallback user = %q", user)
 	}
+	invalidJSON := `{"qualityScore":80,"depthScore":70,"evergreenScore":60,"reasons":["ok","limit"],"summary":"ok","keywords":["a","b","c"],"unused":true}`
+	for index := 1; index < len(client.payloads); index++ {
+		messages := payloadMessages(t, client.payloads[index])
+		if len(messages) != 3 {
+			t.Fatalf("payload %d message count = %d, want original plus one error user", index, len(messages))
+		}
+		assertNoAssistantReplay(t, client.payloads[index], invalidJSON)
+	}
 
 	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{CandidateID: 2, Title: "Title", BodyText: "Body"}); err != nil {
 		t.Fatal(err)
@@ -465,6 +470,62 @@ func TestArticleAssessmentFallsBackToJSONObjectAfterFiveSchemaRetriesWithoutCach
 	if requireMap(t, client.payloads[articleAssessmentSchemaMaxAttempts+1]["response_format"])["type"] != articleAssessmentResponseSchemaMode {
 		t.Fatalf("second article should probe schema again, format=%#v", client.payloads[articleAssessmentSchemaMaxAttempts+1]["response_format"])
 	}
+}
+
+func TestArticleAssessmentFallsBackToJSONObjectAfterRetryableThenNonRetryableError(t *testing.T) {
+	resetAssessmentOutputCapabilitiesForTest()
+	invalid := chatCompletionWithContent(`{"qualityScore":80,"depthScore":70,"evergreenScore":60,"reasons":["ok","limit"],"summary":"ok","keywords":["a","b","c"],"unused":true}`)
+	valid := chatCompletionWithContent(articleAssessmentJSON(72, 64, 81, "specific evidence", "limited comparison"))
+	client := &fakeOpenAIDoer{
+		responses: []string{invalid, `{"error":{"message":"rate exceeded"}}`, valid},
+		statuses:  []int{http.StatusOK, http.StatusTooManyRequests, http.StatusOK},
+	}
+	provider := OpenAICompatibleProvider{BaseURL: "https://rate-after-retry.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
+	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.payloads) != 3 {
+		t.Fatalf("requests = %d, want schema, schema rate-limit, then json_object", len(client.payloads))
+	}
+	if requireMap(t, client.payloads[0]["response_format"])["type"] != articleAssessmentResponseSchemaMode {
+		t.Fatalf("first format = %#v", client.payloads[0]["response_format"])
+	}
+	if requireMap(t, client.payloads[1]["response_format"])["type"] != articleAssessmentResponseSchemaMode {
+		t.Fatalf("second format = %#v", client.payloads[1]["response_format"])
+	}
+	if requireMap(t, client.payloads[2]["response_format"])["type"] != articleAssessmentResponseObjectMode {
+		t.Fatalf("fallback format = %#v", client.payloads[2]["response_format"])
+	}
+	user := lastUserMessage(t, client.payloads[2])
+	if !strings.Contains(user, `unknown field "unused"`) || strings.Contains(user, "rate exceeded") {
+		t.Fatalf("fallback should carry the last validator error, got %q", user)
+	}
+	assertNoAssistantReplay(t, client.payloads[2], `"unused":true`)
+}
+
+func TestArticleAssessmentFallsBackToJSONObjectAfterRetryableThenContextLimit(t *testing.T) {
+	resetAssessmentOutputCapabilitiesForTest()
+	invalid := chatCompletionWithContent(`{"qualityScore":80,"depthScore":70,"evergreenScore":60,"reasons":["ok","limit"],"summary":"ok","keywords":["a","b","c"],"unused":true}`)
+	valid := chatCompletionWithContent(articleAssessmentJSON(72, 64, 81, "specific evidence", "limited comparison"))
+	client := &fakeOpenAIDoer{
+		responses: []string{invalid, `{"error":{"message":"This model's maximum context length is 32768 tokens"}}`, valid},
+		statuses:  []int{http.StatusOK, http.StatusBadRequest, http.StatusOK},
+	}
+	provider := OpenAICompatibleProvider{BaseURL: "https://context-after-retry.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
+	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.payloads) != 3 {
+		t.Fatalf("requests = %d, want schema, context-limit, then json_object", len(client.payloads))
+	}
+	if requireMap(t, client.payloads[2]["response_format"])["type"] != articleAssessmentResponseObjectMode {
+		t.Fatalf("fallback format = %#v", client.payloads[2]["response_format"])
+	}
+	messages := payloadMessages(t, client.payloads[2])
+	if len(messages) != 3 {
+		t.Fatalf("fallback messages = %#v", messages)
+	}
+	assertNoAssistantReplay(t, client.payloads[2], `"unused":true`)
 }
 
 func TestArticleAssessmentRetryCauseUsesMissingFieldNames(t *testing.T) {
@@ -551,6 +612,20 @@ func lastUserMessage(t *testing.T, payload map[string]interface{}) string {
 		t.Fatalf("missing user message in %#v", payload["messages"])
 	}
 	return content
+}
+
+func assertNoAssistantReplay(t *testing.T, payload map[string]interface{}, forbidden string) {
+	t.Helper()
+	for _, raw := range payloadMessages(t, payload) {
+		message := requireMap(t, raw)
+		content, _ := message["content"].(string)
+		if message["role"] == "assistant" {
+			t.Fatalf("retry replayed assistant content: %#v", message)
+		}
+		if forbidden != "" && strings.Contains(content, forbidden) {
+			t.Fatalf("retry included previous completion %q in %q", forbidden, content)
+		}
+	}
 }
 
 func articleAssessmentJSON(quality int, depth int, evergreen int, reason1 string, reason2 string) string {

@@ -15,6 +15,7 @@ When the article-assessment model returns JSON that fails local schema checks, t
 - [x] (2026-08-17 23:05+08:00) Implemented schema retries with unwrapped validator errors, then json_object fallback.
 - [x] (2026-08-17 23:08+08:00) Logged every attempt with `error_message` and incrementing `llm_attempt`.
 - [x] (2026-08-17 23:12+08:00) Updated tests and the operations runbook; `cd api && go test ./recommendation ./observability -count=1` passed.
+- [x] (2026-08-17 23:20+08:00) Stopped replaying assistant completions; after a retryable schema failure, later non-retryable errors still take the json_object fallback.
 
 ## Surprises & Discoveries
 
@@ -22,6 +23,8 @@ When the article-assessment model returns JSON that fails local schema checks, t
   Evidence: `TestArticleAssessmentUnsupportedSchemaCachesJSONObjectForLaterCalls` in `api/recommendation/openai_provider_test.go`.
 - Observation: `encoding/json` unknown-field errors already include the key name, so unwrapping `invalid chat JSON: %w` is enough to tell the model `json: unknown field "unused"` without parsing the completion again.
   Evidence: `TestArticleAssessmentRetriesSchemaWithConcreteValidatorError`.
+- Observation: after one retryable schema failure, a later 429 or context-length 400 returned immediately and skipped `json_object`. Replaying each assistant completion also grew the next prompt until a context-limit failure became likely.
+  Evidence: `TestArticleAssessmentFallsBackToJSONObjectAfterRetryableThenNonRetryableError` and `TestArticleAssessmentFallsBackToJSONObjectAfterRetryableThenContextLimit`.
 
 ## Decision Log
 
@@ -37,10 +40,13 @@ When the article-assessment model returns JSON that fails local schema checks, t
 - Decision: Apply `temperature=0.7`, `top_p=0.80`, `top_k=20`, `min_p=0.0`, `presence_penalty=1.5`, `repetition_penalty=1.0`, and `max_tokens=32768` to every `chatJSON` call. Leave `LLM_TIMEOUT` unchanged.
   Rationale: The operator asked for these values on all chat stages. Timeout remains an operator flag; Compose already uses 300s.
   Date/Author: 2026-08-17 / Codex
+- Decision: Do not replay assistant completions. Retry and json_object fallback messages are the original assessment pair plus one compact validator-error user message. After any retryable schema failure, a later non-retryable error still attempts json_object.
+  Rationale: The previous loop returned on the first later 429, timeout, or context-length error, so fallback never ran. Dumping completions into the next prompt made context-limit failures more likely before that fallback.
+  Date/Author: 2026-08-17 / Codex
 
 ## Outcomes & Retrospective
 
-`AssessArticle` now keeps `json_schema` through one initial call and five error-feedback retries. The retry user message contains the unwrapped parser or validator cause and names missing fields. A sixth schema failure is followed by one `json_object` call with the same feedback and is not cached. HTTP rejection of structured output still caches `json_object` for that endpoint and model. Failed `llm_call` events include compact `error_message` and incrementing `llm_attempt`. Every chat stage sends the requested sampling parameters and `max_tokens` 32768. Focused tests passed. Remaining operator work is to restart the API so the new retry path and sampling fields take effect; `LLM_TIMEOUT` is unchanged.
+`AssessArticle` now keeps `json_schema` through one initial call and five error-feedback retries. The retry user message contains the unwrapped parser or validator cause and names missing fields. It does not replay model completions. A sixth schema failure, or a later non-retryable error after a retryable one, is followed by one `json_object` call on the original messages plus that latest validator error and is not cached. HTTP rejection of structured output still caches `json_object` for that endpoint and model. Failed `llm_call` events include compact `error_message` and incrementing `llm_attempt`. Every chat stage sends the requested sampling parameters and `max_tokens` 32768. Focused tests passed. Remaining operator work is to restart the API so the new retry path and sampling fields take effect; `LLM_TIMEOUT` is unchanged.
 
 ## Context and Orientation
 
@@ -88,3 +94,4 @@ Retry user message shape:
 In `api/recommendation/openai_provider.go`, `chatJSON` returns `(content string, err error)`. `AssessArticle` remains `AssessArticle(ctx, ArticleAssessmentInput) (ArticleAssessmentResult, error)`. New unexported helpers: `appendArticleAssessmentRetryFeedback`, `articleAssessmentRetryUserMessage`, `articleAssessmentRetryCause`, and `articleAssessmentMissingFields`. In `api/recommendation/assessment_output_capability.go`, keep the per-endpoint cache but expose short locked `currentMode` and `rememberMode` accessors plus `isArticleAssessmentOutputRetryable` and `isArticleAssessmentUnsupportedSchema`.
 
 Revision 2026-08-17 23:12+08:00: marked Progress complete, recorded the mutex/cache test rewrite and json unknown-field unwrap, and filled Outcomes after `go test ./recommendation ./observability -count=1` passed.
+Revision 2026-08-17 23:20+08:00: stopped assistant replay, and json_object fallback now still runs after a retryable schema failure followed by a later non-retryable error.

@@ -165,15 +165,17 @@ func (provider OpenAICompatibleProvider) AssessArticle(ctx context.Context, inpu
 func (provider OpenAICompatibleProvider) assessArticleWithSchemaRetries(ctx context.Context, candidateID uint, evidence articlevalue.Evidence, messages []map[string]string, capability *assessmentOutputCapability) (ArticleAssessmentResult, error) {
 	conversation := copyChatMessages(messages)
 	var lastErr error
-	var lastContent string
+	var lastRetryableErr error
+	lastAttempt := 0
+	sawRetryable := false
 	for attempt := 1; attempt <= articleAssessmentSchemaMaxAttempts; attempt++ {
-		result, content, err := provider.assessArticleWithMode(ctx, candidateID, evidence, conversation, articleAssessmentResponseSchemaMode, attempt)
+		lastAttempt = attempt
+		result, _, err := provider.assessArticleWithMode(ctx, candidateID, evidence, conversation, articleAssessmentResponseSchemaMode, attempt)
 		if err == nil {
 			capability.rememberMode(articleAssessmentResponseSchemaMode)
 			return result, nil
 		}
 		lastErr = err
-		lastContent = content
 		if isArticleAssessmentUnsupportedSchema(err) {
 			result, _, fallbackErr := provider.assessArticleWithMode(ctx, candidateID, evidence, messages, articleAssessmentResponseObjectMode, 1)
 			if fallbackErr != nil {
@@ -182,16 +184,23 @@ func (provider OpenAICompatibleProvider) assessArticleWithSchemaRetries(ctx cont
 			capability.rememberMode(articleAssessmentResponseObjectMode)
 			return result, nil
 		}
-		if !isArticleAssessmentOutputRetryable(err) {
-			return ArticleAssessmentResult{}, err
+		if isArticleAssessmentOutputRetryable(err) {
+			sawRetryable = true
+			lastRetryableErr = err
+			if attempt == articleAssessmentSchemaMaxAttempts {
+				break
+			}
+			// 只在原文上追加最新校验根因，不回放 assistant，避免撑爆上下文。
+			conversation = appendArticleAssessmentRetryFeedback(messages, err)
+			continue
 		}
-		if attempt == articleAssessmentSchemaMaxAttempts {
+		if sawRetryable {
 			break
 		}
-		conversation = appendArticleAssessmentRetryFeedback(conversation, content, err)
+		return ArticleAssessmentResult{}, err
 	}
-	objectMessages := appendArticleAssessmentRetryFeedback(conversation, lastContent, lastErr)
-	result, _, fallbackErr := provider.assessArticleWithMode(ctx, candidateID, evidence, objectMessages, articleAssessmentResponseObjectMode, articleAssessmentSchemaMaxAttempts+1)
+	objectMessages := appendArticleAssessmentRetryFeedback(messages, lastRetryableErr)
+	result, _, fallbackErr := provider.assessArticleWithMode(ctx, candidateID, evidence, objectMessages, articleAssessmentResponseObjectMode, lastAttempt+1)
 	if fallbackErr != nil {
 		return ArticleAssessmentResult{}, fmt.Errorf("article assessment compatible output failed after strict output error %v: %w", lastErr, fallbackErr)
 	}
@@ -272,12 +281,9 @@ func copyChatMessages(messages []map[string]string) []map[string]string {
 	return copied
 }
 
-// appendArticleAssessmentRetryFeedback 把上一轮模型原文和具体校验根因追加进对话。
-func appendArticleAssessmentRetryFeedback(messages []map[string]string, assistantContent string, err error) []map[string]string {
+// appendArticleAssessmentRetryFeedback 在原始评估消息上追加最新校验根因，不回放模型 completion。
+func appendArticleAssessmentRetryFeedback(messages []map[string]string, err error) []map[string]string {
 	next := copyChatMessages(messages)
-	if strings.TrimSpace(assistantContent) != "" {
-		next = append(next, map[string]string{"role": "assistant", "content": assistantContent})
-	}
 	next = append(next, map[string]string{"role": "user", "content": articleAssessmentRetryUserMessage(err)})
 	return next
 }
