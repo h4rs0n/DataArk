@@ -213,3 +213,59 @@ func createAssessmentCandidate(t *testing.T, sourceName string, rawURL string, t
 	}
 	return candidate
 }
+
+func TestObserveAssessmentWritesSummaryWithoutActivatingModelScores(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/observe-summary", "Observed summary", strings.Repeat("substance ", 80), now)
+	if err := db.Model(&candidate).Update("summary", "https://example.com/observe-summary").Error; err != nil {
+		t.Fatal(err)
+	}
+	result := ArticleAssessmentResult{
+		Quality: .82, Depth: .74, Evergreen: .68, Confidence: .9,
+		Reasons:  []string{"clear evidence", "bounded limitation"},
+		Summary:  "The article explains a durable method with measurements.",
+		Keywords: []string{"testing", "evidence", "methods"},
+	}
+	if err := AssessCandidate(context.Background(), candidate.ID, modeFixtureAssessor{active: false, result: result}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&candidate, candidate.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var active DiscoveryArticleAssessment
+	if err := db.First(&active, *candidate.CurrentAssessmentID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if active.Assessor != RuleArticleAssessorName {
+		t.Fatalf("observe mode activated model scores: %#v", active)
+	}
+	if candidate.Summary != result.Summary || candidate.Topics != `["testing","evidence","methods"]` {
+		t.Fatalf("observe write-back = summary=%q topics=%s", candidate.Summary, candidate.Topics)
+	}
+	var modelRow DiscoveryArticleAssessment
+	if err := db.Where("candidate_id = ? AND assessor = ?", candidate.ID, "admin_fixture").First(&modelRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if modelRow.Summary != result.Summary || modelRow.Keywords != `["testing","evidence","methods"]` {
+		t.Fatalf("persisted model metadata = %#v", modelRow)
+	}
+}
+
+func TestRuleAssessmentDoesNotOverwriteExistingSummary(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 8, 17, 12, 30, 0, 0, time.UTC)
+	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/keep-summary", "Keep summary", strings.Repeat("substance ", 80), now)
+	if err := db.Model(&candidate).Updates(map[string]interface{}{"summary": "keep-original-summary", "topics": `["original"]`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := AssessCandidate(context.Background(), candidate.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&candidate, candidate.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Summary != "keep-original-summary" || candidate.Topics != `["original"]` {
+		t.Fatalf("rule assessment overwrote metadata: %#v", candidate)
+	}
+}

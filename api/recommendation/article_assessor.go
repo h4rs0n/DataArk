@@ -64,6 +64,8 @@ func (assessor EnrichmentArticleAssessor) Assess(ctx context.Context, input disc
 		Quality: scores.Quality, Depth: scores.Depth, Evergreen: scores.Evergreen,
 		Confidence: articlevalue.EvidenceConfidence(evidenceTokens, truncated),
 		Reasons:    append([]string(nil), result.Reasons...),
+		Summary:    strings.TrimSpace(result.Summary),
+		Keywords:   append([]string(nil), result.Keywords...),
 	}, nil
 }
 

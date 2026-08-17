@@ -36,20 +36,18 @@ func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAsses
 		return result, errors.New("article assessment provider is not configured")
 	}
 	result.PolicyVersion = assessor.PolicyVersion()
-	if !options.DryRun {
-		if activator, ok := assessor.(articleAssessmentActivator); ok && !activator.ShouldActivateAssessment() {
-			return result, errors.New("article assessment mode must be active before backfill")
-		}
-		if queue == nil {
-			return result, errors.New("article assessment queue is unavailable")
-		}
+	activate := shouldActivateArticleAssessment(assessor)
+	if !options.DryRun && queue == nil {
+		return result, errors.New("article assessment queue is unavailable")
 	}
 
 	limit := normalizeArticleAssessmentBatchLimit(options.Limit)
 	query := db.WithContext(ctx).Model(&DiscoveryCandidate{}).
 		Where("processing_state = ? AND dedupe_state = ? AND content_version > 0", DiscoveryProcessingReady, DiscoveryDedupeReady).
-		Where("representative_id IS NULL OR representative_id = id").
-		Where(`NOT EXISTS (
+		Where("representative_id IS NULL OR representative_id = id")
+	if activate {
+		// active：找出当前指针还不是本策略模型行的候选，以便激活已观察行或重新入队。
+		query = query.Where(`NOT EXISTS (
 SELECT 1 FROM discovery_article_assessments active
 WHERE active.id = discovery_candidates.current_assessment_id
   AND active.candidate_id = discovery_candidates.id
@@ -58,6 +56,17 @@ WHERE active.id = discovery_candidates.current_assessment_id
   AND active.assessor_version = ?
   AND active.policy_version = ?
 )`, assessor.Name(), assessor.Version(), assessor.PolicyVersion())
+	} else {
+		// observe：只补还没有本策略模型行的文章，避免反复选中指针仍停在规则行的候选。
+		query = query.Where(`NOT EXISTS (
+SELECT 1 FROM discovery_article_assessments stored
+WHERE stored.candidate_id = discovery_candidates.id
+  AND stored.content_version = discovery_candidates.content_version
+  AND stored.assessor = ?
+  AND stored.assessor_version = ?
+  AND stored.policy_version = ?
+)`, assessor.Name(), assessor.Version(), assessor.PolicyVersion())
+	}
 	if !options.RetryFailures {
 		query = query.Where("assessment_error IS NULL OR assessment_error NOT LIKE ?", assessor.PolicyVersion()+":%")
 	}
@@ -78,9 +87,23 @@ WHERE active.id = discovery_candidates.current_assessment_id
 				enqueueErrors = append(enqueueErrors, fmt.Errorf("validate candidate %d assessment: %w", candidate.ID, validationErr))
 				continue
 			}
+			if !activate {
+				if !options.DryRun {
+					if err := applyAssessmentArticleMetadata(candidate, storedResult); err != nil {
+						enqueueErrors = append(enqueueErrors, fmt.Errorf("write candidate %d assessment metadata: %w", candidate.ID, err))
+						continue
+					}
+				}
+				result.Skipped++
+				continue
+			}
 			if !options.DryRun {
 				if err := activateArticleAssessment(candidate, stored, storedResult, "", false); err != nil {
 					enqueueErrors = append(enqueueErrors, fmt.Errorf("reactivate candidate %d assessment: %w", candidate.ID, err))
+					continue
+				}
+				if err := applyAssessmentArticleMetadata(candidate, storedResult); err != nil {
+					enqueueErrors = append(enqueueErrors, fmt.Errorf("write candidate %d assessment metadata: %w", candidate.ID, err))
 					continue
 				}
 			}

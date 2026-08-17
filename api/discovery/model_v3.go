@@ -166,6 +166,8 @@ type DiscoveryArticleAssessment struct {
 	OverallQuality     float64             `json:"overallQuality" gorm:"index"`
 	Confidence         float64             `json:"confidence"`
 	Reasons            string              `json:"reasons" gorm:"type:text"`
+	Summary            string              `json:"summary" gorm:"type:text"`
+	Keywords           string              `json:"keywords" gorm:"type:text"`
 	CreatedAt          time.Time           `json:"createdAt"`
 	Candidate          *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
 }

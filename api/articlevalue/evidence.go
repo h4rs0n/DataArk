@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	PolicyVersion       = "article-value-v3"
-	PromptVersion       = "openai-compatible-article-assessment-v3"
+	PolicyVersion       = "article-value-v4" // 评估唯一键含此版本，避免复用没有摘要的 v3 行
+	PromptVersion       = "openai-compatible-article-assessment-v4"
 	EvidenceTokenBudget = 6000
 	TitleTokenBudget    = 512
 	QualityFloor        = 0.20

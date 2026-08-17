@@ -16,6 +16,7 @@ func (provider *capturingAssessmentProvider) AssessArticle(_ context.Context, in
 	provider.input = input
 	return ArticleAssessmentResult{
 		QualityScore: 91, DepthScore: 84, EvergreenScore: 79, Reasons: []string{"Strong evidence", "Useful depth"},
+		Summary: "The fixture article explains a durable method with measurements.", Keywords: []string{"testing", "evidence", "methods"},
 		Model: "fixture-llm", PromptVersion: "assessment-v2",
 	}, nil
 }
@@ -53,8 +54,14 @@ func TestOpenAICompatibleArticleAssessorPersistsEnhancedVersionWithoutSourceInpu
 	if assessments[1].Reasons != `["Strong evidence","Useful depth"]` {
 		t.Fatalf("enhanced assessment reasons = %s", assessments[1].Reasons)
 	}
+	if assessments[1].Summary != "The fixture article explains a durable method with measurements." || assessments[1].Keywords != `["testing","evidence","methods"]` {
+		t.Fatalf("enhanced assessment metadata = summary=%q keywords=%s", assessments[1].Summary, assessments[1].Keywords)
+	}
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
 		t.Fatal(err)
+	}
+	if candidate.Summary != assessments[1].Summary || candidate.Topics != assessments[1].Keywords {
+		t.Fatalf("candidate metadata write-back = summary=%q topics=%s", candidate.Summary, candidate.Topics)
 	}
 	if candidate.CurrentAssessmentID == nil || *candidate.CurrentAssessmentID != assessments[1].ID || candidate.QualityScore != 0.70 || candidate.DepthScore != 0.65 || candidate.AssessmentState != discovery.DiscoveryAssessmentReady {
 		t.Fatalf("active enhanced assessment = %#v", candidate)

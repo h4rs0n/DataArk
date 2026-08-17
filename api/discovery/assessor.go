@@ -38,6 +38,8 @@ type ArticleAssessmentResult struct {
 	Evergreen  float64
 	Confidence float64
 	Reasons    []string
+	Summary    string
+	Keywords   []string
 }
 
 type ArticleAssessor interface {
@@ -130,7 +132,11 @@ func AssessCandidate(ctx context.Context, candidateID uint, enhanced ArticleAsse
 				return persistErr
 			}
 		}
-		if activator, ok := enhanced.(articleAssessmentActivator); ok && !activator.ShouldActivateAssessment() {
+		// 模型评估成功后回写摘要和关键字；observe 模式也写，因为这两项不参与排序。
+		if err := applyAssessmentArticleMetadata(candidate, result); err != nil {
+			return err
+		}
+		if !shouldActivateArticleAssessment(enhanced) {
 			if hasCurrent {
 				return updateAssessmentStatus(candidate, DiscoveryAssessmentReady, "")
 			}
@@ -174,10 +180,20 @@ func loadPersistedAssessment(candidate DiscoveryCandidate, assessor ArticleAsses
 func assessmentResultFromRow(assessment DiscoveryArticleAssessment) ArticleAssessmentResult {
 	var reasons []string
 	_ = json.Unmarshal([]byte(assessment.Reasons), &reasons)
+	var keywords []string
+	if strings.TrimSpace(assessment.Keywords) != "" {
+		_ = json.Unmarshal([]byte(assessment.Keywords), &keywords)
+	}
 	return ArticleAssessmentResult{
 		Quality: assessment.OverallQuality, Depth: assessment.Depth, Evergreen: assessment.EvergreenValue,
-		Confidence: assessment.Confidence, Reasons: reasons,
+		Confidence: assessment.Confidence, Reasons: reasons, Summary: assessment.Summary, Keywords: keywords,
 	}
+}
+
+// shouldActivateArticleAssessment 在未实现激活接口或接口返回 true 时激活模型分。
+func shouldActivateArticleAssessment(assessor ArticleAssessor) bool {
+	activator, ok := assessor.(articleAssessmentActivator)
+	return !ok || activator.ShouldActivateAssessment()
 }
 
 func retainOrActivateFallback(candidate DiscoveryCandidate, current DiscoveryArticleAssessment, hasCurrent bool, fallback DiscoveryArticleAssessment, fallbackResult ArticleAssessmentResult, assessmentErr error) error {
@@ -196,11 +212,17 @@ func updateAssessmentStatus(candidate DiscoveryCandidate, state string, assessme
 
 func persistArticleAssessment(candidate DiscoveryCandidate, assessor ArticleAssessor, result ArticleAssessmentResult) (DiscoveryArticleAssessment, error) {
 	reasons, _ := json.Marshal(result.Reasons)
+	keywordsJSON := ""
+	if len(result.Keywords) > 0 {
+		encoded, _ := json.Marshal(result.Keywords)
+		keywordsJSON = string(encoded)
+	}
 	assessment := DiscoveryArticleAssessment{
 		CandidateID: candidate.ID, ContentVersion: candidate.ContentVersion,
 		Assessor: assessor.Name(), AssessorVersion: assessor.Version(), PolicyVersion: assessor.PolicyVersion(),
 		Depth: clampAssessment(result.Depth), EvergreenValue: clampAssessment(result.Evergreen), OverallQuality: clampAssessment(result.Quality),
-		Confidence: clampAssessment(result.Confidence), Reasons: string(reasons), CreatedAt: discoveryClock.Now(),
+		Confidence: clampAssessment(result.Confidence), Reasons: string(reasons), Summary: strings.TrimSpace(result.Summary),
+		Keywords: keywordsJSON, CreatedAt: discoveryClock.Now(),
 	}
 	err := db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "candidate_id"}, {Name: "content_version"}, {Name: "assessor"}, {Name: "assessor_version"}, {Name: "policy_version"}},
@@ -258,6 +280,26 @@ func validateAssessmentResult(result ArticleAssessmentResult) error {
 		return errors.New("article assessor returned no explanation")
 	}
 	return nil
+}
+
+// applyAssessmentArticleMetadata 把模型产出的摘要和关键字写回候选，规则评估因字段为空而跳过。
+func applyAssessmentArticleMetadata(candidate DiscoveryCandidate, result ArticleAssessmentResult) error {
+	summary := strings.TrimSpace(result.Summary)
+	if summary == "" && len(result.Keywords) == 0 {
+		return nil
+	}
+	updates := map[string]interface{}{"updated_at": discoveryClock.Now()}
+	if summary != "" {
+		updates["summary"] = summary
+	}
+	if len(result.Keywords) > 0 {
+		topics, err := json.Marshal(result.Keywords)
+		if err != nil {
+			return err
+		}
+		updates["topics"] = string(topics)
+	}
+	return db.Model(&candidate).Updates(updates).Error
 }
 
 func clampAssessment(value float64) float64 {

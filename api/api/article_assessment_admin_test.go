@@ -81,7 +81,7 @@ func TestArticleAssessmentBackfillRequiresOwnerAndSupportsDryRun(t *testing.T) {
 		if options.Limit != 120 || !options.DryRun || options.RetryFailures {
 			t.Fatalf("options = %#v", options)
 		}
-		return discovery.ArticleAssessmentBatchResult{PolicyVersion: "article-value-v3", Selected: 120, Reactivated: 7, DryRun: true}, nil
+		return discovery.ArticleAssessmentBatchResult{PolicyVersion: "article-value-v4", Selected: 120, Reactivated: 7, DryRun: true}, nil
 	}
 	body := []byte(`{"limit":120,"dryRun":true}`)
 	member := performUserControllerRequest(http.MethodPost, "/admin/discovery/article-assessments/backfill", body, &auth.User{ID: 2, Role: auth.UserRoleMember}, BackfillArticleAssessments)
@@ -107,7 +107,7 @@ func TestArticleAssessmentRollbackRequiresOwner(t *testing.T) {
 		if options.Limit != 250 || options.DryRun {
 			t.Fatalf("options = %#v", options)
 		}
-		return discovery.ArticleAssessmentBatchResult{PolicyVersion: "article-value-v3", Selected: 2, Reactivated: 2}, nil
+		return discovery.ArticleAssessmentBatchResult{PolicyVersion: "article-value-v4", Selected: 2, Reactivated: 2}, nil
 	}
 	body := []byte(`{"limit":250}`)
 	member := performUserControllerRequest(http.MethodPost, "/admin/discovery/article-assessments/rollback", body, &auth.User{ID: 2, Role: auth.UserRoleMember}, RollbackArticleAssessments)

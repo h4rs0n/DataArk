@@ -55,6 +55,8 @@ type ArticleAssessmentResult struct {
 	DepthScore             int      `json:"depthScore"`
 	EvergreenScore         int      `json:"evergreenScore"`
 	Reasons                []string `json:"reasons"`
+	Summary                string   `json:"summary"`
+	Keywords               []string `json:"keywords"`
 	Model                  string   `json:"-"`
 	PromptVersion          string   `json:"-"`
 	EvidenceTokens         int      `json:"-"`

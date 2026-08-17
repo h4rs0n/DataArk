@@ -1,6 +1,7 @@
 package assessmenteval
 
 import (
+	"DataArk/articlevalue"
 	"DataArk/discovery"
 	"encoding/json"
 	"fmt"
@@ -183,7 +184,7 @@ func workflowTestDatabase(t *testing.T) *gorm.DB {
 func seedWorkflow(t *testing.T, database *gorm.DB, manifest Manifest, now time.Time) ArticleAssessmentWorkflowRun {
 	t.Helper()
 	run := ArticleAssessmentWorkflowRun{
-		Seed: manifest.Seed, ManifestDigest: manifest.Digest, PolicyVersion: "article-value-v3",
+		Seed: manifest.Seed, ManifestDigest: manifest.Digest, PolicyVersion: articlevalue.PolicyVersion,
 		Status: WorkflowStatusPassOne, CreatedBy: 1, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := database.Create(&run).Error; err != nil {

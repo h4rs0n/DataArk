@@ -57,7 +57,7 @@ func (fake *fakeOpenAIDoer) Do(req *http.Request) (*http.Response, error) {
 
 func TestArticleAssessmentStructuredOutputDowngradesOnceAcrossConcurrentCalls(t *testing.T) {
 	resetAssessmentOutputCapabilitiesForTest()
-	valid := `{"choices":[{"message":{"content":"{\"qualityScore\":72,\"depthScore\":64,\"evergreenScore\":81,\"reasons\":[\"specific evidence\",\"limited comparison\"]}"}}]}`
+	valid := chatCompletionWithContent(articleAssessmentJSON(72, 64, 81, "specific evidence", "limited comparison"))
 	responses := []string{
 		`{"choices":[{"message":{"content":"{\"qualityScore\":72"}}]}`,
 		valid, valid, valid, valid, valid,
@@ -227,14 +227,14 @@ func TestOpenAICompatibleProviderGenerateDigestSummaryRejectsInvalidOutput(t *te
 func TestOpenAICompatibleProviderArticleAssessmentUsesCompactSchemaAndQwenSwitch(t *testing.T) {
 	resetAssessmentOutputCapabilitiesForTest()
 	client := &fakeOpenAIDoer{responses: []string{
-		`{"choices":[{"message":{"content":"{\"qualityScore\":82,\"depthScore\":71,\"evergreenScore\":64,\"reasons\":[\"Evidence is specific\",\"Analysis is concise\"]}"}}]}`,
+		chatCompletionWithContent(articleAssessmentJSON(82, 71, 64, "Evidence is specific", "Analysis is concise")),
 	}}
 	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "qwen3.5-plus", HTTPClient: client}
 	result, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Article body"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.QualityScore != 82 || result.DepthScore != 71 || result.EvergreenScore != 64 || len(result.Reasons) != 2 {
+	if result.QualityScore != 82 || result.DepthScore != 71 || result.EvergreenScore != 64 || len(result.Reasons) != 2 || result.Summary == "" || len(result.Keywords) != 3 {
 		t.Fatalf("result = %#v", result)
 	}
 	payload := client.payloads[0]
@@ -251,13 +251,19 @@ func TestOpenAICompatibleProviderArticleAssessmentUsesCompactSchemaAndQwenSwitch
 	}
 	schema := requireMap(t, jsonSchema["schema"])
 	properties := requireMap(t, schema["properties"])
-	if schema["additionalProperties"] != false || len(properties) != 4 {
+	if schema["additionalProperties"] != false || len(properties) != 6 {
 		t.Fatalf("schema = %#v", schema)
 	}
-	for _, field := range []string{"qualityScore", "depthScore", "evergreenScore", "reasons"} {
+	for _, field := range []string{"qualityScore", "depthScore", "evergreenScore", "reasons", "summary", "keywords"} {
 		if _, ok := properties[field]; !ok {
 			t.Fatalf("schema properties = %#v", properties)
 		}
+	}
+	messages := payload["messages"].([]interface{})
+	user := requireMap(t, messages[1])
+	prompt, _ := user["content"].(string)
+	if !strings.Contains(prompt, "summary:") || !strings.Contains(prompt, "keywords:") {
+		t.Fatalf("prompt missing summary/keywords contract: %#v", user["content"])
 	}
 }
 
@@ -268,7 +274,12 @@ func TestArticleAssessmentOutputRejectsEverySchemaViolationLocally(t *testing.T)
 		`{"qualityScore":101,"depthScore":50,"evergreenScore":50,"reasons":["one","two"]}`,
 		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one"]}`,
 		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["` + strings.Repeat("x", 121) + `","two"]}`,
-		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one","two"],"unused":true}`,
+		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one","two"]}`,
+		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one","two"],"summary":"ok","keywords":["a","b"]}`,
+		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one","two"],"summary":"` + strings.Repeat("x", 201) + `","keywords":["a","b","c"]}`,
+		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one","two"],"summary":"ok","keywords":["` + strings.Repeat("x", 21) + `","b","c"]}`,
+		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one","two"],"summary":"ok","keywords":["a","b","c","d","e","f","g","h","i"]}`,
+		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one","two"],"summary":"ok","keywords":["a","b","c"],"unused":true}`,
 	}
 	for _, payload := range tests {
 		var output articleAssessmentOutput
@@ -286,7 +297,7 @@ func TestOpenAICompatibleProviderLogsUsageWithoutPayloadText(t *testing.T) {
 	resetAssessmentOutputCapabilitiesForTest()
 	logOutput := captureStandardLog(t)
 	client := &fakeOpenAIDoer{responses: []string{
-		`{"choices":[{"message":{"content":"{\"qualityScore\":80,\"depthScore\":70,\"evergreenScore\":60,\"reasons\":[\"completion-text-sentinel\",\"No major limitation\"]}","reasoning_content":"reasoning-text-sentinel"}}],"usage":{"prompt_tokens":101,"completion_tokens":20,"total_tokens":121,"prompt_tokens_details":{"cached_tokens":11},"completion_tokens_details":{"reasoning_tokens":0}}}`,
+		`{"choices":[{"message":{"content":` + mustJSONString(articleAssessmentJSON(80, 70, 60, "completion-text-sentinel", "No major limitation")) + `,"reasoning_content":"reasoning-text-sentinel"}}],"usage":{"prompt_tokens":101,"completion_tokens":20,"total_tokens":121,"prompt_tokens_details":{"cached_tokens":11},"completion_tokens_details":{"reasoning_tokens":0}}}`,
 	}}
 	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "deepseek-v4", HTTPClient: client}
 	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "prompt-text-sentinel"}); err != nil {
@@ -323,8 +334,8 @@ func TestOpenAICompatibleProviderLogsUsageWhenStrictAssessmentOutputIsInvalid(t 
 	resetAssessmentOutputCapabilitiesForTest()
 	logOutput := captureStandardLog(t)
 	client := &fakeOpenAIDoer{responses: []string{
-		`{"choices":[{"message":{"content":"{\"qualityScore\":80,\"depthScore\":70,\"evergreenScore\":60,\"reasons\":[\"ok\",\"limit\"],\"unused\":\"must fail\"}"}}],"usage":{"prompt_tokens":80,"completion_tokens":16,"total_tokens":96,"completion_tokens_details":{"reasoning_tokens":3}}}`,
-		`{"choices":[{"message":{"content":"{\"qualityScore\":80,\"depthScore\":70,\"evergreenScore\":60,\"reasons\":[\"ok\",\"limit\"],\"unused\":\"must fail\"}"}}],"usage":{"prompt_tokens":81,"completion_tokens":17,"total_tokens":98}}`,
+		`{"choices":[{"message":{"content":"{\"qualityScore\":80,\"depthScore\":70,\"evergreenScore\":60,\"reasons\":[\"ok\",\"limit\"],\"summary\":\"ok\",\"keywords\":[\"a\",\"b\",\"c\"],\"unused\":\"must fail\"}"}}],"usage":{"prompt_tokens":80,"completion_tokens":16,"total_tokens":96,"completion_tokens_details":{"reasoning_tokens":3}}}`,
+		`{"choices":[{"message":{"content":"{\"qualityScore\":80,\"depthScore\":70,\"evergreenScore\":60,\"reasons\":[\"ok\",\"limit\"],\"summary\":\"ok\",\"keywords\":[\"a\",\"b\",\"c\"],\"unused\":\"must fail\"}"}}],"usage":{"prompt_tokens":81,"completion_tokens":17,"total_tokens":98}}`,
 	}}
 	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
 	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err == nil || !strings.Contains(err.Error(), "unknown field") {
@@ -364,6 +375,39 @@ func requireMap(t *testing.T, value interface{}) map[string]interface{} {
 		t.Fatalf("value is not an object: %#v", value)
 	}
 	return result
+}
+
+func articleAssessmentJSON(quality int, depth int, evergreen int, reason1 string, reason2 string) string {
+	payload, err := json.Marshal(map[string]interface{}{
+		"qualityScore": quality, "depthScore": depth, "evergreenScore": evergreen,
+		"reasons":  []string{reason1, reason2},
+		"summary":  "The article explains a durable method with measurements.",
+		"keywords": []string{"testing", "evidence", "methods"},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return string(payload)
+}
+
+func chatCompletionWithContent(content string) string {
+	payload, err := json.Marshal(map[string]interface{}{
+		"choices": []map[string]interface{}{
+			{"message": map[string]string{"content": content}},
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return string(payload)
+}
+
+func mustJSONString(value string) string {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return string(payload)
 }
 
 func captureStandardLog(t *testing.T) *bytes.Buffer {

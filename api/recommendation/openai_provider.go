@@ -23,6 +23,10 @@ const (
 	llmStageDigestSummary               = "digest_summary"
 	articleAssessmentResponseSchemaMode = "json_schema"
 	articleAssessmentResponseObjectMode = "json_object"
+	articleAssessmentSummaryMaxRunes    = 200
+	articleAssessmentKeywordMinCount    = 3
+	articleAssessmentKeywordMaxCount    = 8
+	articleAssessmentKeywordMaxRunes    = 20
 )
 
 type HTTPDoer interface {
@@ -82,6 +86,8 @@ type articleAssessmentOutput struct {
 	DepthScore     *int      `json:"depthScore"`
 	EvergreenScore *int      `json:"evergreenScore"`
 	Reasons        *[]string `json:"reasons"`
+	Summary        *string   `json:"summary"`
+	Keywords       *[]string `json:"keywords"`
 }
 
 func (provider OpenAICompatibleProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
@@ -197,10 +203,14 @@ func (provider OpenAICompatibleProvider) assessArticleWithMode(ctx context.Conte
 }
 
 func (output articleAssessmentOutput) result() (ArticleAssessmentResult, error) {
-	if output.QualityScore == nil || output.DepthScore == nil || output.EvergreenScore == nil || output.Reasons == nil {
+	if output.QualityScore == nil || output.DepthScore == nil || output.EvergreenScore == nil || output.Reasons == nil || output.Summary == nil || output.Keywords == nil {
 		return ArticleAssessmentResult{}, errors.New("article assessment is missing a required field")
 	}
-	result := ArticleAssessmentResult{QualityScore: *output.QualityScore, DepthScore: *output.DepthScore, EvergreenScore: *output.EvergreenScore, Reasons: append([]string(nil), (*output.Reasons)...)}
+	result := ArticleAssessmentResult{
+		QualityScore: *output.QualityScore, DepthScore: *output.DepthScore, EvergreenScore: *output.EvergreenScore,
+		Reasons: append([]string(nil), (*output.Reasons)...), Summary: *output.Summary,
+		Keywords: append([]string(nil), (*output.Keywords)...),
+	}
 	if err := validateArticleAssessmentResult(&result); err != nil {
 		return ArticleAssessmentResult{}, err
 	}
@@ -220,6 +230,10 @@ evergreenScore: usefulness that remains after immediate news, releases, or perso
 Use these anchors for every axis: 0-19 no meaningful value; 20-39 weak; 40-59 ordinary; 60-74 good; 75-89 excellent; 90-100 rare and exceptional. Do not reward polish or length alone. Scores of 90 or above require concrete, original, reusable, and well-supported substance.
 
 Return exactly two concise reasons in the article's primary language. The first states the strongest content evidence; the second states the main limitation. Each reason must be at most 120 characters.
+
+summary: 2 to 4 sentences in the article's primary language. Capture the main claim and concrete takeaways. 1 to 200 characters. Do not copy the title, URL, or first sentence verbatim.
+
+keywords: 3 to 8 topical keywords in the article's primary language. Each keyword is 1 to 20 characters. Prefer reusable topics over proper nouns unless the noun is the subject.
 
 Article evidence:
 ` + content},
@@ -379,6 +393,22 @@ func validateArticleAssessmentResult(result *ArticleAssessmentResult) error {
 		}
 		result.Reasons[index] = reason
 	}
+	result.Summary = strings.TrimSpace(result.Summary)
+	if result.Summary == "" || len([]rune(result.Summary)) > articleAssessmentSummaryMaxRunes {
+		return errors.New("article assessment summary must be 1 to 200 characters")
+	}
+	if len(result.Keywords) < articleAssessmentKeywordMinCount || len(result.Keywords) > articleAssessmentKeywordMaxCount {
+		return errors.New("article assessment requires 3 to 8 keywords")
+	}
+	keywords := make([]string, 0, len(result.Keywords))
+	for _, keyword := range result.Keywords {
+		keyword = strings.TrimSpace(keyword)
+		if keyword == "" || len([]rune(keyword)) > articleAssessmentKeywordMaxRunes {
+			return errors.New("article assessment keywords must be 1 to 20 characters")
+		}
+		keywords = append(keywords, keyword)
+	}
+	result.Keywords = keywords
 	return nil
 }
 
@@ -399,8 +429,13 @@ func articleAssessmentResponseFormat() map[string]interface{} {
 						"type": "array", "minItems": 2, "maxItems": 2,
 						"items": map[string]interface{}{"type": "string", "maxLength": 120},
 					},
+					"summary": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": articleAssessmentSummaryMaxRunes},
+					"keywords": map[string]interface{}{
+						"type": "array", "minItems": articleAssessmentKeywordMinCount, "maxItems": articleAssessmentKeywordMaxCount,
+						"items": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": articleAssessmentKeywordMaxRunes},
+					},
 				},
-				"required": []string{"qualityScore", "depthScore", "evergreenScore", "reasons"},
+				"required": []string{"qualityScore", "depthScore", "evergreenScore", "reasons", "summary", "keywords"},
 			},
 		},
 	}

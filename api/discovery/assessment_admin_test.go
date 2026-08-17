@@ -131,3 +131,56 @@ func TestArticleAssessmentRollbackRestoresDeterministicRow(t *testing.T) {
 		t.Fatalf("rollback active=%#v candidate=%#v", active, candidate)
 	}
 }
+
+func TestArticleAssessmentBackfillObserveEnqueuesWithoutActivating(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 8, 17, 13, 0, 0, 0, time.UTC)
+	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/observe-backfill", "Observe backfill", "A durable analysis with enough evidence to be assessed independently.", now)
+	if err := AssessCandidate(context.Background(), candidate.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&candidate, candidate.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	originalAssessmentID := *candidate.CurrentAssessmentID
+	store := &recordedJobs{keys: make(map[string]struct{})}
+	assessor := modeFixtureAssessor{active: false, result: ArticleAssessmentResult{Quality: .8, Depth: .7, Evergreen: .6, Confidence: .9, Reasons: []string{"one", "two"}, Summary: "Queued summary", Keywords: []string{"go", "llm", "testing"}}}
+	result, err := PrepareArticleAssessmentBackfill(context.Background(), assessor, recordingJobEnqueuer{store: store}, ArticleAssessmentBatchOptions{Limit: 1})
+	if err != nil || result.Selected != 1 || result.Enqueued != 1 || result.Reactivated != 0 {
+		t.Fatalf("observe backfill result=%#v err=%v", result, err)
+	}
+	if _, ok := store.keys[fmt.Sprintf("candidate:%d:1", candidate.ID)]; !ok {
+		t.Fatalf("observe enqueue missing: %#v", store.keys)
+	}
+	if err := db.First(&candidate, candidate.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if candidate.CurrentAssessmentID == nil || *candidate.CurrentAssessmentID != originalAssessmentID {
+		t.Fatalf("observe backfill activated scores: %#v", candidate)
+	}
+}
+
+func TestArticleAssessmentBackfillObserveSkipsPersistedModelRows(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 8, 17, 13, 30, 0, 0, time.UTC)
+	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/observe-skip", "Observe skip", "A durable analysis with enough evidence to be assessed independently.", now)
+	result := ArticleAssessmentResult{Quality: .82, Depth: .74, Evergreen: .68, Confidence: .9, Reasons: []string{"clear evidence", "bounded limitation"}, Summary: "Persisted summary", Keywords: []string{"testing", "evidence", "methods"}}
+	if err := AssessCandidate(context.Background(), candidate.ID, modeFixtureAssessor{active: false, result: result}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&candidate, candidate.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	originalAssessmentID := *candidate.CurrentAssessmentID
+	store := &recordedJobs{keys: make(map[string]struct{})}
+	backfill, err := PrepareArticleAssessmentBackfill(context.Background(), modeFixtureAssessor{active: false, result: result}, recordingJobEnqueuer{store: store}, ArticleAssessmentBatchOptions{Limit: 1})
+	if err != nil || backfill.Selected != 0 || backfill.Enqueued != 0 || backfill.Reactivated != 0 || len(store.keys) != 0 {
+		t.Fatalf("observe skip result=%#v jobs=%#v err=%v", backfill, store.keys, err)
+	}
+	if err := db.First(&candidate, candidate.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if *candidate.CurrentAssessmentID != originalAssessmentID {
+		t.Fatalf("observe skip changed pointer: %#v", candidate)
+	}
+}

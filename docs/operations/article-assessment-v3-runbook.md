@@ -1,6 +1,6 @@
-# Article Assessment v3 Operations Runbook
+# Article Assessment Operations Runbook
 
-This runbook is the release gate for `article-value-v3`. Article assessment receives only the title and already-extracted plain body text. It never receives raw HTML, source or site identity, author reputation, popularity, publication date, graph position, or user feedback. The model receives at most an approximately 6,000-token evidence package; oversized bodies retain beginning, middle, and ending excerpts. Assessment and rerank calls disable supported model reasoning modes, cap completion at 1,024 tokens, and write per-attempt stage, response mode, evidence size, duration, and provider token counts to retained `llm_call` logs. Payload text is never logged.
+This runbook is the release gate for `article-value-v4`, which extends the v3 reading-value rubric with a required summary and keywords. Article assessment receives only the title and already-extracted plain body text. It never receives raw HTML, source or site identity, author reputation, popularity, publication date, graph position, or user feedback. The model receives at most an approximately 6,000-token evidence package; oversized bodies retain beginning, middle, and ending excerpts. Assessment and rerank calls disable supported model reasoning modes, cap completion at 2,048 tokens, and write per-attempt stage, response mode, evidence size, duration, and provider token counts to retained `llm_call` logs. Payload text is never logged.
 
 ## Rollout modes and configuration
 
@@ -11,9 +11,23 @@ ARTICLE_ASSESSMENT_MODE=observe
 ARTICLE_ASSESSMENT_CONCURRENCY=2
 ```
 
-`observe` persists a valid v3 model row but leaves the current assessment pointer unchanged. `active` atomically activates valid v3 rows. A model failure retains an existing active row; a new article with no previous score activates the conservative deterministic row with state `degraded`. After existing article-validity gates, only semantic quality below 20/100 is ineligible. Confidence does not independently reject an article.
+`observe` persists a valid model row but leaves the current assessment pointer unchanged. `active` atomically activates valid model rows. A model failure retains an existing active row; a new article with no previous score activates the conservative deterministic row with state `degraded`. After existing article-validity gates, only semantic quality below 20/100 is ineligible. Confidence does not independently reject an article.
 
-The structured response has exactly three integer scores from 0 through 100 and exactly two short reasons: `qualityScore`, `depthScore`, `evergreenScore`, and `reasons`. The provider probes strict JSON Schema once per endpoint/model process and makes at most one compatible JSON-object retry. Authentication, rate-limit, and timeout failures are not format-retried.
+The structured response has three integer scores from 0 through 100, exactly two short reasons, one summary, and 3–8 keywords: `qualityScore`, `depthScore`, `evergreenScore`, `reasons`, `summary`, and `keywords`. Summary is 1–200 characters in the article's primary language. Each keyword is 1–20 characters. A missing or invalid summary or keyword list fails the whole assessment and falls back to the deterministic rule scores without writing metadata. The provider probes strict JSON Schema once per endpoint/model process and makes at most one compatible JSON-object retry. Authentication, rate-limit, and timeout failures are not format-retried.
+
+Successful model assessments write `summary` and `keywords` onto the live `discovery_candidates` row even in observe mode. Those fields are display metadata and do not change eligibility or ranking. Recommendation cards that already exist keep their frozen snapshots until a new personalized feed or daily digest is generated.
+
+## Summary and keyword backfill in observe mode
+
+Stock inventory still has v3 assessment rows without summaries. Owner backfill now works while `ARTICLE_ASSESSMENT_MODE=observe`: it enqueues at most 250 `process-candidate` jobs for articles that lack a v4 model row and does not activate model scores. After switching to `active`, the same endpoint activates stored v4 rows or enqueues missing ones as before.
+
+```text
+POST /api/admin/discovery/article-assessments/backfill
+{"limit":250,"dryRun":true,"retryFailures":false}
+
+POST /api/admin/discovery/article-assessments/backfill
+{"limit":250,"dryRun":false,"retryFailures":false}
+```
 
 ## Use the recommendation-center human workflow
 
@@ -51,7 +65,7 @@ POST /api/admin/discovery/article-assessments/backfill
 {"limit":250,"dryRun":false,"retryFailures":false}
 ```
 
-The hard maximum is 250. A stored observe-mode v3 row is activated without another model call. Otherwise the candidate is marked assessment-pending and the existing idempotent process-candidate queue is used. The old current pointer remains valid until success. Queue insertion failure leaves durable pending state for startup recovery. A v3 failure is skipped by later ordinary batches; set `retryFailures:true` only after its cause is corrected.
+The hard maximum is 250. In `active` mode, a stored observe-mode v4 row is activated without another model call and its summary/keywords are written back to the candidate. Otherwise the candidate is marked assessment-pending and the existing idempotent process-candidate queue is used. The old current pointer remains valid until success. Queue insertion failure leaves durable pending state for startup recovery. A v4 failure is skipped by later ordinary batches; set `retryFailures:true` only after its cause is corrected.
 
 Rollback never deletes assessments or edits published recommendation snapshots. Preview and then reactivate the latest prior same-content assessment, or the v3 deterministic row, with:
 
