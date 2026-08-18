@@ -130,7 +130,8 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 	return enqueueCandidateForAssessment(ctx, candidate.ID)
 }
 
-// enqueueCandidateForAssessment 把已抽取的代表文章送进评估队列。测试环境没有作业队列时原地跑规则评估。
+// enqueueCandidateForAssessment 把已抽取的代表文章送进暂停的评估队列。
+// 测试环境没有作业队列时原地跑规则评估，避免与 LLM 调度耦合。
 func enqueueCandidateForAssessment(ctx context.Context, candidateID uint) error {
 	if db == nil || candidateID == 0 {
 		return gorm.ErrRecordNotFound

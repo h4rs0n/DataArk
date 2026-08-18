@@ -10,7 +10,7 @@ After this change, DataArk's recommendation center is three independently schedu
 
 Discovery outputs only article URLs that have already passed an adjustable rule gate, plus extracted body text, onto a pending-assessment queue. Assessment is the slow stage: it writes summary, topic keywords, and quality scores into recommendation inventory and exposes token and latency metrics. Recommendation only filters that inventory for a user and records feedback.
 
-An operator can observe: listing and login URLs never appear in the assessment queue; a manually subscribed blog is walked through archive and pagination until the cursor is exhausted, without any Sitemap request; blogroll-discovered sites stay incremental; the owner assessment panel shows queue depth, duration percentiles, and token totals; crawl still requires an explicit queue run.
+An operator can observe: listing and login URLs never appear in the assessment queue; a manually subscribed blog is walked through archive and pagination until the cursor is exhausted, without any Sitemap request; blogroll-discovered sites stay incremental; the owner assessment panel shows queue depth, duration percentiles, and token totals; article crawl runs automatically; LLM assessment requires an explicit queue run.
 
 ## Progress
 
@@ -20,7 +20,7 @@ An operator can observe: listing and login URLs never appear in the assessment q
 - [x] (2026-08-18) Create `api/llm` and `api/assessment`, move orchestration and LLM assessment out of `recommendation` and `discovery`.
 - [x] (2026-08-18) Persist safe LLM call rows and expose owner assessment metrics API plus UI panel.
 - [x] (2026-08-18) Remove Sitemap code, API, UI, and docs; unlimited ingest plus aggressive archive backfill for `user_managed` seeds; keep bounded backfill for blogroll sites.
-- [x] (2026-08-18) Regroup recommendation-center tabs into 发现 / 评估 / 推荐 and update README plus the assessment runbook.
+- [x] (2026-08-18 20:50+08:00) Invert scheduling: automatic `discovery_crawl` workers, paused `article_assessment` queue with owner **执行 LLM 评估**.
 
 ## Surprises & Discoveries
 
@@ -36,9 +36,9 @@ An operator can observe: listing and login URLs never appear in the assessment q
 - Decision: Manual subscriptions try to collect every article via full Feed items plus archive/pagination until the cursor is exhausted. Blogroll/observing sites keep incremental Feed plus bounded archive backfill. Sitemap is deleted entirely.
   Rationale: The operator chose this split. Without Sitemap, “all articles” means walk HTML history, not fetch `sitemap.xml`.
   Date/Author: 2026-08-18 / user and Cursor
-- Decision: The assessment River queue named `article_assessment` runs automatically. Discovery crawl stays on the paused `discovery_crawl` queue.
-  Rationale: Assessment only calls the configured LLM. It should not wait for the owner crawl button and must not block crawl workers.
-  Date/Author: 2026-08-18 / Cursor
+- Decision: The assessment River queue named `article_assessment` is paused until the owner clicks run. Discovery crawl on `discovery_crawl` runs automatically.
+  Rationale: The operator asked to invert the previous split: network fetch should not wait for a button, while LLM spend remains an explicit action.
+  Date/Author: 2026-08-18 / user and Cursor
 - Decision: Keep table `discovery_article_assessments`. Do not rename it.
   Rationale: A table rename has no user-visible benefit and would churn snapshots, foreign keys, and migrations.
   Date/Author: 2026-08-18 / Cursor
@@ -54,7 +54,7 @@ An operator can observe: listing and login URLs never appear in the assessment q
 
 ## Outcomes & Retrospective
 
-The recommendation center is now three independently scheduled modules. Discovery stops at extracted article bodies with `assessment_state=pending`. Assessment consumes that queue automatically, writes quality/summary/topics, and shows owner metrics from `assessment_llm_calls`. Recommendation still selects only ready eligible inventory. Manual subscriptions ingest Feed items without the 50-item cap and walk archive pages until the cursor is exhausted; blogroll sites stay bounded. Sitemap parsing, owner gap-fill, and UI are gone. Crawl still requires the owner run button.
+The recommendation center remains three independently scheduled modules. Discovery stops at extracted article bodies with `assessment_state=pending` and crawls automatically. Assessment consumes that queue only after the owner clicks **执行 LLM 评估**, writes quality/summary/topics, and shows owner metrics from `assessment_llm_calls`. Recommendation still selects only ready eligible inventory. Manual subscriptions ingest Feed items without the 50-item cap and walk archive pages until the cursor is exhausted; blogroll sites stay bounded. Sitemap parsing, owner gap-fill, and UI are gone.
 
 What remains outside this plan: tuning LLM throughput from the new metrics, and any later rewrite of the ranking formula.
 
@@ -114,13 +114,13 @@ After the job split, `ProcessCandidate` on a valid article leaves `processing_st
 
 After Sitemap removal, creating a source whose URL ends in `sitemap.xml` is rejected or ignored as a sitemap type, `requestSitemapBackfill` is gone, and the deterministic world still finds the archive-only high-value article through `archive` backfill with zero `FetchKindSitemap` requests.
 
-Owner `GET /api/admin/assessment/metrics` as a member returns 403; as owner returns JSON with `pendingQueue` and `llmUsage`. Crawl still requires `POST /api/admin/discovery/crawl-queue/run`.
+Owner `GET /api/admin/assessment/metrics` as a member returns 403; as owner returns JSON with `pendingQueue` and `llmUsage`. Crawl runs automatically. LLM assessment requires `POST /api/admin/assessment/queue/run`.
 
 Existing feedback tests `Test(FeedbackM13|...)` continue to pass: recommendation still reads eligible assessed inventory.
 
 ## Idempotence and Recovery
 
-Goose Down statements are data-preserving no-ops. Re-running assess jobs hits the immutable assessment unique key and reloads the stored row. Enqueue uniqueness remains `ByArgs`. Restart recovery stages due crawl jobs onto the paused queue and pending assessments onto the auto assessment queue. Sitemap rows are disabled, not deleted, so historical candidates remain.
+Goose Down statements are data-preserving no-ops. Re-running assess jobs hits the immutable assessment unique key and reloads the stored row. Enqueue uniqueness remains `ByArgs`. Restart recovery stages due crawl jobs onto the automatic discovery queue and pending assessments onto the paused assessment queue. Sitemap rows are disabled, not deleted, so historical candidates remain.
 
 ## Artifacts and Notes
 

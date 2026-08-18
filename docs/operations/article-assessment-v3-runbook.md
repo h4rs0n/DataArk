@@ -19,7 +19,7 @@ Successful model assessments write `summary` and `keywords` onto the live `disco
 
 ## Summary and keyword backfill in observe mode
 
-Stock inventory still has v3 assessment rows without summaries. Owner backfill now works while `ARTICLE_ASSESSMENT_MODE=observe`: it enqueues at most 250 `assessment_assess_article` jobs on the automatic `article_assessment` queue for articles that lack a v4 model row and does not activate model scores. After switching to `active`, the same endpoint activates stored v4 rows or enqueues missing ones as before. Discovery crawl remains on the paused `discovery_crawl` queue and still requires **推荐中心 → 发现 → 执行待处理任务**.
+Stock inventory still has v3 assessment rows without summaries. Owner backfill now works while `ARTICLE_ASSESSMENT_MODE=observe`: it enqueues at most 250 `assessment_assess_article` jobs on the paused `article_assessment` queue for articles that lack a v4 model row and does not activate model scores. After switching to `active`, the same endpoint activates stored v4 rows or enqueues missing ones as before. Discovery crawl runs automatically on `discovery_crawl`. LLM assessment still requires **推荐中心 → 评估 → 执行 LLM 评估**.
 
 ```text
 POST /api/admin/discovery/article-assessments/backfill
@@ -65,7 +65,7 @@ POST /api/admin/discovery/article-assessments/backfill
 {"limit":250,"dryRun":false,"retryFailures":false}
 ```
 
-The hard maximum is 250. In `active` mode, a stored observe-mode v4 row is activated without another model call and its summary/keywords are written back to the candidate. Otherwise the candidate is marked assessment-pending and the automatic `article_assessment` queue is used. The old current pointer remains valid until success. Queue insertion failure leaves durable pending state for startup recovery. A v4 failure is skipped by later ordinary batches; set `retryFailures:true` only after its cause is corrected.
+The hard maximum is 250. In `active` mode, a stored observe-mode v4 row is activated without another model call and its summary/keywords are written back to the candidate. Otherwise the candidate is marked assessment-pending and the paused `article_assessment` queue is used; the owner must click **执行 LLM 评估** before those jobs call the model. The old current pointer remains valid until success. Queue insertion failure leaves durable pending state for startup recovery. A v4 failure is skipped by later ordinary batches; set `retryFailures:true` only after its cause is corrected.
 
 Rollback never deletes assessments or edits published recommendation snapshots. Preview and then reactivate the latest prior same-content assessment, or the v3 deterministic row, with:
 

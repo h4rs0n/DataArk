@@ -34,61 +34,61 @@ import (
 )
 
 var (
-	checkArchiveConsistency             = search.CheckArchiveConsistency
-	repairArchiveConsistency            = search.RepairArchiveConsistency
-	registerWithToken                   = auth.RegisterWithToken
-	loginWithToken                      = auth.LoginWithToken
-	queryByKeyword                      = search.QueryByKeyword
-	addDocURLTask                       = search.AddDocURLTask
-	getArchiveTask                      = search.GetArchiveTask
-	getArchiveStatsSnapshot             = archive.GetArchiveStats
-	refreshStatsFromDisk                = archive.RefreshArchiveStatsFromDisk
-	recordSearchEvent                   = archive.RecordSearchEvent
-	getKeywordStats                     = archive.GetKeywordStats
-	recordArchiveClick                  = archive.RecordArchiveClick
-	getArchiveRankings                  = archive.GetArchiveRankings
-	getArchiveRecommendations           = archive.GetArchiveRecommendations
-	listDiscoverySources                = discovery.ListDiscoverySources
-	listDiscoveryDomainBlacklist        = discovery.ListDiscoveryDomainBlacklist
-	createDiscoveryDomainBlacklist      = discovery.CreateDiscoveryDomainBlacklist
-	deleteDiscoveryDomainBlacklist      = discovery.DeleteDiscoveryDomainBlacklist
-	createDiscoverySource               = discovery.CreateDiscoverySource
-	updateDiscoverySource               = discovery.UpdateDiscoverySource
-	deleteDiscoverySource               = discovery.DeleteDiscoverySource
-	fetchDiscoverySourceByID            = discovery.FetchDiscoverySourceByID
-	getDiscoverySiteGraph               = discovery.GetSiteGraph
-	listBackfillCoverage                = discovery.ListBackfillCoverage
-	updateDiscoverySiteStatus           = discovery.UpdateDiscoverySiteOperationalStatus
-	requestDiscoverySiteBackfill        = discovery.RequestDiscoverySiteBackfill
-	getDiscoverySiteOperations          = discovery.GetDiscoverySiteOperations
-	getDiscoveryCandidate               = discovery.GetDiscoveryCandidate
-	markCandidateRead                   = discovery.MarkUserCandidateRead
-	markCandidateArchived               = discovery.MarkUserCandidateArchived
-	getRecommendationSettings           = recommendation.GetRecommendationSettings
-	saveRecommendationSettings          = recommendation.SaveRecommendationSettings
-	getRecommendationDaySnapshot        = recommendation.GetRecommendationDaySnapshot
-	getRecommendationDaySummary         = recommendation.GetRecommendationDaySummary
-	getCurrentDiscoveryFeed             = recommendation.GetCurrentDiscoveryFeed
-	refreshDiscoveryFeed                = recommendation.RefreshDiscoveryFeed
-	recommendationDateForUser           = recommendation.RecommendationDateForUser
-	recommendationNow                   = time.Now
-	listRecommendationDays              = recommendation.ListRecommendationDays
-	createRecommendationDay             = recommendation.CreateRecommendationDay
-	generateDailyRecommendations        = recommendation.GenerateDailyRecommendations
-	regenerateRecommendations           = recommendation.RegenerateDailyRecommendations
-	supplementRecommendations           = recommendation.SupplementDailyRecommendations
-	recordRecommendationFeedback        = recommendation.RecordRecommendationFeedback
-	revertRecommendationFeedback        = recommendation.RevertRecommendationFeedback
-	getCurrentRecommendationFeedback    = recommendation.GetCurrentRecommendationFeedback
-	getRecommendationItemContext        = recommendation.GetRecommendationItemContext
-	listRecommendationFeedbackHistory   = recommendation.ListRecommendationFeedbackHistory
-	resetUserRecommendationPreferences  = recommendation.ResetUserRecommendationPreferences
-	listUserBlockRules                  = recommendation.ListUserBlockRules
-	deleteUserBlockRule                 = recommendation.DeleteUserBlockRule
-	getCandidateInventory               = recommendation.GetCandidateInventory
-	getAdminProductMetrics              = recommendation.GetAdminProductMetrics
-	getAssessmentMetrics                = assessment.GetMetrics
-	getDiscoveryCrawlQueue              = func(ctx context.Context, limit int) (*jobqueue.CrawlQueueSnapshot, error) {
+	checkArchiveConsistency            = search.CheckArchiveConsistency
+	repairArchiveConsistency           = search.RepairArchiveConsistency
+	registerWithToken                  = auth.RegisterWithToken
+	loginWithToken                     = auth.LoginWithToken
+	queryByKeyword                     = search.QueryByKeyword
+	addDocURLTask                      = search.AddDocURLTask
+	getArchiveTask                     = search.GetArchiveTask
+	getArchiveStatsSnapshot            = archive.GetArchiveStats
+	refreshStatsFromDisk               = archive.RefreshArchiveStatsFromDisk
+	recordSearchEvent                  = archive.RecordSearchEvent
+	getKeywordStats                    = archive.GetKeywordStats
+	recordArchiveClick                 = archive.RecordArchiveClick
+	getArchiveRankings                 = archive.GetArchiveRankings
+	getArchiveRecommendations          = archive.GetArchiveRecommendations
+	listDiscoverySources               = discovery.ListDiscoverySources
+	listDiscoveryDomainBlacklist       = discovery.ListDiscoveryDomainBlacklist
+	createDiscoveryDomainBlacklist     = discovery.CreateDiscoveryDomainBlacklist
+	deleteDiscoveryDomainBlacklist     = discovery.DeleteDiscoveryDomainBlacklist
+	createDiscoverySource              = discovery.CreateDiscoverySource
+	updateDiscoverySource              = discovery.UpdateDiscoverySource
+	deleteDiscoverySource              = discovery.DeleteDiscoverySource
+	fetchDiscoverySourceByID           = discovery.FetchDiscoverySourceByID
+	getDiscoverySiteGraph              = discovery.GetSiteGraph
+	listBackfillCoverage               = discovery.ListBackfillCoverage
+	updateDiscoverySiteStatus          = discovery.UpdateDiscoverySiteOperationalStatus
+	requestDiscoverySiteBackfill       = discovery.RequestDiscoverySiteBackfill
+	getDiscoverySiteOperations         = discovery.GetDiscoverySiteOperations
+	getDiscoveryCandidate              = discovery.GetDiscoveryCandidate
+	markCandidateRead                  = discovery.MarkUserCandidateRead
+	markCandidateArchived              = discovery.MarkUserCandidateArchived
+	getRecommendationSettings          = recommendation.GetRecommendationSettings
+	saveRecommendationSettings         = recommendation.SaveRecommendationSettings
+	getRecommendationDaySnapshot       = recommendation.GetRecommendationDaySnapshot
+	getRecommendationDaySummary        = recommendation.GetRecommendationDaySummary
+	getCurrentDiscoveryFeed            = recommendation.GetCurrentDiscoveryFeed
+	refreshDiscoveryFeed               = recommendation.RefreshDiscoveryFeed
+	recommendationDateForUser          = recommendation.RecommendationDateForUser
+	recommendationNow                  = time.Now
+	listRecommendationDays             = recommendation.ListRecommendationDays
+	createRecommendationDay            = recommendation.CreateRecommendationDay
+	generateDailyRecommendations       = recommendation.GenerateDailyRecommendations
+	regenerateRecommendations          = recommendation.RegenerateDailyRecommendations
+	supplementRecommendations          = recommendation.SupplementDailyRecommendations
+	recordRecommendationFeedback       = recommendation.RecordRecommendationFeedback
+	revertRecommendationFeedback       = recommendation.RevertRecommendationFeedback
+	getCurrentRecommendationFeedback   = recommendation.GetCurrentRecommendationFeedback
+	getRecommendationItemContext       = recommendation.GetRecommendationItemContext
+	listRecommendationFeedbackHistory  = recommendation.ListRecommendationFeedbackHistory
+	resetUserRecommendationPreferences = recommendation.ResetUserRecommendationPreferences
+	listUserBlockRules                 = recommendation.ListUserBlockRules
+	deleteUserBlockRule                = recommendation.DeleteUserBlockRule
+	getCandidateInventory              = recommendation.GetCandidateInventory
+	getAdminProductMetrics             = recommendation.GetAdminProductMetrics
+	getAssessmentMetrics               = assessment.GetMetrics
+	getDiscoveryCrawlQueue             = func(ctx context.Context, limit int) (*jobqueue.CrawlQueueSnapshot, error) {
 		controller, available := jobqueue.CrawlControl()
 		if !available {
 			return nil, errors.New("discovery crawl queue is unavailable")
@@ -102,6 +102,24 @@ var (
 			return nil, errors.New("discovery crawl queue is unavailable")
 		}
 		if err := discovery.RecoverDueJobs(ctx, queue, time.Now()); err != nil {
+			return nil, err
+		}
+		return controller.Snapshot(ctx, 50)
+	}
+	getAssessmentQueue = func(ctx context.Context, limit int) (*jobqueue.CrawlQueueSnapshot, error) {
+		controller, available := jobqueue.AssessmentControl()
+		if !available {
+			return nil, errors.New("article assessment queue is unavailable")
+		}
+		return controller.Snapshot(ctx, limit)
+	}
+	runAssessmentQueue = func(ctx context.Context) (*jobqueue.CrawlQueueSnapshot, error) {
+		queue, queueAvailable := jobqueue.Default()
+		controller, controllerAvailable := jobqueue.AssessmentControl()
+		if !queueAvailable || !controllerAvailable {
+			return nil, errors.New("article assessment queue is unavailable")
+		}
+		if err := assessment.RecoverDueJobs(ctx, queue, time.Now()); err != nil {
 			return nil, err
 		}
 		return controller.Run(ctx)
@@ -650,10 +668,36 @@ func RunDiscoveryCrawlQueue(c *gin.Context) {
 	}
 	snapshot, err := runDiscoveryCrawlQueue(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "启动爬取任务队列失败", "Error": err.Error()})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "登记到期爬取任务失败", "Error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "爬取任务队列已开始执行", "Data": snapshot})
+	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "到期爬取任务已登记，将自动执行", "Data": snapshot})
+}
+
+// GetAssessmentQueue 返回暂停中的 LLM 评估队列快照。
+func GetAssessmentQueue(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	snapshot, err := getAssessmentQueue(c.Request.Context(), queryInt(c, "limit", 50))
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "查询评估任务队列失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询评估任务队列成功", "Data": snapshot})
+}
+
+// RunAssessmentQueue 登记待评估文章并手动启动一次 LLM 评估消费。
+func RunAssessmentQueue(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	snapshot, err := runAssessmentQueue(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "启动评估任务队列失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "评估任务队列已开始执行", "Data": snapshot})
 }
 
 func BackfillArticleAssessments(c *gin.Context) {
@@ -1724,6 +1768,8 @@ func WebStarter(debugMode bool) {
 		protected.POST("/admin/discovery/article-assessments/backfill", BackfillArticleAssessments)
 		protected.POST("/admin/discovery/article-assessments/rollback", RollbackArticleAssessments)
 		protected.GET("/admin/assessment/metrics", GetAssessmentMetrics)
+		protected.GET("/admin/assessment/queue", GetAssessmentQueue)
+		protected.POST("/admin/assessment/queue/run", RunAssessmentQueue)
 		protected.GET("/admin/recommendations/article-assessment-workflow", GetArticleAssessmentWorkflow)
 		protected.POST("/admin/recommendations/article-assessment-workflow/runs", CreateArticleAssessmentWorkflow)
 		protected.GET("/admin/recommendations/article-assessment-workflow/runs/:runId/items/:pass/:position", GetArticleAssessmentWorkflowItem)

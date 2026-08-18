@@ -39,16 +39,20 @@ test('discovery UI lists manual subscriptions without sitemap gap fill', () => {
   assert.doesNotMatch(siteInsight, /sitemapBackfill/)
 })
 
-test('owner assessment module shows metrics and backfill onto the auto queue', () => {
+test('owner assessment module shows metrics and a manual LLM queue', () => {
   assert.match(view, /title="评估"/)
   assert.match(view, /AssessmentMetricsPanel/)
   assert.match(view, /class="assess-module"/)
   assert.match(metricsPanel, /\/api\/admin\/assessment\/metrics/)
+  assert.match(metricsPanel, /\/api\/admin\/assessment\/queue\?limit=50/)
+  assert.match(metricsPanel, /\/api\/admin\/assessment\/queue\/run/)
+  assert.match(metricsPanel, /执行 LLM 评估/)
   assert.match(metricsPanel, /article-assessments\/backfill/)
   assert.match(metricsPanel, /article-assessments\/rollback/)
   assert.match(metricsPanel, /待评估队列/)
   assert.match(metricsPanel, /class="metrics-spin"/)
   assert.match(metricsPanel, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/)
+  assert.match(metricsPanel, /入队后仍需点击/)
 })
 
 test('candidate article titles open the source in a safe new tab', () => {
@@ -75,11 +79,12 @@ test('unread discovery candidates use a refreshable personalized feed', () => {
   for (const label of ['原文', '入库', '查看发现路径']) assert.match(recommendationCard, new RegExp(label))
 })
 
-test('owner UI exposes the manual crawl queue in a dedicated tab', () => {
+test('owner UI exposes the automatic crawl queue in a dedicated tab', () => {
   assert.match(view, /爬取任务队列/)
-  assert.match(view, /执行待处理任务/)
+  assert.doesNotMatch(view, /执行待处理任务/)
+  assert.match(view, /文章爬取由后台自动执行/)
   assert.match(view, /\/api\/admin\/discovery\/crawl-queue\?limit=50/)
-  assert.match(view, /\/api\/admin\/discovery\/crawl-queue\/run/)
+  assert.doesNotMatch(view, /\/api\/admin\/discovery\/crawl-queue\/run/)
   assert.match(view, /<a-tab-pane v-if="isOwner" key="queue" title="任务队列">/)
   assert.ok(view.indexOf('key="queue"') > view.indexOf('key="discovery"'))
   assert.match(view, /moduleTab\.value !== 'discover' \|\| discoveryTab\.value !== 'queue'/)

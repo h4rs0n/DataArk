@@ -3,11 +3,17 @@
     <div class="section-title">
       <div>
         <h2>评估队列与 LLM 指标</h2>
-        <span>评估队列自动执行，不占用手动抓取工人；此处只展示安全字段，不含 prompt 或正文</span>
+        <span>文章爬取自动执行；LLM 评估排队等待，点击后单次消费当前待评估任务，不含 prompt 或正文</span>
       </div>
-      <a-button :loading="loading" @click="loadMetrics">
-        刷新指标
-      </a-button>
+      <a-space wrap>
+        <span class="queue-state" :class="`queue-state-${queue.state}`">{{ queueStateLabel }}</span>
+        <a-button :loading="loading" @click="refreshPanel">
+          刷新指标
+        </a-button>
+        <a-button type="primary" :loading="runningQueue" :disabled="!queue.canRun || queue.state === 'running'" @click="runQueue">
+          执行 LLM 评估
+        </a-button>
+      </a-space>
     </div>
     <a-spin :loading="loading" class="metrics-spin">
       <p v-if="errorMessage" class="ops-error">{{ errorMessage }}</p>
@@ -21,12 +27,18 @@
         <div><strong>{{ metrics.duration.p50Ms }} / {{ metrics.duration.p95Ms }}</strong><span>耗时 p50 / p95 ms</span></div>
         <div><strong>{{ (metrics.schemaRetryRate * 100).toFixed(1) }}%</strong><span>schema 重试率</span></div>
       </div>
+      <div class="queue-summary">
+        <div><strong>{{ queue.counts.pending }}</strong><span>等待执行</span></div>
+        <div><strong>{{ queue.counts.running }}</strong><span>正在运行</span></div>
+        <div><strong>{{ queue.counts.succeeded24h }}</strong><span>近 24 小时成功</span></div>
+        <div><strong>{{ queue.counts.failed24h }}</strong><span>近 24 小时失败</span></div>
+      </div>
     </a-spin>
 
     <div class="section-title backfill-title">
       <div>
         <h2>评估回填 / 回滚</h2>
-        <span>回填写入自动评估队列，最多 250 篇；抓取仍须在发现模块点击「执行待处理任务」</span>
+        <span>回填写入手动评估队列，最多 250 篇；入队后仍需点击「执行 LLM 评估」才会调用模型</span>
       </div>
     </div>
     <form class="backfill-form" @submit.prevent="runBackfill(true)">
@@ -50,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 
 const props = defineProps<{ active: boolean }>()
@@ -64,6 +76,20 @@ interface AssessmentMetrics {
   schemaRetryRate: number
 }
 
+interface AssessmentQueueSnapshot {
+  mode: 'automatic' | 'manual'
+  state: 'idle' | 'waiting' | 'running'
+  canRun: boolean
+  counts: { pending: number; running: number; succeeded24h: number; failed24h: number }
+}
+
+const emptyQueue = (): AssessmentQueueSnapshot => ({
+  mode: 'manual',
+  state: 'idle',
+  canRun: false,
+  counts: { pending: 0, running: 0, succeeded24h: 0, failed24h: 0 },
+})
+
 const emptyMetrics = (): AssessmentMetrics => ({
   pendingQueue: 0,
   last24h: { success: 0, failure: 0 },
@@ -74,12 +100,21 @@ const emptyMetrics = (): AssessmentMetrics => ({
 })
 
 const metrics = reactive(emptyMetrics())
+const queue = reactive(emptyQueue())
 const loading = ref(false)
 const running = ref(false)
+const runningQueue = ref(false)
 const errorMessage = ref('')
 const batchMessage = ref('')
 const limit = ref(250)
 const retryFailures = ref(false)
+let queueTimer: ReturnType<typeof window.setTimeout> | null = null
+
+const queueStateLabel = computed(() => ({
+  idle: '队列空闲',
+  waiting: '等待手动执行',
+  running: '正在执行',
+}[queue.state]))
 
 function authHeaders(json = false): HeadersInit {
   const token = localStorage.getItem('token')
@@ -116,6 +151,56 @@ const loadMetrics = async () => {
   }
 }
 
+const clearQueueTimer = () => {
+  if (queueTimer !== null) {
+    window.clearTimeout(queueTimer)
+    queueTimer = null
+  }
+}
+
+const scheduleQueueRefresh = () => {
+  clearQueueTimer()
+  if (!props.active) return
+  const delay = queue.state === 'running' ? 2000 : 10000
+  queueTimer = window.setTimeout(() => { void loadQueue(true) }, delay)
+}
+
+// 加载暂停中的 LLM 评估作业快照。
+const loadQueue = async (silent = false) => {
+  try {
+    const data = await requestJSON<AssessmentQueueSnapshot>('/api/admin/assessment/queue?limit=50', { headers: authHeaders() })
+    Object.assign(queue, emptyQueue(), data, {
+      counts: { ...emptyQueue().counts, ...(data?.counts || {}) },
+    })
+  } catch (error) {
+    if (!silent) {
+      errorMessage.value = error instanceof Error ? error.message : '加载评估队列失败'
+    }
+  } finally {
+    scheduleQueueRefresh()
+  }
+}
+
+const refreshPanel = async () => {
+  await Promise.all([loadMetrics(), loadQueue()])
+}
+
+const runQueue = async () => {
+  try {
+    runningQueue.value = true
+    const data = await requestJSON<AssessmentQueueSnapshot>('/api/admin/assessment/queue/run', { method: 'POST', headers: authHeaders() })
+    Object.assign(queue, emptyQueue(), data, {
+      counts: { ...emptyQueue().counts, ...(data?.counts || {}) },
+    })
+    Message.success('评估任务队列已开始执行')
+  } catch (error) {
+    Message.error(error instanceof Error ? error.message : '启动评估任务队列失败')
+  } finally {
+    runningQueue.value = false
+    scheduleQueueRefresh()
+  }
+}
+
 const describeBatch = (action: string, result: { selected?: number; enqueued?: number; reactivated?: number; skipped?: number; dryRun?: boolean }) => {
   return `${action}${result.dryRun ? '预览' : ''}：选中 ${result.selected || 0}，入队 ${result.enqueued || 0}，激活 ${result.reactivated || 0}，跳过 ${result.skipped || 0}`
 }
@@ -130,7 +215,7 @@ const runBackfill = async (dryRun: boolean) => {
     })
     batchMessage.value = describeBatch('回填', result || {})
     Message.success(batchMessage.value)
-    if (!dryRun) await loadMetrics()
+    if (!dryRun) await refreshPanel()
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '评估回填失败')
   } finally {
@@ -148,7 +233,7 @@ const runRollback = async (dryRun: boolean) => {
     })
     batchMessage.value = describeBatch('回滚', result || {})
     Message.success(batchMessage.value)
-    if (!dryRun) await loadMetrics()
+    if (!dryRun) await refreshPanel()
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '评估回滚失败')
   } finally {
@@ -157,8 +242,16 @@ const runRollback = async (dryRun: boolean) => {
 }
 
 watch(() => props.active, (active) => {
-  if (active) void loadMetrics()
+  if (active) {
+    void refreshPanel()
+    return
+  }
+  clearQueueTimer()
 }, { immediate: true })
+
+onUnmounted(() => {
+  clearQueueTimer()
+})
 </script>
 
 <style scoped>
@@ -182,7 +275,7 @@ watch(() => props.active, (active) => {
   font-size: 20px;
 }
 
-.section-title span {
+.section-title > div span {
   color: #86909c;
   font-size: 13px;
 }
@@ -274,8 +367,56 @@ watch(() => props.active, (active) => {
   color: #4e5969;
 }
 
+.queue-state {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #f2f3f5;
+  color: #4e5969;
+  font-size: 13px;
+}
+
+.queue-state-running {
+  background: #e8f3ff;
+  color: #165dff;
+}
+
+.queue-state-waiting {
+  background: #fff7e8;
+  color: #d46b08;
+}
+
+.queue-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+  margin-top: 16px;
+}
+
+.queue-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: #f7f8fa;
+}
+
+.queue-summary strong {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-summary span {
+  color: #86909c;
+  font-size: 12px;
+}
+
 @media (max-width: 820px) {
-  .metrics-grid {
+  .metrics-grid,
+  .queue-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

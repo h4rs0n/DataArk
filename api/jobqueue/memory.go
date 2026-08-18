@@ -31,9 +31,10 @@ type MemoryJob struct {
 }
 
 type MemoryStore struct {
-	mu      sync.Mutex
-	jobs    map[string]MemoryJob
-	running bool
+	mu                sync.Mutex
+	jobs              map[string]MemoryJob
+	crawlRunning      bool
+	assessmentRunning bool
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -55,12 +56,33 @@ type MemoryQueue struct {
 	handlers Handlers
 }
 
+type memoryCrawlView struct {
+	queue *MemoryQueue
+}
+
+func (view memoryCrawlView) Snapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
+	return view.queue.snapshot(limit, isCrawlJobKind, CrawlQueueMode, false)
+}
+
+type memoryAssessmentView struct {
+	queue *MemoryQueue
+}
+
+func (view memoryAssessmentView) Snapshot(_ context.Context, limit int) (*CrawlQueueSnapshot, error) {
+	return view.queue.snapshot(limit, isAssessmentJobKind, AssessmentQueueMode, true)
+}
+
+func (view memoryAssessmentView) Run(ctx context.Context) (*CrawlQueueSnapshot, error) {
+	return view.queue.runAssessment(ctx)
+}
+
 func NewMemoryQueue(store *MemoryStore, handlers Handlers) *MemoryQueue {
 	if store == nil {
 		store = NewMemoryStore()
 	}
 	store.mu.Lock()
-	store.running = false
+	store.crawlRunning = false
+	store.assessmentRunning = false
 	for key, job := range store.jobs {
 		if job.Status == MemoryJobRunning {
 			job.Status = MemoryJobPending
@@ -72,30 +94,49 @@ func NewMemoryQueue(store *MemoryStore, handlers Handlers) *MemoryQueue {
 		}
 	}
 	store.mu.Unlock()
-	return &MemoryQueue{store: store, handlers: handlers}
+	queue := &MemoryQueue{store: store, handlers: handlers}
+	// 中断的爬取作业在重启后自动继续，不需要 owner 再点一次。
+	queue.kickCrawl()
+	return queue
 }
 
 func (queue *MemoryQueue) EnqueueFetchSource(_ context.Context, sourceID uint) error {
-	return queue.stage(FetchSourceJobKind, fmt.Sprintf("source:%d", sourceID), "source", sourceID, "")
+	if err := queue.stage(FetchSourceJobKind, fmt.Sprintf("source:%d", sourceID), "source", sourceID, ""); err != nil {
+		return err
+	}
+	queue.kickCrawl()
+	return nil
 }
 
 func (queue *MemoryQueue) EnqueueScanBlogroll(_ context.Context, siteID uint) error {
-	return queue.stage(ScanBlogrollJobKind, fmt.Sprintf("site:%d", siteID), "site", siteID, "")
+	if err := queue.stage(ScanBlogrollJobKind, fmt.Sprintf("site:%d", siteID), "site", siteID, ""); err != nil {
+		return err
+	}
+	queue.kickCrawl()
+	return nil
 }
 
 func (queue *MemoryQueue) EnqueueBackfillSite(_ context.Context, siteID uint) error {
-	return queue.stage(BackfillSiteJobKind, fmt.Sprintf("site:%d", siteID), "site", siteID, "")
+	if err := queue.stage(BackfillSiteJobKind, fmt.Sprintf("site:%d", siteID), "site", siteID, ""); err != nil {
+		return err
+	}
+	queue.kickCrawl()
+	return nil
 }
 
 func (queue *MemoryQueue) EnqueueProcessCandidate(_ context.Context, candidateID uint, contentVersion string) error {
-	return queue.stage(ProcessCandidateJobKind, fmt.Sprintf("candidate:%d:version:%s", candidateID, contentVersion), "candidate", candidateID, contentVersion)
+	if err := queue.stage(ProcessCandidateJobKind, fmt.Sprintf("candidate:%d:version:%s", candidateID, contentVersion), "candidate", candidateID, contentVersion); err != nil {
+		return err
+	}
+	queue.kickCrawl()
+	return nil
 }
 
-func (queue *MemoryQueue) EnqueueAssessArticle(ctx context.Context, candidateID uint, contentVersion string) error {
+func (queue *MemoryQueue) EnqueueAssessArticle(_ context.Context, candidateID uint, contentVersion string) error {
 	if queue.handlers.AssessArticle == nil {
 		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, AssessArticleJobKind)
 	}
-	return queue.handlers.AssessArticle(ctx, candidateID, contentVersion)
+	return queue.stage(AssessArticleJobKind, fmt.Sprintf("candidate:%d:version:%s", candidateID, contentVersion), "candidate", candidateID, contentVersion)
 }
 
 func (queue *MemoryQueue) EnqueueGenerateDaily(ctx context.Context, userID uint, localDate string) error {
@@ -121,26 +162,68 @@ func (queue *MemoryQueue) stage(kind, identity, targetType string, targetID uint
 	return nil
 }
 
-func (queue *MemoryQueue) Run(ctx context.Context) (*CrawlQueueSnapshot, error) {
+func (queue *MemoryQueue) kickCrawl() {
 	queue.store.mu.Lock()
-	if !queue.store.running {
-		queue.store.running = true
-		go queue.drain()
+	if queue.store.crawlRunning {
+		queue.store.mu.Unlock()
+		return
 	}
+	if !queue.hasPendingLocked(isCrawlJobKind) {
+		queue.store.mu.Unlock()
+		return
+	}
+	queue.store.crawlRunning = true
 	queue.store.mu.Unlock()
-	return queue.Snapshot(ctx, 50)
+	go queue.drain(isCrawlJobKind, func() {
+		queue.store.mu.Lock()
+		queue.store.crawlRunning = false
+		stillPending := queue.hasPendingLocked(isCrawlJobKind)
+		queue.store.mu.Unlock()
+		if stillPending {
+			queue.kickCrawl()
+		}
+	})
 }
 
-func (queue *MemoryQueue) drain() {
+func (queue *MemoryQueue) runAssessment(ctx context.Context) (*CrawlQueueSnapshot, error) {
+	queue.store.mu.Lock()
+	if !queue.store.assessmentRunning {
+		queue.store.assessmentRunning = true
+		queue.store.mu.Unlock()
+		go queue.drain(isAssessmentJobKind, func() {
+			queue.store.mu.Lock()
+			queue.store.assessmentRunning = false
+			queue.store.mu.Unlock()
+		})
+	} else {
+		queue.store.mu.Unlock()
+	}
+	return memoryAssessmentView{queue: queue}.Snapshot(ctx, 50)
+}
+
+func (queue *MemoryQueue) hasPendingLocked(match func(string) bool) bool {
+	for _, job := range queue.store.jobs {
+		if match(job.Kind) && job.Status == MemoryJobPending {
+			return true
+		}
+	}
+	return false
+}
+
+func (queue *MemoryQueue) drain(match func(string) bool, finish func()) {
+	defer finish()
 	for {
-		jobs := queue.takePending(4)
+		jobs := queue.takePending(4, match)
 		if len(jobs) == 0 {
 			time.Sleep(500 * time.Millisecond)
-			jobs = queue.takePending(4)
+			jobs = queue.takePending(4, match)
 			if len(jobs) == 0 {
 				queue.store.mu.Lock()
-				queue.store.running = false
+				stillPending := queue.hasPendingLocked(match)
 				queue.store.mu.Unlock()
+				if stillPending {
+					continue
+				}
 				return
 			}
 		}
@@ -156,12 +239,12 @@ func (queue *MemoryQueue) drain() {
 	}
 }
 
-func (queue *MemoryQueue) takePending(limit int) []MemoryJob {
+func (queue *MemoryQueue) takePending(limit int, match func(string) bool) []MemoryJob {
 	queue.store.mu.Lock()
 	defer queue.store.mu.Unlock()
 	keys := make([]string, 0)
 	for key, job := range queue.store.jobs {
-		if isCrawlJobKind(job.Kind) && job.Status == MemoryJobPending {
+		if match(job.Kind) && job.Status == MemoryJobPending {
 			keys = append(keys, key)
 		}
 	}
@@ -213,6 +296,12 @@ func (queue *MemoryQueue) execute(job MemoryJob) {
 		} else {
 			err = queue.handlers.ProcessCandidate(ctx, job.TargetID, job.ContentVersion)
 		}
+	case AssessArticleJobKind:
+		if queue.handlers.AssessArticle == nil {
+			err = fmt.Errorf("%w: %s", ErrHandlerUnavailable, job.Kind)
+		} else {
+			err = queue.handlers.AssessArticle(ctx, job.TargetID, job.ContentVersion)
+		}
 	}
 	queue.finish(job.Key, err)
 }
@@ -232,13 +321,19 @@ func (queue *MemoryQueue) finish(key string, err error) {
 	queue.store.jobs[key] = job
 }
 
-func (queue *MemoryQueue) Snapshot(_ context.Context, limit int) (*CrawlQueueSnapshot, error) {
+func (queue *MemoryQueue) snapshot(limit int, match func(string) bool, mode string, manual bool) (*CrawlQueueSnapshot, error) {
 	limit = normalizeSnapshotLimit(limit)
 	queue.store.mu.Lock()
-	running := queue.store.running
+	running := false
+	if match(FetchSourceJobKind) {
+		running = queue.store.crawlRunning
+	}
+	if match(AssessArticleJobKind) {
+		running = queue.store.assessmentRunning
+	}
 	jobs := make([]MemoryJob, 0, len(queue.store.jobs))
 	for _, job := range queue.store.jobs {
-		if isCrawlJobKind(job.Kind) {
+		if match(job.Kind) {
 			jobs = append(jobs, job)
 		}
 	}
@@ -246,7 +341,7 @@ func (queue *MemoryQueue) Snapshot(_ context.Context, limit int) (*CrawlQueueSna
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].UpdatedAt.After(jobs[j].UpdatedAt) })
 	now := time.Now()
 	cutoff := now.Add(-24 * time.Hour)
-	snapshot := &CrawlQueueSnapshot{Mode: CrawlQueueMode, UpdatedAt: now, Tasks: make([]CrawlQueueTask, 0, limit)}
+	snapshot := &CrawlQueueSnapshot{Mode: mode, UpdatedAt: now, Tasks: make([]CrawlQueueTask, 0, limit)}
 	for _, job := range jobs {
 		task := CrawlQueueTask{
 			ID: job.Key, Kind: job.Kind, TargetType: job.TargetType, TargetID: job.TargetID,
@@ -275,9 +370,11 @@ func (queue *MemoryQueue) Snapshot(_ context.Context, limit int) (*CrawlQueueSna
 			snapshot.Tasks = append(snapshot.Tasks, task)
 		}
 	}
-	snapshot.CanRun = !running && snapshot.Counts.Pending > 0
+	if manual {
+		snapshot.CanRun = !running && snapshot.Counts.Pending > 0
+	}
 	switch {
-	case running:
+	case running || snapshot.Counts.Running > 0:
 		snapshot.State = "running"
 	case snapshot.Counts.Pending > 0:
 		snapshot.State = "waiting"

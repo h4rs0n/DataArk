@@ -71,7 +71,7 @@ func TestJobArgsUseStableIdentityAndUniqueOptions(t *testing.T) {
 		}
 		if testCase.kind == GenerateDailyJobKind || testCase.kind == AssessArticleJobKind {
 			if testCase.args.InsertOpts().Queue == DiscoveryQueueName {
-				t.Fatalf("%s must not use the manually gated discovery queue", testCase.kind)
+				t.Fatalf("%s must not use the automatic discovery crawl queue", testCase.kind)
 			}
 		} else if testCase.args.InsertOpts().Queue != DiscoveryQueueName {
 			t.Fatalf("%s queue = %q, want %q", testCase.kind, testCase.args.InsertOpts().Queue, DiscoveryQueueName)
@@ -80,7 +80,7 @@ func TestJobArgsUseStableIdentityAndUniqueOptions(t *testing.T) {
 			t.Fatalf("assessment queue = %q, want %q", testCase.args.InsertOpts().Queue, AssessmentQueueName)
 		}
 		if testCase.kind != GenerateDailyJobKind && testCase.args.InsertOpts().MaxAttempts != 1 {
-			t.Fatalf("%s max attempts = %d, want 1 so domain backoff remains manually gated", testCase.kind, testCase.args.InsertOpts().MaxAttempts)
+			t.Fatalf("%s max attempts = %d, want 1 so domain backoff remains authoritative", testCase.kind, testCase.args.InsertOpts().MaxAttempts)
 		}
 	}
 }
@@ -172,6 +172,30 @@ func TestReconcileManualDiscoveryJobsReturnsDatabaseError(t *testing.T) {
 	}
 }
 
+func TestReconcileManualAssessmentJobsMovesActiveAndResetsInterruptedWork(t *testing.T) {
+	executor := &recordingSQLExecer{rows: 4}
+	reconciled, err := reconcileManualAssessmentJobs(context.Background(), executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconciled != 4 {
+		t.Fatalf("reconciled jobs = %d, want 4", reconciled)
+	}
+	for _, fragment := range []string{
+		"UPDATE river_job",
+		"state = CASE WHEN state = 'running' THEN 'available'::river_job_state ELSE state END",
+		"(queue <> $1 AND state IN",
+		"(queue = $1 AND state = 'running')",
+	} {
+		if !strings.Contains(executor.query, fragment) {
+			t.Fatalf("migration query missing %q: %s", fragment, executor.query)
+		}
+	}
+	if len(executor.args) != 2 || executor.args[0] != AssessmentQueueName || executor.args[1] != AssessArticleJobKind {
+		t.Fatalf("migration args = %#v", executor.args)
+	}
+}
+
 func TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures(t *testing.T) {
 	store := NewMemoryStore()
 	var mu sync.Mutex
@@ -193,26 +217,21 @@ func TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures(t *testing.T) {
 	if err := firstProcess.EnqueueFetchSource(context.Background(), 2); err != nil {
 		t.Fatalf("second source should not be blocked: %v", err)
 	}
-	if executions := len(store.Snapshot()); executions != 2 || len(attempts) != 0 {
-		t.Fatalf("staged jobs=%d attempts=%#v; enqueue must not execute", executions, attempts)
-	}
-	if _, err := firstProcess.Run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	waitForMemoryQueueIdle(t, firstProcess)
+	if attempts[1] != 1 || attempts[2] != 1 {
+		t.Fatalf("first automatic run attempts = %#v", attempts)
+	}
 
 	secondProcess := NewMemoryQueue(store, handlers)
 	if err := secondProcess.EnqueueFetchSource(context.Background(), 1); err != nil {
 		t.Fatalf("failed job should resume after restart: %v", err)
 	}
-	if _, err := secondProcess.Run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	waitForMemoryQueueIdle(t, secondProcess)
 	if err := secondProcess.EnqueueFetchSource(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
-	if attempts[1] != 2 || attempts[2] != 1 {
+	waitForMemoryQueueIdle(t, secondProcess)
+	if attempts[1] != 3 || attempts[2] != 1 {
 		t.Fatalf("attempts = %#v", attempts)
 	}
 
@@ -224,12 +243,6 @@ func TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures(t *testing.T) {
 		scanned.Add(1)
 		return nil
 	}})
-	if err := thirdProcess.EnqueueScanBlogroll(context.Background(), 9); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := thirdProcess.Run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	waitForMemoryQueueIdle(t, thirdProcess)
 	if scanned.Load() != 1 {
 		t.Fatalf("interrupted scan executions = %d", scanned.Load())
@@ -239,9 +252,13 @@ func TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures(t *testing.T) {
 func TestMemoryQueueConcurrentDuplicateExecutesOnce(t *testing.T) {
 	store := NewMemoryStore()
 	var executions atomic.Int32
+	var startedOnce sync.Once
+	started := make(chan struct{})
+	release := make(chan struct{})
 	queue := NewMemoryQueue(store, Handlers{ProcessCandidate: func(context.Context, uint, string) error {
 		executions.Add(1)
-		time.Sleep(time.Millisecond)
+		startedOnce.Do(func() { close(started) })
+		<-release
 		return nil
 	}})
 	var group sync.WaitGroup
@@ -254,13 +271,13 @@ func TestMemoryQueueConcurrentDuplicateExecutesOnce(t *testing.T) {
 			}
 		}()
 	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first crawl job did not start")
+	}
 	group.Wait()
-	if executions.Load() != 0 {
-		t.Fatalf("enqueue executed handlers before manual run: %d", executions.Load())
-	}
-	if _, err := queue.Run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	close(release)
 	waitForMemoryQueueIdle(t, queue)
 	if executions.Load() != 1 {
 		t.Fatalf("executions = %d, want 1", executions.Load())
@@ -271,7 +288,7 @@ func TestMemoryQueueConcurrentDuplicateExecutesOnce(t *testing.T) {
 	}
 }
 
-func TestMemoryQueueManualRunDrainsDerivedJobs(t *testing.T) {
+func TestMemoryQueueCrawlEnqueueDrainsDerivedJobs(t *testing.T) {
 	store := NewMemoryStore()
 	var queue *MemoryQueue
 	var processed atomic.Int32
@@ -293,23 +310,17 @@ func TestMemoryQueueManualRunDrainsDerivedJobs(t *testing.T) {
 	if err := queue.EnqueueFetchSource(context.Background(), 5); err != nil {
 		t.Fatal(err)
 	}
-	if processed.Load() != 0 {
-		t.Fatal("derived work ran before the manual queue was started")
-	}
-	if _, err := queue.Run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	waitForMemoryQueueIdle(t, queue)
 	if processed.Load() != 1 {
 		t.Fatalf("processed = %d, want 1", processed.Load())
 	}
-	snapshot, err := queue.Snapshot(context.Background(), 50)
-	if err != nil || snapshot.Counts.Succeeded24h != 2 || snapshot.Counts.Pending != 0 || snapshot.State != "idle" {
+	snapshot, err := memoryCrawlView{queue: queue}.Snapshot(context.Background(), 50)
+	if err != nil || snapshot.Counts.Succeeded24h != 2 || snapshot.Counts.Pending != 0 || snapshot.State != "idle" || snapshot.Mode != CrawlQueueMode || snapshot.CanRun {
 		t.Fatalf("snapshot = %#v err=%v", snapshot, err)
 	}
 }
 
-func TestMemoryQueueAssessArticleRunsWithoutManualStart(t *testing.T) {
+func TestMemoryQueueAssessArticleWaitsForManualStart(t *testing.T) {
 	store := NewMemoryStore()
 	var assessed atomic.Int32
 	queue := NewMemoryQueue(store, Handlers{AssessArticle: func(_ context.Context, candidateID uint, version string) error {
@@ -322,12 +333,23 @@ func TestMemoryQueueAssessArticleRunsWithoutManualStart(t *testing.T) {
 	if err := queue.EnqueueAssessArticle(context.Background(), 11, "4"); err != nil {
 		t.Fatal(err)
 	}
-	if assessed.Load() != 1 {
-		t.Fatalf("assessment executions = %d, want 1 before any crawl run", assessed.Load())
+	if assessed.Load() != 0 {
+		t.Fatalf("assessment executions = %d, want 0 before manual run", assessed.Load())
 	}
-	snapshot, err := queue.Snapshot(context.Background(), 50)
-	if err != nil || snapshot.Counts.Pending != 0 {
-		t.Fatalf("assessment jobs must not appear on the crawl snapshot: %#v err=%v", snapshot, err)
+	crawlSnapshot, err := memoryCrawlView{queue: queue}.Snapshot(context.Background(), 50)
+	if err != nil || crawlSnapshot.Counts.Pending != 0 {
+		t.Fatalf("assessment jobs must not appear on the crawl snapshot: %#v err=%v", crawlSnapshot, err)
+	}
+	assessmentSnapshot, err := memoryAssessmentView{queue: queue}.Snapshot(context.Background(), 50)
+	if err != nil || assessmentSnapshot.Counts.Pending != 1 || !assessmentSnapshot.CanRun || assessmentSnapshot.Mode != AssessmentQueueMode {
+		t.Fatalf("assessment snapshot = %#v err=%v", assessmentSnapshot, err)
+	}
+	if _, err := (memoryAssessmentView{queue: queue}).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForAssessmentIdle(t, memoryAssessmentView{queue: queue})
+	if assessed.Load() != 1 {
+		t.Fatalf("assessment executions = %d, want 1", assessed.Load())
 	}
 }
 
@@ -359,7 +381,7 @@ func TestStartSQLiteInstallsRecoverableSharedQueue(t *testing.T) {
 	}
 }
 
-func TestStartSQLiteRecoveryWaitsForManualRun(t *testing.T) {
+func TestStartSQLiteRecoveryRunsCrawlAutomatically(t *testing.T) {
 	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -376,33 +398,71 @@ func TestStartSQLiteRecoveryWaitsForManualRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if executions.Load() != 0 {
-		t.Fatalf("startup executions = %d, want 0", executions.Load())
-	}
 	controller, available := CrawlControl()
 	if !available {
 		t.Fatal("crawl queue controller unavailable")
 	}
+	waitForSnapshotIdle(t, controller)
+	if executions.Load() != 1 {
+		t.Fatalf("automatic crawl executions = %d, want 1", executions.Load())
+	}
 	snapshot, err := controller.Snapshot(context.Background(), 50)
-	if err != nil || snapshot.State != "waiting" || snapshot.Counts.Pending != 1 {
+	if err != nil || snapshot.Mode != CrawlQueueMode || snapshot.CanRun {
+		t.Fatalf("snapshot = %#v err=%v", snapshot, err)
+	}
+	stopFirst()
+}
+
+func TestStartSQLiteAssessmentWaitsForManualRun(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assessed atomic.Int32
+	handlers := Handlers{AssessArticle: func(context.Context, uint, string) error {
+		assessed.Add(1)
+		return nil
+	}}
+	stop, err := Start(context.Background(), database, handlers, func(ctx context.Context, queue JobEnqueuer) error {
+		return queue.EnqueueAssessArticle(ctx, 21, "7")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assessed.Load() != 0 {
+		t.Fatalf("startup assessment executions = %d, want 0", assessed.Load())
+	}
+	controller, available := AssessmentControl()
+	if !available {
+		t.Fatal("assessment queue controller unavailable")
+	}
+	snapshot, err := controller.Snapshot(context.Background(), 50)
+	if err != nil || snapshot.State != "waiting" || snapshot.Counts.Pending != 1 || !snapshot.CanRun || snapshot.Mode != AssessmentQueueMode {
 		t.Fatalf("snapshot = %#v err=%v", snapshot, err)
 	}
 	if _, err := controller.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	waitForControllerIdle(t, controller)
-	if executions.Load() != 1 {
-		t.Fatalf("manual executions = %d, want 1", executions.Load())
+	waitForAssessmentIdle(t, controller)
+	if assessed.Load() != 1 {
+		t.Fatalf("manual assessment executions = %d, want 1", assessed.Load())
 	}
-	stopFirst()
+	stop()
 }
 
 func waitForMemoryQueueIdle(t *testing.T, queue *MemoryQueue) {
 	t.Helper()
-	waitForControllerIdle(t, queue)
+	waitForSnapshotIdle(t, memoryCrawlView{queue: queue})
 }
 
-func waitForControllerIdle(t *testing.T, controller CrawlQueueController) {
+func waitForAssessmentIdle(t *testing.T, controller AssessmentQueueController) {
+	t.Helper()
+	waitForSnapshotIdle(t, controller)
+}
+
+func waitForSnapshotIdle(t *testing.T, controller interface {
+	Snapshot(context.Context, int) (*CrawlQueueSnapshot, error)
+}) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -415,5 +475,5 @@ func waitForControllerIdle(t *testing.T, controller CrawlQueueController) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("manual queue did not return to idle")
+	t.Fatal("queue did not return to idle")
 }

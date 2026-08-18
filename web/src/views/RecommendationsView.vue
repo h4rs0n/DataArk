@@ -12,7 +12,7 @@
         <div class="header-mark"><icon-robot /></div>
         <div>
           <h1>推荐中心</h1>
-          <p>发现、评估、推荐三条流水线独立运行：抓取需手动执行，评估自动调用 LLM，推荐只消费已评估库存。</p>
+          <p>发现、评估、推荐三条流水线独立运行：文章爬取自动执行，LLM 评估需手动启动，推荐只消费已评估库存。</p>
         </div>
         <a-button :loading="loading" @click="loadAll">
           <template #icon><icon-refresh /></template>
@@ -363,16 +363,13 @@
             <div class="section-title">
               <div>
                 <h2>爬取任务队列</h2>
-                <span>自动发现只登记任务；点击后单次执行当前到期任务及其派生任务</span>
+                <span>文章爬取由后台自动执行；此处只观察任务状态，LLM 评估请到「评估」页手动启动</span>
               </div>
               <a-space wrap>
                 <span class="queue-state" :class="`queue-state-${crawlQueue.state}`">{{ crawlQueueStateLabel }}</span>
                 <a-button :loading="crawlQueueLoading || blacklistLoading" @click="refreshQueueTab">
                   <template #icon><icon-refresh /></template>
                   刷新
-                </a-button>
-                <a-button type="primary" :loading="runningCrawlQueue" :disabled="!crawlQueue.canRun || crawlQueue.state === 'running'" @click="runCrawlQueue">
-                  执行待处理任务
                 </a-button>
               </a-space>
             </div>
@@ -672,7 +669,7 @@ interface CrawlQueueTask {
 }
 
 interface CrawlQueueSnapshot {
-  mode: 'manual'
+  mode: 'automatic' | 'manual'
   state: 'idle' | 'waiting' | 'running'
   canRun: boolean
   updatedAt: string
@@ -694,7 +691,7 @@ interface DomainBlacklistMutation {
 }
 
 const emptyCrawlQueue = (): CrawlQueueSnapshot => ({
-  mode: 'manual',
+  mode: 'automatic',
   state: 'idle',
   canRun: false,
   updatedAt: '',
@@ -716,7 +713,6 @@ const feedbackLoadingId = ref<number | null>(null)
 const discoveryFeedLoading = ref(false)
 const refreshingDiscoveryFeed = ref(false)
 const crawlQueueLoading = ref(false)
-const runningCrawlQueue = ref(false)
 const blacklistLoading = ref(false)
 const addingBlacklist = ref(false)
 const deletingBlacklistId = ref<number | null>(null)
@@ -780,7 +776,7 @@ let crawlQueueTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const crawlQueueStateLabel = computed(() => ({
   idle: '队列空闲',
-  waiting: '等待手动执行',
+  waiting: '排队等待工人',
   running: '正在执行',
 }[crawlQueue.value.state]))
 
@@ -878,19 +874,6 @@ const loadCrawlQueue = async (silent = false) => {
     if (!silent) Message.error(error instanceof Error ? error.message : '加载爬取任务队列失败')
   } finally {
     crawlQueueLoading.value = false
-    scheduleCrawlQueueRefresh()
-  }
-}
-
-const runCrawlQueue = async () => {
-  try {
-    runningCrawlQueue.value = true
-    crawlQueue.value = await requestJSON<CrawlQueueSnapshot>('/api/admin/discovery/crawl-queue/run', { method: 'POST', headers: authHeaders() })
-    Message.success('爬取任务队列已开始执行')
-  } catch (error) {
-    Message.error(error instanceof Error ? error.message : '启动爬取任务队列失败')
-  } finally {
-    runningCrawlQueue.value = false
     scheduleCrawlQueueRefresh()
   }
 }

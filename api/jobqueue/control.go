@@ -16,7 +16,8 @@ var (
 const (
 	DiscoveryQueueName  = "discovery_crawl"
 	AssessmentQueueName = "article_assessment"
-	CrawlQueueMode      = "manual"
+	CrawlQueueMode      = "automatic"
+	AssessmentQueueMode = "manual"
 )
 
 type CrawlQueueCounts struct {
@@ -50,7 +51,13 @@ type CrawlQueueSnapshot struct {
 	Tasks     []CrawlQueueTask `json:"tasks"`
 }
 
+// CrawlQueueController 只提供观察快照：文章爬取由工人自动消费。
 type CrawlQueueController interface {
+	Snapshot(context.Context, int) (*CrawlQueueSnapshot, error)
+}
+
+// AssessmentQueueController 提供 LLM 评估队列快照，并允许 owner 手动启动一次消费。
+type AssessmentQueueController interface {
 	Snapshot(context.Context, int) (*CrawlQueueSnapshot, error)
 	Run(context.Context) (*CrawlQueueSnapshot, error)
 }
@@ -58,7 +65,13 @@ type CrawlQueueController interface {
 func CrawlControl() (CrawlQueueController, bool) {
 	defaultQueue.RLock()
 	defer defaultQueue.RUnlock()
-	return defaultQueue.entry.controller, defaultQueue.entry.controller != nil
+	return defaultQueue.entry.crawl, defaultQueue.entry.crawl != nil
+}
+
+func AssessmentControl() (AssessmentQueueController, bool) {
+	defaultQueue.RLock()
+	defer defaultQueue.RUnlock()
+	return defaultQueue.entry.assessment, defaultQueue.entry.assessment != nil
 }
 
 func normalizeSnapshotLimit(limit int) int {
@@ -78,6 +91,10 @@ func isCrawlJobKind(kind string) bool {
 	default:
 		return false
 	}
+}
+
+func isAssessmentJobKind(kind string) bool {
+	return kind == AssessArticleJobKind
 }
 
 func compactQueueError(value string) string {
@@ -108,10 +125,15 @@ func decodeSafeCrawlTarget(task *CrawlQueueTask, encoded []byte) {
 		if json.Unmarshal(encoded, &args) == nil {
 			task.TargetType, task.TargetID = "site", args.SiteID
 		}
-	case ProcessCandidateJobKind:
+	case ProcessCandidateJobKind, AssessArticleJobKind:
 		var args ProcessCandidateArgs
-		if json.Unmarshal(encoded, &args) == nil {
+		if json.Unmarshal(encoded, &args) == nil && args.CandidateID != 0 {
 			task.TargetType, task.TargetID, task.ContentVersion = "candidate", args.CandidateID, args.ContentVersion
+			return
+		}
+		var assessArgs AssessArticleArgs
+		if json.Unmarshal(encoded, &assessArgs) == nil {
+			task.TargetType, task.TargetID, task.ContentVersion = "candidate", assessArgs.CandidateID, assessArgs.ContentVersion
 		}
 	}
 }

@@ -109,6 +109,7 @@ func (AssessArticleArgs) Kind() string { return AssessArticleJobKind }
 func (AssessArticleArgs) InsertOpts() river.InsertOpts {
 	opts := uniqueByArgsOpts()
 	opts.Queue = AssessmentQueueName
+	// 评估队列默认暂停，失败后由 owner 再次手动执行，River 不得自行重试。
 	opts.MaxAttempts = 1
 	return opts
 }
@@ -120,8 +121,7 @@ func uniqueByArgsOpts() river.InsertOpts {
 func crawlUniqueByArgsOpts() river.InsertOpts {
 	opts := uniqueByArgsOpts()
 	opts.Queue = DiscoveryQueueName
-	// Discovery handlers persist their own retry/backoff schedule. River must not
-	// wake a failed crawl independently while the manual queue is unattended.
+	// 发现处理器自己维护退避；River 不得对失败的爬取作业自行重试。
 	opts.MaxAttempts = 1
 	return opts
 }
@@ -129,7 +129,8 @@ func crawlUniqueByArgsOpts() river.InsertOpts {
 type defaultQueueEntry struct {
 	id         uint64
 	queue      JobEnqueuer
-	controller CrawlQueueController
+	crawl      CrawlQueueController
+	assessment AssessmentQueueController
 }
 
 var defaultQueue struct {
@@ -151,11 +152,11 @@ func Default() (JobEnqueuer, bool) {
 	return defaultQueue.entry.queue, defaultQueue.entry.queue != nil
 }
 
-func installDefault(queue JobEnqueuer, controller CrawlQueueController) func() {
+func installDefault(queue JobEnqueuer, crawl CrawlQueueController, assessment AssessmentQueueController) func() {
 	id := defaultQueueSequence.Add(1)
 	defaultQueue.Lock()
 	previous := defaultQueue.entry
-	defaultQueue.entry = defaultQueueEntry{id: id, queue: queue, controller: controller}
+	defaultQueue.entry = defaultQueueEntry{id: id, queue: queue, crawl: crawl, assessment: assessment}
 	defaultQueue.Unlock()
 	return func() {
 		defaultQueue.Lock()
@@ -173,15 +174,32 @@ type riverQueue struct {
 	stop    chan struct{}
 }
 
+type riverCrawlView struct {
+	queue *riverQueue
+}
+
+func (view riverCrawlView) Snapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
+	return view.queue.crawlSnapshot(ctx, limit)
+}
+
+type riverAssessmentView struct {
+	queue *riverQueue
+}
+
+func (view riverAssessmentView) Snapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
+	return view.queue.assessmentSnapshot(ctx, limit)
+}
+
+func (view riverAssessmentView) Run(ctx context.Context) (*CrawlQueueSnapshot, error) {
+	return view.queue.assessmentRun(ctx)
+}
+
 type contextSQLExecer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
-// reconcileManualDiscoveryJobs moves unfinished jobs created by releases that
-// placed discovery work on River's automatically consumed default queue. It
-// also makes jobs interrupted by the previous process available again. This
-// runs before workers start, so neither category can execute before the owner
-// explicitly starts the manual crawl queue.
+// reconcileManualDiscoveryJobs 把误放进默认队列的发现作业迁回 discovery_crawl，
+// 并把上一进程中断的 running 作业改回 available，供自动工人继续消费。
 func reconcileManualDiscoveryJobs(ctx context.Context, executor contextSQLExecer) (int64, error) {
 	result, err := executor.ExecContext(ctx, `
 UPDATE river_job
@@ -202,6 +220,31 @@ WHERE kind IN ($3, $4, $5, $6)
 		ScanBlogrollJobKind,
 		BackfillSiteJobKind,
 		ProcessCandidateJobKind,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// reconcileManualAssessmentJobs 把评估作业固定到暂停的 article_assessment 队列，
+// 避免上一版本自动工人遗留的 running 作业在启动瞬间继续调用 LLM。
+func reconcileManualAssessmentJobs(ctx context.Context, executor contextSQLExecer) (int64, error) {
+	result, err := executor.ExecContext(ctx, `
+UPDATE river_job
+SET queue = $1,
+	state = CASE WHEN state = 'running' THEN 'available'::river_job_state ELSE state END,
+	attempted_at = CASE WHEN state = 'running' THEN NULL ELSE attempted_at END,
+	attempted_by = CASE WHEN state = 'running' THEN NULL ELSE attempted_by END,
+	scheduled_at = CASE WHEN state = 'running' THEN now() ELSE scheduled_at END,
+	max_attempts = GREATEST(attempt, 1)
+WHERE kind = $2
+  AND (
+	(queue <> $1 AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled'))
+	OR (queue = $1 AND state = 'running')
+  )`,
+		AssessmentQueueName,
+		AssessArticleJobKind,
 	)
 	if err != nil {
 		return 0, err
@@ -242,7 +285,7 @@ func (queue *riverQueue) EnqueueGenerateDaily(ctx context.Context, userID uint, 
 func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover RecoveryFunc) (func(), error) {
 	if database == nil || database.Dialector.Name() != "postgres" {
 		queue := NewMemoryQueue(fallbackMemoryStore(database), handlers)
-		restore := installDefault(queue, queue)
+		restore := installDefault(queue, memoryCrawlView{queue: queue}, memoryAssessmentView{queue: queue})
 		if recover != nil {
 			if err := recover(ctx, queue); err != nil {
 				restore()
@@ -276,25 +319,41 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 	}
 	now := time.Now()
 	if _, err := client.Driver().GetExecutor().QueueCreateOrSetUpdatedAt(ctx, &riverdriver.QueueCreateOrSetUpdatedAtParams{
-		Metadata: []byte("{}"), Name: DiscoveryQueueName, PausedAt: &now, UpdatedAt: &now,
+		Metadata: []byte("{}"), Name: DiscoveryQueueName, UpdatedAt: &now,
 	}); err != nil {
 		return func() {}, err
 	}
-	if err := client.QueuePause(ctx, DiscoveryQueueName, nil); err != nil {
+	if _, err := client.Driver().GetExecutor().QueueCreateOrSetUpdatedAt(ctx, &riverdriver.QueueCreateOrSetUpdatedAtParams{
+		Metadata: []byte("{}"), Name: AssessmentQueueName, PausedAt: &now, UpdatedAt: &now,
+	}); err != nil {
+		return func() {}, err
+	}
+	// 升级后若发现队列仍处于上一版本的暂停状态，则恢复自动消费。
+	if err := client.QueueResume(ctx, DiscoveryQueueName, nil); err != nil {
+		return func() {}, err
+	}
+	if err := client.QueuePause(ctx, AssessmentQueueName, nil); err != nil {
 		return func() {}, err
 	}
 	reconciledJobs, err := reconcileManualDiscoveryJobs(ctx, sqlDB)
 	if err != nil {
-		return func() {}, fmt.Errorf("reconcile manual discovery jobs: %w", err)
+		return func() {}, fmt.Errorf("reconcile discovery jobs: %w", err)
 	}
 	if reconciledJobs > 0 {
-		log.Printf("reconciled %d legacy or interrupted discovery jobs into paused queue %s", reconciledJobs, DiscoveryQueueName)
+		log.Printf("reconciled %d legacy or interrupted discovery jobs into automatic queue %s", reconciledJobs, DiscoveryQueueName)
+	}
+	reconciledAssessments, err := reconcileManualAssessmentJobs(ctx, sqlDB)
+	if err != nil {
+		return func() {}, fmt.Errorf("reconcile assessment jobs: %w", err)
+	}
+	if reconciledAssessments > 0 {
+		log.Printf("reconciled %d assessment jobs into paused queue %s", reconciledAssessments, AssessmentQueueName)
 	}
 	if err := client.Start(ctx); err != nil {
 		return func() {}, err
 	}
 	queue := &riverQueue{client: client, stop: make(chan struct{})}
-	restore := installDefault(queue, queue)
+	restore := installDefault(queue, riverCrawlView{queue: queue}, riverAssessmentView{queue: queue})
 	if recover != nil {
 		if err := recover(ctx, queue); err != nil {
 			restore()
@@ -318,7 +377,7 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 	}, nil
 }
 
-func (queue *riverQueue) Snapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
+func (queue *riverQueue) crawlSnapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
 	limit = normalizeSnapshotLimit(limit)
 	result, err := queue.client.JobList(ctx, river.NewJobListParams().
 		Kinds(FetchSourceJobKind, ScanBlogrollJobKind, BackfillSiteJobKind, ProcessCandidateJobKind).
@@ -328,14 +387,93 @@ func (queue *riverQueue) Snapshot(ctx context.Context, limit int) (*CrawlQueueSn
 	if err != nil {
 		return nil, err
 	}
+	return buildQueueSnapshot(result.Jobs, limit, CrawlQueueMode, false, time.Now()), nil
+}
 
+func (queue *riverQueue) assessmentSnapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
+	limit = normalizeSnapshotLimit(limit)
+	result, err := queue.client.JobList(ctx, river.NewJobListParams().
+		Kinds(AssessArticleJobKind).
+		Queues(AssessmentQueueName).
+		OrderBy(river.JobListOrderByID, river.SortOrderDesc).
+		First(10_000))
+	if err != nil {
+		return nil, err
+	}
 	queue.runMu.Lock()
 	running := queue.running
 	queue.runMu.Unlock()
 	now := time.Now()
+	snapshot := buildQueueSnapshot(result.Jobs, limit, AssessmentQueueMode, running, now)
+	snapshot.CanRun = !running && riverJobsRunnable(result.Jobs, now)
+	if running {
+		snapshot.State = "running"
+	}
+	return snapshot, nil
+}
+
+func (queue *riverQueue) assessmentRun(ctx context.Context) (*CrawlQueueSnapshot, error) {
+	queue.runMu.Lock()
+	if queue.running {
+		queue.runMu.Unlock()
+		return queue.assessmentSnapshot(ctx, 50)
+	}
+	queue.running = true
+	queue.runMu.Unlock()
+	if err := queue.client.QueueResume(ctx, AssessmentQueueName, nil); err != nil {
+		queue.runMu.Lock()
+		queue.running = false
+		queue.runMu.Unlock()
+		return nil, err
+	}
+	go queue.pauseAssessmentWhenDrained()
+	return queue.assessmentSnapshot(ctx, 50)
+}
+
+func (queue *riverQueue) pauseAssessmentWhenDrained() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	quietChecks := 0
+	for {
+		select {
+		case <-queue.stop:
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			result, err := queue.client.JobList(ctx, river.NewJobListParams().
+				Kinds(AssessArticleJobKind).
+				Queues(AssessmentQueueName).
+				States(rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled).
+				First(10_000))
+			cancel()
+			if err != nil || riverJobsRunnable(result.Jobs, time.Now()) {
+				quietChecks = 0
+				continue
+			}
+			quietChecks++
+			if quietChecks < 2 {
+				continue
+			}
+			pauseCtx, pauseCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err = queue.client.QueuePause(pauseCtx, AssessmentQueueName, nil)
+			pauseCancel()
+			if err != nil {
+				log.Printf("manual assessment queue pause failed: %v", err)
+				quietChecks = 0
+				continue
+			}
+			queue.runMu.Lock()
+			queue.running = false
+			queue.runMu.Unlock()
+			return
+		}
+	}
+}
+
+func buildQueueSnapshot(rows []*rivertype.JobRow, limit int, mode string, forceRunning bool, now time.Time) *CrawlQueueSnapshot {
 	cutoff := now.Add(-24 * time.Hour)
-	snapshot := &CrawlQueueSnapshot{Mode: CrawlQueueMode, UpdatedAt: now, Tasks: make([]CrawlQueueTask, 0, limit)}
-	for _, row := range result.Jobs {
+	snapshot := &CrawlQueueSnapshot{Mode: mode, UpdatedAt: now, Tasks: make([]CrawlQueueTask, 0, limit)}
+	for _, row := range rows {
 		task := crawlTaskFromRiverRow(row)
 		switch task.Status {
 		case "pending":
@@ -355,74 +493,15 @@ func (queue *riverQueue) Snapshot(ctx context.Context, limit int) (*CrawlQueueSn
 			snapshot.Tasks = append(snapshot.Tasks, task)
 		}
 	}
-	snapshot.CanRun = !running && riverJobsRunnable(result.Jobs, now)
 	switch {
-	case running:
+	case forceRunning || snapshot.Counts.Running > 0:
 		snapshot.State = "running"
 	case snapshot.Counts.Pending > 0:
 		snapshot.State = "waiting"
 	default:
 		snapshot.State = "idle"
 	}
-	return snapshot, nil
-}
-
-func (queue *riverQueue) Run(ctx context.Context) (*CrawlQueueSnapshot, error) {
-	queue.runMu.Lock()
-	if queue.running {
-		queue.runMu.Unlock()
-		return queue.Snapshot(ctx, 50)
-	}
-	queue.running = true
-	queue.runMu.Unlock()
-	if err := queue.client.QueueResume(ctx, DiscoveryQueueName, nil); err != nil {
-		queue.runMu.Lock()
-		queue.running = false
-		queue.runMu.Unlock()
-		return nil, err
-	}
-	go queue.pauseWhenDrained()
-	return queue.Snapshot(ctx, 50)
-}
-
-func (queue *riverQueue) pauseWhenDrained() {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	quietChecks := 0
-	for {
-		select {
-		case <-queue.stop:
-			return
-		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			result, err := queue.client.JobList(ctx, river.NewJobListParams().
-				Kinds(FetchSourceJobKind, ScanBlogrollJobKind, BackfillSiteJobKind, ProcessCandidateJobKind).
-				Queues(DiscoveryQueueName).
-				States(rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled).
-				First(10_000))
-			cancel()
-			if err != nil || riverJobsRunnable(result.Jobs, time.Now()) {
-				quietChecks = 0
-				continue
-			}
-			quietChecks++
-			if quietChecks < 2 {
-				continue
-			}
-			pauseCtx, pauseCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			err = queue.client.QueuePause(pauseCtx, DiscoveryQueueName, nil)
-			pauseCancel()
-			if err != nil {
-				log.Printf("manual discovery queue pause failed: %v", err)
-				quietChecks = 0
-				continue
-			}
-			queue.runMu.Lock()
-			queue.running = false
-			queue.runMu.Unlock()
-			return
-		}
-	}
+	return snapshot
 }
 
 func riverJobsRunnable(rows []*rivertype.JobRow, now time.Time) bool {

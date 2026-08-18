@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// RecoverDueJobs 把已抽取且仍待评估的文章登记到暂停的评估队列，等待 owner 手动执行。
 func RecoverDueJobs(ctx context.Context, queue jobqueue.JobEnqueuer, now time.Time) error {
 	if db == nil || queue == nil {
 		return nil
