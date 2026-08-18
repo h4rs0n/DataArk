@@ -16,7 +16,6 @@ import (
 const (
 	defaultHTMLFetchBodyLimit    int64 = 4 << 20
 	defaultFeedFetchBodyLimit    int64 = 8 << 20
-	defaultSitemapFetchBodyLimit int64 = 8 << 20
 	defaultArticleFetchBodyLimit int64 = 8 << 20
 	defaultRobotsFetchBodyLimit  int64 = 512 << 10
 )
@@ -38,12 +37,14 @@ type SystemClock struct{}
 
 func (SystemClock) Now() time.Time { return time.Now() }
 
+// Timestamp 把发现模块的可注入时钟暴露给评估包，保证测试冻结时间一致。
+func Timestamp() time.Time { return discoveryClock.Now() }
+
 type FetchKind string
 
 const (
 	FetchKindHTML    FetchKind = "html"
 	FetchKindFeed    FetchKind = "feed"
-	FetchKindSitemap FetchKind = "sitemap"
 	FetchKindArticle FetchKind = "article"
 	FetchKindRobots  FetchKind = "robots"
 )
@@ -81,9 +82,8 @@ type RobotsInspector interface {
 	Inspect(context.Context, string) RobotsInspection
 }
 
-// HTTPClientFetcher is the production discovery fetcher. robots.txt is observed
-// for path hints and diagnostics, but its Allow/Disallow rules do not gate a
-// manually triggered discovery request.
+// HTTPClientFetcher 是生产抓取器。robots.txt 只用于诊断状态，其 Allow/Disallow
+// 规则不会拦截 owner 手动触发的发现请求，也不再读取 Sitemap 提示。
 type HTTPClientFetcher struct {
 	Client       *http.Client
 	Clock        Clock
@@ -224,8 +224,6 @@ func defaultFetchBodyLimit(kind FetchKind) int64 {
 	switch kind {
 	case FetchKindFeed:
 		return defaultFeedFetchBodyLimit
-	case FetchKindSitemap:
-		return defaultSitemapFetchBodyLimit
 	case FetchKindArticle:
 		return defaultArticleFetchBodyLimit
 	case FetchKindRobots:
@@ -239,8 +237,6 @@ func acceptHeader(kind FetchKind) string {
 	switch kind {
 	case FetchKindFeed:
 		return "application/rss+xml, application/atom+xml, application/rdf+xml, application/feed+json, application/json, application/xml, text/xml;q=0.9"
-	case FetchKindSitemap:
-		return "application/xml, text/xml, text/plain;q=0.8"
 	case FetchKindRobots:
 		return "text/plain, */*;q=0.1"
 	default:
@@ -264,8 +260,6 @@ func allowedContentType(kind FetchKind, value string, body []byte) bool {
 		default:
 			return false
 		}
-	case FetchKindSitemap:
-		return mediaType == "application/xml" || mediaType == "text/xml" || mediaType == "text/plain"
 	case FetchKindRobots:
 		return mediaType == "text/plain" || mediaType == "text/robots"
 	default:
@@ -292,5 +286,6 @@ type JobEnqueuer interface {
 	EnqueueScanBlogroll(context.Context, uint) error
 	EnqueueBackfillSite(context.Context, uint) error
 	EnqueueProcessCandidate(context.Context, uint, string) error
+	EnqueueAssessArticle(context.Context, uint, string) error
 	EnqueueGenerateDaily(context.Context, uint, string) error
 }

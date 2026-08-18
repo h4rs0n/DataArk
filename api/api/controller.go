@@ -2,6 +2,7 @@ package api
 
 import (
 	"DataArk/archive"
+	"DataArk/assessment"
 	"DataArk/assessmenteval"
 	"DataArk/assets"
 	"DataArk/auth"
@@ -59,7 +60,6 @@ var (
 	listBackfillCoverage                = discovery.ListBackfillCoverage
 	updateDiscoverySiteStatus           = discovery.UpdateDiscoverySiteOperationalStatus
 	requestDiscoverySiteBackfill        = discovery.RequestDiscoverySiteBackfill
-	requestDiscoverySiteSitemapBackfill = discovery.RequestDiscoverySiteSitemapBackfill
 	getDiscoverySiteOperations          = discovery.GetDiscoverySiteOperations
 	getDiscoveryCandidate               = discovery.GetDiscoveryCandidate
 	markCandidateRead                   = discovery.MarkUserCandidateRead
@@ -87,6 +87,7 @@ var (
 	deleteUserBlockRule                 = recommendation.DeleteUserBlockRule
 	getCandidateInventory               = recommendation.GetCandidateInventory
 	getAdminProductMetrics              = recommendation.GetAdminProductMetrics
+	getAssessmentMetrics                = assessment.GetMetrics
 	getDiscoveryCrawlQueue              = func(ctx context.Context, limit int) (*jobqueue.CrawlQueueSnapshot, error) {
 		controller, available := jobqueue.CrawlControl()
 		if !available {
@@ -105,12 +106,12 @@ var (
 		}
 		return controller.Run(ctx)
 	}
-	prepareArticleAssessmentBackfill = func(ctx context.Context, options discovery.ArticleAssessmentBatchOptions) (discovery.ArticleAssessmentBatchResult, error) {
+	prepareArticleAssessmentBackfill = func(ctx context.Context, options assessment.ArticleAssessmentBatchOptions) (assessment.ArticleAssessmentBatchResult, error) {
 		queue, _ := jobqueue.Default()
-		return discovery.PrepareArticleAssessmentBackfill(ctx, recommendation.ConfiguredArticleAssessor(), queue, options)
+		return assessment.PrepareArticleAssessmentBackfill(ctx, assessment.ConfiguredArticleAssessor(), queue, options)
 	}
-	rollbackArticleAssessments = func(ctx context.Context, options discovery.ArticleAssessmentBatchOptions) (discovery.ArticleAssessmentBatchResult, error) {
-		return discovery.RollbackArticleAssessment(ctx, recommendation.ConfiguredArticleAssessor(), options)
+	rollbackArticleAssessments = func(ctx context.Context, options assessment.ArticleAssessmentBatchOptions) (assessment.ArticleAssessmentBatchResult, error) {
+		return assessment.RollbackArticleAssessment(ctx, assessment.ConfiguredArticleAssessor(), options)
 	}
 	getArticleAssessmentWorkflow = func() (assessmenteval.WorkflowSummary, error) {
 		return assessmenteval.LatestWorkflowSummary(database.DB(), time.Now())
@@ -166,7 +167,10 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 			return ignoreBlacklisted(discovery.RunBackfillSiteJob(ctx, siteID))
 		},
 		ProcessCandidate: func(ctx context.Context, candidateID uint, contentVersion string) error {
-			return ignoreBlacklisted(discovery.ProcessCandidateWithAssessor(ctx, candidateID, contentVersion, recommendation.ConfiguredArticleAssessor()))
+			return ignoreBlacklisted(discovery.ProcessCandidate(ctx, candidateID, contentVersion))
+		},
+		AssessArticle: func(ctx context.Context, candidateID uint, contentVersion string) error {
+			return ignoreBlacklisted(assessment.AssessCandidate(ctx, candidateID, assessment.ConfiguredArticleAssessor()))
 		},
 		GenerateDaily: recommendation.RunGenerateDailyRecommendationJob,
 	}
@@ -174,6 +178,7 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 		now := time.Now()
 		return errors.Join(
 			discovery.RecoverDueJobs(ctx, queue, now),
+			assessment.RecoverDueJobs(ctx, queue, now),
 			recommendation.RecoverDueJobs(ctx, queue, now),
 		)
 	}
@@ -611,28 +616,6 @@ func RequestDiscoverySiteBackfill(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "历史回溯已排队"})
 }
 
-func RequestDiscoverySiteSitemapBackfill(c *gin.Context) {
-	if !requireOwner(c) {
-		return
-	}
-	siteID, ok := parseUintParam(c, "id")
-	if !ok {
-		return
-	}
-	var req struct {
-		URL string `json:"url" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "请求参数错误"})
-		return
-	}
-	if err := requestDiscoverySiteSitemapBackfill(c.Request.Context(), siteID, req.URL); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "启动 Sitemap 历史补漏失败", "Error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "Sitemap 历史补漏已排队"})
-}
-
 func GetDiscoverySiteOperations(c *gin.Context) {
 	if !requireOwner(c) {
 		return
@@ -677,7 +660,7 @@ func BackfillArticleAssessments(c *gin.Context) {
 	if !requireOwner(c) {
 		return
 	}
-	var options discovery.ArticleAssessmentBatchOptions
+	var options assessment.ArticleAssessmentBatchOptions
 	if err := c.ShouldBindJSON(&options); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "请输入有效的 assessment 回填参数", "Error": err.Error()})
 		return
@@ -700,7 +683,7 @@ func RollbackArticleAssessments(c *gin.Context) {
 	if !requireOwner(c) {
 		return
 	}
-	var options discovery.ArticleAssessmentBatchOptions
+	var options assessment.ArticleAssessmentBatchOptions
 	if err := c.ShouldBindJSON(&options); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "请输入有效的 assessment 回滚参数", "Error": err.Error()})
 		return
@@ -1120,6 +1103,19 @@ func GetAdminProductMetrics(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询产品运营指标成功", "Data": metrics})
+}
+
+// GetAssessmentMetrics 返回 owner 评估面板所需的队列深度、耗时与 token 聚合。
+func GetAssessmentMetrics(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	metrics, err := getAssessmentMetrics(time.Now())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"Status": "0", "Message": "查询评估指标失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询评估指标成功", "Data": metrics})
 }
 
 func UpdateRecommendationSettings(c *gin.Context) {
@@ -1722,12 +1718,12 @@ func WebStarter(debugMode bool) {
 		protected.GET("/discovery/sites/:id/backfill", GetDiscoveryBackfillCoverage)
 		protected.PUT("/discovery/sites/:id/status", UpdateDiscoverySiteStatus)
 		protected.POST("/discovery/sites/:id/backfill", RequestDiscoverySiteBackfill)
-		protected.POST("/discovery/sites/:id/sitemap-backfill", RequestDiscoverySiteSitemapBackfill)
 		protected.GET("/discovery/sites/:id/operations", GetDiscoverySiteOperations)
 		protected.GET("/admin/discovery/crawl-queue", GetDiscoveryCrawlQueue)
 		protected.POST("/admin/discovery/crawl-queue/run", RunDiscoveryCrawlQueue)
 		protected.POST("/admin/discovery/article-assessments/backfill", BackfillArticleAssessments)
 		protected.POST("/admin/discovery/article-assessments/rollback", RollbackArticleAssessments)
+		protected.GET("/admin/assessment/metrics", GetAssessmentMetrics)
 		protected.GET("/admin/recommendations/article-assessment-workflow", GetArticleAssessmentWorkflow)
 		protected.POST("/admin/recommendations/article-assessment-workflow/runs", CreateArticleAssessmentWorkflow)
 		protected.GET("/admin/recommendations/article-assessment-workflow/runs/:runId/items/:pass/:position", GetArticleAssessmentWorkflowItem)

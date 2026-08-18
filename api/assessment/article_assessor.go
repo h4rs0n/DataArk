@@ -1,17 +1,23 @@
-package recommendation
+package assessment
 
 import (
 	"DataArk/articlevalue"
 	"DataArk/config"
 	"DataArk/discovery"
+	"DataArk/llm"
 	"context"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
+type ArticleChatProvider interface {
+	AssessArticle(context.Context, ChatAssessmentInput) (ChatAssessmentResult, error)
+}
+
 type EnrichmentArticleAssessor struct {
-	Provider ArticleAssessmentProvider
+	Provider ArticleChatProvider
 	Model    string
 	Mode     string
 }
@@ -39,7 +45,7 @@ func (assessor EnrichmentArticleAssessor) Assess(ctx context.Context, input disc
 		return discovery.ArticleAssessmentResult{}, err
 	}
 	defer release()
-	result, err := assessor.Provider.AssessArticle(ctx, ArticleAssessmentInput{
+	result, err := assessor.Provider.AssessArticle(ctx, ChatAssessmentInput{
 		CandidateID: input.CandidateID, Title: input.Title, BodyText: input.BodyText,
 	})
 	if err != nil {
@@ -74,8 +80,27 @@ func ConfiguredArticleAssessor() discovery.ArticleAssessor {
 		return nil
 	}
 	return EnrichmentArticleAssessor{
-		Provider: configuredOpenAICompatibleProvider(), Model: config.LLMCHATMODEL,
+		Provider: ConfiguredChatProvider(), Model: config.LLMCHATMODEL,
 		Mode: config.ARTICLEASSESSMENTMODE,
+	}
+}
+
+func ConfiguredChatProvider() ChatProvider {
+	return ChatProvider{Client: ConfiguredLLMClient()}
+}
+
+func ConfiguredLLMClient() llm.Client {
+	timeout, err := time.ParseDuration(strings.TrimSpace(config.LLMTIMEOUT))
+	if err != nil || timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	return llm.Client{
+		BaseURL:        config.LLMBASEURL,
+		APIKey:         config.LLMAPIKEY,
+		ChatModel:      config.LLMCHATMODEL,
+		EmbeddingModel: config.LLMEMBEDDINGMODEL,
+		Timeout:        timeout,
+		CallObserver:   persistLLMCallEvent,
 	}
 }
 

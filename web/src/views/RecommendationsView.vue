@@ -11,8 +11,8 @@
       <header class="page-header">
         <div class="header-mark"><icon-robot /></div>
         <div>
-          <h1>推荐</h1>
-          <p>推荐中心、今日推荐、历史日报、内容发现和推荐偏好统一管理。</p>
+          <h1>推荐中心</h1>
+          <p>发现、评估、推荐三条流水线独立运行：抓取需手动执行，评估自动调用 LLM，推荐只消费已评估库存。</p>
         </div>
         <a-button :loading="loading" @click="loadAll">
           <template #icon><icon-refresh /></template>
@@ -20,7 +20,9 @@
         </a-button>
       </header>
 
-      <a-tabs v-model:active-key="activeTab" class="tabs">
+      <a-tabs v-model:active-key="moduleTab" class="tabs module-tabs">
+        <a-tab-pane key="recommend" title="推荐">
+          <a-tabs v-model:active-key="activeTab" class="tabs">
         <a-tab-pane key="feed" title="推荐中心">
           <section class="panel">
             <div class="section-title">
@@ -168,166 +170,6 @@
           </section>
         </a-tab-pane>
 
-        <a-tab-pane key="discovery" title="内容发现">
-          <section class="panel source-panel">
-            <div class="section-title">
-              <div>
-                <h2>订阅源</h2>
-                <span>仅显示管理员主动设置的第一优先级来源；友情链接博客在后台作为第二优先级扩展</span>
-              </div>
-            </div>
-            <form v-if="isOwner" class="source-form" @submit.prevent="saveSource">
-              <label class="source-field" for="source-name">
-                <span>名称</span>
-                <input id="source-name" v-model="sourceForm.name" name="source-name" placeholder="名称" />
-              </label>
-              <label class="source-field source-url" for="source-url">
-                <span>URL</span>
-                <input id="source-url" v-model="sourceForm.url" name="source-url" placeholder="https://example.com/feed.xml" />
-              </label>
-              <label class="source-field" for="source-type">
-                <span>类型</span>
-                <select id="source-type" v-model="sourceForm.type" name="source-type">
-                  <option value="feed">RSS</option>
-                  <option value="rsshub">RSSHub</option>
-                  <option value="site">站点</option>
-                </select>
-              </label>
-              <a-button type="primary" html-type="submit" :loading="savingSource">
-                <template #icon><icon-plus /></template>
-                添加
-              </a-button>
-            </form>
-
-            <div class="source-list">
-              <article v-for="source in pagedSources" :key="source.id" class="source-row">
-                <div class="item-main">
-                  <h3>{{ source.name }}</h3>
-                  <p>{{ source.url }}</p>
-                  <span>第一优先级 · {{ source.type }} · {{ source.enabled ? '启用' : '停用' }}</span>
-                  <small v-if="source.lastError">{{ source.lastError }}</small>
-                </div>
-                <a-space>
-                  <a-button v-if="source.siteId" size="small" @click="loadSiteInsight(source)">图谱与回溯</a-button>
-                  <a-button v-if="isOwner" size="small" :loading="fetchingSourceId === source.id" @click="fetchSource(source.id)">
-                    <template #icon><icon-sync /></template>
-                    获取
-                  </a-button>
-                  <a-button v-if="isOwner" size="small" status="danger" @click="deleteSource(source.id)">
-                    <template #icon><icon-delete /></template>
-                  </a-button>
-                </a-space>
-              </article>
-            </div>
-            <a-pagination
-              v-if="sources.length > sourcePageSize"
-              v-model:current="sourcePage"
-              v-model:page-size="sourcePageSize"
-              :total="sources.length"
-              :page-size-options="[10, 20, 50]"
-              class="source-pagination"
-              show-total
-              show-page-size
-            />
-            <SiteInsightPanel :source="selectedSource" :graph="siteGraph" :operations="siteOperations" :backfills="siteBackfills" :is-owner="isOwner" @reload="reloadSiteInsight" @backfill="requestBackfill" @sitemap-backfill="requestSitemapBackfill" />
-          </section>
-        </a-tab-pane>
-
-        <a-tab-pane v-if="isOwner" key="queue" title="任务队列">
-          <section class="panel">
-            <div class="section-title">
-              <div>
-                <h2>爬取任务队列</h2>
-                <span>自动发现只登记任务；点击后单次执行当前到期任务及其派生任务</span>
-              </div>
-              <a-space wrap>
-                <span class="queue-state" :class="`queue-state-${crawlQueue.state}`">{{ crawlQueueStateLabel }}</span>
-                <a-button :loading="crawlQueueLoading || blacklistLoading" @click="refreshQueueTab">
-                  <template #icon><icon-refresh /></template>
-                  刷新
-                </a-button>
-                <a-button type="primary" :loading="runningCrawlQueue" :disabled="!crawlQueue.canRun || crawlQueue.state === 'running'" @click="runCrawlQueue">
-                  执行待处理任务
-                </a-button>
-              </a-space>
-            </div>
-
-            <div class="queue-summary">
-              <div><strong>{{ crawlQueue.counts.pending }}</strong><span>等待执行</span></div>
-              <div><strong>{{ crawlQueue.counts.running }}</strong><span>正在运行</span></div>
-              <div><strong>{{ crawlQueue.counts.succeeded24h }}</strong><span>近 24 小时成功</span></div>
-              <div><strong>{{ crawlQueue.counts.failed24h }}</strong><span>近 24 小时失败</span></div>
-            </div>
-
-            <a-empty v-if="displayedCrawlQueueTasks.length === 0" description="暂无爬取任务" />
-            <div v-else class="queue-task-list">
-              <template v-for="item in displayedCrawlQueueTasks" :key="item.key">
-                <article v-if="item.type === 'task'" class="queue-task-row">
-                  <div>
-                    <strong>{{ crawlTaskKindLabel(item.task.kind) }}</strong>
-                    <span>{{ crawlTaskTargetLabel(item.task) }}</span>
-                  </div>
-                  <span class="task-status" :class="`task-status-${item.task.status}`">{{ crawlTaskStatusLabel(item.task.status) }}</span>
-                  <span>尝试 {{ item.task.attempts }} 次</span>
-                  <span>{{ crawlTaskTimeLabel(item.task) }}</span>
-                  <small v-if="item.task.status === 'failed'" class="queue-task-error">失败原因：{{ item.task.error || '未提供失败原因' }}</small>
-                  <small v-else-if="item.task.error" class="queue-task-error">{{ item.task.error }}</small>
-                </article>
-                <article v-else class="queue-task-row queue-task-summary">
-                  <div>
-                    <strong>{{ crawlTaskKindLabel(item.kind) }}</strong>
-                    <span>另有 {{ item.collapsedCount }} 条相同任务已合并<span v-if="item.contentVersion"> · 正文 v{{ item.contentVersion }}</span></span>
-                  </div>
-                  <span class="task-status" :class="`task-status-${item.status}`">{{ crawlTaskStatusLabel(item.status) }}</span>
-                  <span>尝试 {{ item.attempts }} 次</span>
-                  <span>{{ crawlTaskGroupTimeLabel(item) }}</span>
-                  <small v-if="item.status === 'failed'" class="queue-task-error">失败原因：{{ item.error || '未提供失败原因' }}</small>
-                  <small v-else-if="item.error" class="queue-task-error">{{ item.error }}</small>
-                </article>
-              </template>
-            </div>
-          </section>
-
-          <section class="panel domain-blacklist-panel">
-            <div class="section-title">
-              <div>
-                <h2>域名黑名单</h2>
-                <span>命中域名及其子域不会再被访问，已爬取文章也会从候选列表和后续推荐中剔除</span>
-              </div>
-            </div>
-            <form class="blacklist-form" @submit.prevent="addDomainBlacklist">
-              <label class="source-field" for="blacklist-domain">
-                <span>域名</span>
-                <input id="blacklist-domain" v-model="blacklistForm.domain" name="blacklist-domain" autocomplete="off" placeholder="example.com" />
-              </label>
-              <label class="source-field" for="blacklist-reason">
-                <span>备注（可选）</span>
-                <input id="blacklist-reason" v-model="blacklistForm.reason" name="blacklist-reason" autocomplete="off" placeholder="屏蔽原因" />
-              </label>
-              <a-button type="primary" html-type="submit" :loading="addingBlacklist">添加域名</a-button>
-            </form>
-            <a-spin :loading="blacklistLoading">
-              <a-empty v-if="domainBlacklist.length === 0" description="暂无域名黑名单" />
-              <div v-else class="blacklist-list">
-                <article v-for="entry in domainBlacklist" :key="entry.id" class="blacklist-row">
-                  <div><strong>{{ entry.domain }}</strong><span>{{ entry.reason || '未填写备注' }}</span></div>
-                  <span>同时匹配所有子域 · {{ formatDateTime(entry.createdAt) }}</span>
-                  <a-popconfirm content="删除后，不再被其他规则覆盖的候选文章将恢复显示，未完成任务也会恢复待抓取。确认删除？" @ok="deleteDomainBlacklist(entry.id)">
-                    <a-button size="small" status="danger" :loading="deletingBlacklistId === entry.id">
-                      <template #icon><icon-delete /></template>
-                      删除
-                    </a-button>
-                  </a-popconfirm>
-                </article>
-              </div>
-            </a-spin>
-          </section>
-        </a-tab-pane>
-
-        <a-tab-pane v-if="isOwner" key="assessment-workflow" title="人工标注工作流">
-          <ArticleAssessmentWorkflow :active="activeTab === 'assessment-workflow'" />
-        </a-tab-pane>
-
         <a-tab-pane key="settings" title="推荐设置">
           <section class="panel settings-grid">
             <form class="settings-form" @submit.prevent="saveSettings">
@@ -445,6 +287,177 @@
             </div>
           </section>
         </a-tab-pane>
+          </a-tabs>
+        </a-tab-pane>
+
+        <a-tab-pane key="discover" title="发现">
+          <a-tabs v-model:active-key="discoveryTab" class="tabs">
+        <a-tab-pane key="discovery" title="内容发现">
+          <section class="panel source-panel">
+            <div class="section-title">
+              <div>
+                <h2>订阅源</h2>
+                <span>仅显示管理员主动设置的第一优先级来源；友情链接博客在后台作为第二优先级扩展</span>
+              </div>
+            </div>
+            <form v-if="isOwner" class="source-form" @submit.prevent="saveSource">
+              <label class="source-field" for="source-name">
+                <span>名称</span>
+                <input id="source-name" v-model="sourceForm.name" name="source-name" placeholder="名称" />
+              </label>
+              <label class="source-field source-url" for="source-url">
+                <span>URL</span>
+                <input id="source-url" v-model="sourceForm.url" name="source-url" placeholder="https://example.com/feed.xml" />
+              </label>
+              <label class="source-field" for="source-type">
+                <span>类型</span>
+                <select id="source-type" v-model="sourceForm.type" name="source-type">
+                  <option value="feed">RSS</option>
+                  <option value="rsshub">RSSHub</option>
+                  <option value="site">站点</option>
+                </select>
+              </label>
+              <a-button type="primary" html-type="submit" :loading="savingSource">
+                <template #icon><icon-plus /></template>
+                添加
+              </a-button>
+            </form>
+
+            <div class="source-list">
+              <article v-for="source in pagedSources" :key="source.id" class="source-row">
+                <div class="item-main">
+                  <h3>{{ source.name }}</h3>
+                  <p>{{ source.url }}</p>
+                  <span>第一优先级 · {{ source.type }} · {{ source.enabled ? '启用' : '停用' }}</span>
+                  <small v-if="source.lastError">{{ source.lastError }}</small>
+                </div>
+                <a-space>
+                  <a-button v-if="source.siteId" size="small" @click="loadSiteInsight(source)">图谱与回溯</a-button>
+                  <a-button v-if="isOwner" size="small" :loading="fetchingSourceId === source.id" @click="fetchSource(source.id)">
+                    <template #icon><icon-sync /></template>
+                    获取
+                  </a-button>
+                  <a-button v-if="isOwner" size="small" status="danger" @click="deleteSource(source.id)">
+                    <template #icon><icon-delete /></template>
+                  </a-button>
+                </a-space>
+              </article>
+            </div>
+            <a-pagination
+              v-if="sources.length > sourcePageSize"
+              v-model:current="sourcePage"
+              v-model:page-size="sourcePageSize"
+              :total="sources.length"
+              :page-size-options="[10, 20, 50]"
+              class="source-pagination"
+              show-total
+              show-page-size
+            />
+            <!-- 仅在 owner 点选某个订阅源后展示图谱，避免 source 为空时读取 name 抛错 -->
+            <SiteInsightPanel v-if="selectedSource" :source="selectedSource" :graph="siteGraph" :operations="siteOperations" :backfills="siteBackfills" :is-owner="isOwner" @reload="reloadSiteInsight" @backfill="requestBackfill" />
+          </section>
+        </a-tab-pane>
+
+        <a-tab-pane v-if="isOwner" key="queue" title="任务队列">
+          <section class="panel">
+            <div class="section-title">
+              <div>
+                <h2>爬取任务队列</h2>
+                <span>自动发现只登记任务；点击后单次执行当前到期任务及其派生任务</span>
+              </div>
+              <a-space wrap>
+                <span class="queue-state" :class="`queue-state-${crawlQueue.state}`">{{ crawlQueueStateLabel }}</span>
+                <a-button :loading="crawlQueueLoading || blacklistLoading" @click="refreshQueueTab">
+                  <template #icon><icon-refresh /></template>
+                  刷新
+                </a-button>
+                <a-button type="primary" :loading="runningCrawlQueue" :disabled="!crawlQueue.canRun || crawlQueue.state === 'running'" @click="runCrawlQueue">
+                  执行待处理任务
+                </a-button>
+              </a-space>
+            </div>
+
+            <div class="queue-summary">
+              <div><strong>{{ crawlQueue.counts.pending }}</strong><span>等待执行</span></div>
+              <div><strong>{{ crawlQueue.counts.running }}</strong><span>正在运行</span></div>
+              <div><strong>{{ crawlQueue.counts.succeeded24h }}</strong><span>近 24 小时成功</span></div>
+              <div><strong>{{ crawlQueue.counts.failed24h }}</strong><span>近 24 小时失败</span></div>
+            </div>
+
+            <a-empty v-if="displayedCrawlQueueTasks.length === 0" description="暂无爬取任务" />
+            <div v-else class="queue-task-list">
+              <template v-for="item in displayedCrawlQueueTasks" :key="item.key">
+                <article v-if="item.type === 'task'" class="queue-task-row">
+                  <div>
+                    <strong>{{ crawlTaskKindLabel(item.task.kind) }}</strong>
+                    <span>{{ crawlTaskTargetLabel(item.task) }}</span>
+                  </div>
+                  <span class="task-status" :class="`task-status-${item.task.status}`">{{ crawlTaskStatusLabel(item.task.status) }}</span>
+                  <span>尝试 {{ item.task.attempts }} 次</span>
+                  <span>{{ crawlTaskTimeLabel(item.task) }}</span>
+                  <small v-if="item.task.status === 'failed'" class="queue-task-error">失败原因：{{ item.task.error || '未提供失败原因' }}</small>
+                  <small v-else-if="item.task.error" class="queue-task-error">{{ item.task.error }}</small>
+                </article>
+                <article v-else class="queue-task-row queue-task-summary">
+                  <div>
+                    <strong>{{ crawlTaskKindLabel(item.kind) }}</strong>
+                    <span>另有 {{ item.collapsedCount }} 条相同任务已合并<span v-if="item.contentVersion"> · 正文 v{{ item.contentVersion }}</span></span>
+                  </div>
+                  <span class="task-status" :class="`task-status-${item.status}`">{{ crawlTaskStatusLabel(item.status) }}</span>
+                  <span>尝试 {{ item.attempts }} 次</span>
+                  <span>{{ crawlTaskGroupTimeLabel(item) }}</span>
+                  <small v-if="item.status === 'failed'" class="queue-task-error">失败原因：{{ item.error || '未提供失败原因' }}</small>
+                  <small v-else-if="item.error" class="queue-task-error">{{ item.error }}</small>
+                </article>
+              </template>
+            </div>
+          </section>
+
+          <section class="panel domain-blacklist-panel">
+            <div class="section-title">
+              <div>
+                <h2>域名黑名单</h2>
+                <span>命中域名及其子域不会再被访问，已爬取文章也会从候选列表和后续推荐中剔除</span>
+              </div>
+            </div>
+            <form class="blacklist-form" @submit.prevent="addDomainBlacklist">
+              <label class="source-field" for="blacklist-domain">
+                <span>域名</span>
+                <input id="blacklist-domain" v-model="blacklistForm.domain" name="blacklist-domain" autocomplete="off" placeholder="example.com" />
+              </label>
+              <label class="source-field" for="blacklist-reason">
+                <span>备注（可选）</span>
+                <input id="blacklist-reason" v-model="blacklistForm.reason" name="blacklist-reason" autocomplete="off" placeholder="屏蔽原因" />
+              </label>
+              <a-button type="primary" html-type="submit" :loading="addingBlacklist">添加域名</a-button>
+            </form>
+            <a-spin :loading="blacklistLoading">
+              <a-empty v-if="domainBlacklist.length === 0" description="暂无域名黑名单" />
+              <div v-else class="blacklist-list">
+                <article v-for="entry in domainBlacklist" :key="entry.id" class="blacklist-row">
+                  <div><strong>{{ entry.domain }}</strong><span>{{ entry.reason || '未填写备注' }}</span></div>
+                  <span>同时匹配所有子域 · {{ formatDateTime(entry.createdAt) }}</span>
+                  <a-popconfirm content="删除后，不再被其他规则覆盖的候选文章将恢复显示，未完成任务也会恢复待抓取。确认删除？" @ok="deleteDomainBlacklist(entry.id)">
+                    <a-button size="small" status="danger" :loading="deletingBlacklistId === entry.id">
+                      <template #icon><icon-delete /></template>
+                      删除
+                    </a-button>
+                  </a-popconfirm>
+                </article>
+              </div>
+            </a-spin>
+          </section>
+        </a-tab-pane>
+          </a-tabs>
+        </a-tab-pane>
+
+        <a-tab-pane v-if="isOwner" key="assess" title="评估">
+          <!-- 独立包装，避免 Arco Spin 把评估模块挤成左侧窄列 -->
+          <div class="assess-module">
+            <AssessmentMetricsPanel :active="moduleTab === 'assess'" />
+            <ArticleAssessmentWorkflow :active="moduleTab === 'assess'" />
+          </div>
+        </a-tab-pane>
       </a-tabs>
     </main>
 
@@ -480,6 +493,7 @@ import { useRouter } from 'vue-router'
 import { Message, Notification } from '@arco-design/web-vue'
 import DigestSummary from '@/components/recommendations/DigestSummary.vue'
 import ArticleAssessmentWorkflow from '@/components/recommendations/ArticleAssessmentWorkflow.vue'
+import AssessmentMetricsPanel from '@/components/recommendations/AssessmentMetricsPanel.vue'
 import RecommendationArticleCard from '@/components/recommendations/RecommendationArticleCard.vue'
 import SiteInsightPanel from '@/components/recommendations/SiteInsightPanel.vue'
 import { groupCrawlQueueTasks } from '@/utils/crawlQueueGrouping.mjs'
@@ -689,6 +703,8 @@ const emptyCrawlQueue = (): CrawlQueueSnapshot => ({
 })
 
 const router = useRouter()
+const moduleTab = ref('recommend')
+const discoveryTab = ref('discovery')
 const activeTab = ref('feed')
 const loading = ref(false)
 const generating = ref(false)
@@ -844,7 +860,7 @@ const clearCrawlQueueTimer = () => {
 
 const scheduleCrawlQueueRefresh = () => {
   clearCrawlQueueTimer()
-  if (!isOwner.value || activeTab.value !== 'queue') return
+  if (!isOwner.value || moduleTab.value !== 'discover' || discoveryTab.value !== 'queue') return
   const delay = crawlQueue.value.state === 'running' ? 2000 : 10000
   crawlQueueTimer = window.setTimeout(() => { void loadCrawlQueue(true) }, delay)
 }
@@ -1025,7 +1041,7 @@ const loadAll = async () => {
       loadSources(),
       loadDiscoveryFeed(),
     ])
-    if (activeTab.value === 'queue' && isOwner.value) await refreshQueueTab()
+    if (moduleTab.value === 'discover' && discoveryTab.value === 'queue' && isOwner.value) await refreshQueueTab()
   } catch (error) {
     Notification.error({ title: '加载失败', content: error instanceof Error ? error.message : '推荐中心加载失败', position: 'topRight' })
   } finally {
@@ -1203,16 +1219,6 @@ const requestBackfill = async (siteId: number) => {
   } catch (error) { Message.error(error instanceof Error ? error.message : '启动回溯失败') }
 }
 
-const requestSitemapBackfill = async (siteId: number, url: string) => {
-  try {
-    await requestJSON(`/api/discovery/sites/${siteId}/sitemap-backfill`, {
-      method: 'POST', headers: authHeaders(true), body: JSON.stringify({ url }),
-    })
-    await reloadSiteInsight(siteId)
-    Message.success('Sitemap 历史补漏已排队')
-  } catch (error) { Message.error(error instanceof Error ? error.message : '启动 Sitemap 补漏失败') }
-}
-
 const deleteBlockRule = async (ruleId: number) => {
   try {
     await requestJSON(`/api/recommendations/blocks/${ruleId}`, { method: 'DELETE', headers: authHeaders() })
@@ -1342,8 +1348,8 @@ function crawlTaskGroupTimeLabel(item: { windowStart: string; windowEnd: string 
   return start === end ? start : `${start} 至 ${end}`
 }
 
-watch(activeTab, (tab) => {
-  if (tab === 'queue' && isOwner.value) {
+watch([moduleTab, discoveryTab], ([mod, tab]) => {
+  if (mod === 'discover' && tab === 'queue' && isOwner.value) {
     void refreshQueueTab()
     return
   }
@@ -1425,6 +1431,22 @@ onBeforeUnmount(clearCrawlQueueTimer)
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 12px 30px rgba(29, 33, 41, 0.06);
+}
+
+/* 评估页占满页签内容区，子组件卡片纵向排列 */
+.assess-module {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+.module-tabs :deep(.arco-tabs-content),
+.module-tabs :deep(.arco-tabs-pane),
+.assess-module :deep(.arco-spin) {
+  display: block;
+  width: 100%;
+  min-width: 0;
 }
 
 .panel {

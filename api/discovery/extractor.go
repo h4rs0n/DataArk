@@ -12,15 +12,16 @@ import (
 )
 
 type ExtractedArticle struct {
-	Title        string
-	Text         string
-	WordCount    int
-	Description  string
-	CanonicalURL string
-	Author       string
-	PublishedAt  *time.Time
-	Language     string
-	IsArticle    bool
+	Title            string
+	Text             string
+	WordCount        int
+	Description      string
+	CanonicalURL     string
+	Author           string
+	PublishedAt      *time.Time
+	Language         string
+	IsArticle        bool
+	HasPasswordInput bool
 }
 
 func ExtractArticle(rawURL string, body []byte) (*ExtractedArticle, error) {
@@ -37,13 +38,14 @@ func ExtractArticle(rawURL string, body []byte) (*ExtractedArticle, error) {
 		return nil, err
 	}
 	article := &ExtractedArticle{
-		Title:       strings.TrimSpace(result.Title),
-		Text:        strings.Join(strings.Fields(result.Text), " "),
-		WordCount:   result.WordCount,
-		Author:      strings.TrimSpace(result.MarkupInfo.Author),
-		Language:    metadata.language,
-		IsArticle:   metadata.hasArticleElement || strings.EqualFold(result.MarkupInfo.Type, "article"),
-		PublishedAt: parseArticleTime(result.MarkupInfo.Article.PublishedTime),
+		Title:            strings.TrimSpace(result.Title),
+		Text:             strings.Join(strings.Fields(result.Text), " "),
+		WordCount:        result.WordCount,
+		Author:           strings.TrimSpace(result.MarkupInfo.Author),
+		Language:         metadata.language,
+		IsArticle:        metadata.hasArticleElement || strings.EqualFold(result.MarkupInfo.Type, "article"),
+		HasPasswordInput: metadata.hasPasswordInput,
+		PublishedAt:      parseArticleTime(result.MarkupInfo.Article.PublishedTime),
 	}
 	if article.Title == "" {
 		article.Title = metadata.title
@@ -78,6 +80,7 @@ type htmlMetadata struct {
 	publishedAt       string
 	language          string
 	hasArticleElement bool
+	hasPasswordInput  bool
 }
 
 func extractHTMLMetadata(body []byte) htmlMetadata {
@@ -96,6 +99,10 @@ func extractHTMLMetadata(body []byte) htmlMetadata {
 				}
 			case "article":
 				metadata.hasArticleElement = true
+			case "input":
+				if strings.EqualFold(attr(node, "type"), "password") {
+					metadata.hasPasswordInput = true
+				}
 			case "title":
 				if metadata.title == "" && node.FirstChild != nil && node.FirstChild.Type == html.TextNode {
 					metadata.title = strings.TrimSpace(node.FirstChild.Data)

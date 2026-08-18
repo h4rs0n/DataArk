@@ -10,14 +10,21 @@ import (
 	"time"
 )
 
-func TestBackfillFindsSitemapAndArchiveOnlyHistoricalArticles(t *testing.T) {
+func TestBackfillFindsArchiveOnlyHistoricalArticlesWithoutSitemap(t *testing.T) {
 	setupSQLiteDB(t)
 	world := newDeterministicSiteWorld(t)
 	clock := &advancingClock{now: time.Date(2026, 7, 13, 18, 0, 0, 0, time.UTC)}
 	oldClock := discoveryClock
 	oldFetcher := fetchDiscoveryRequest
 	discoveryClock = clock
-	fetchDiscoveryRequest = world.Fetcher.Fetch
+	var sitemapRequests int
+	fetchDiscoveryRequest = func(ctx context.Context, request FetchRequest) (FetchResult, error) {
+		if strings.Contains(request.URL, "sitemap") {
+			sitemapRequests++
+			t.Fatalf("sitemap request is not allowed: %#v", request)
+		}
+		return world.Fetcher.Fetch(ctx, request)
+	}
 	t.Cleanup(func() {
 		discoveryClock = oldClock
 		fetchDiscoveryRequest = oldFetcher
@@ -37,9 +44,6 @@ func TestBackfillFindsSitemapAndArchiveOnlyHistoricalArticles(t *testing.T) {
 	jobs := &recordedJobs{keys: make(map[string]struct{})}
 	queue := recordingJobEnqueuer{store: jobs}
 	if _, err := (EndpointDiscoveryService{Clock: clock, Queue: queue}).DiscoverHomepage(context.Background(), site, *homepage, page.Body, page.FinalURL); err != nil {
-		t.Fatal(err)
-	}
-	if err := requestDiscoverySiteSitemapBackfill(context.Background(), site.ID, world.B.URL+"/sitemap.xml", queue); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RunBackfillSite(context.Background(), site.ID, queue); err != nil {
@@ -64,13 +68,12 @@ func TestBackfillFindsSitemapAndArchiveOnlyHistoricalArticles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(coverage) != 2 {
+	if len(coverage) != 1 {
 		t.Fatalf("coverage = %#v", coverage)
 	}
-	for _, item := range coverage {
-		if item.State.Status != BackfillStatusCompleted || item.State.CompletionReason != "cursor_exhausted" || item.EstimatedCompletion != 1 || item.State.LastBatchAt == nil {
-			t.Fatalf("completed coverage = %#v", item)
-		}
+	item := coverage[0]
+	if item.State.Strategy != BackfillStrategyArchive || item.State.Status != BackfillStatusCompleted || item.EstimatedCompletion != 1 {
+		t.Fatalf("completed coverage = %#v", item)
 	}
 	feedBody, err := world.Fetcher.Fetch(context.Background(), FetchRequest{URL: world.B.URL + "/feed.xml", Kind: FetchKindFeed})
 	if err != nil {
@@ -78,6 +81,9 @@ func TestBackfillFindsSitemapAndArchiveOnlyHistoricalArticles(t *testing.T) {
 	}
 	if strings.Contains(string(feedBody.Body), "high-sitemap") || strings.Contains(string(feedBody.Body), "high-archive") {
 		t.Fatal("historical-only articles leaked into recent feed fixture")
+	}
+	if sitemapRequests != 0 {
+		t.Fatalf("sitemap requests = %d", sitemapRequests)
 	}
 }
 

@@ -2,11 +2,10 @@ package discovery
 
 import (
 	"DataArk/config"
+	"DataArk/discovery/articlerules"
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
-	"fmt"
 	"mime"
 	"net/http"
 	neturl "net/url"
@@ -21,7 +20,6 @@ const (
 	DiscoverySourceTypeSitemap = "sitemap"
 	DiscoveryEndpointFeed      = "feed"
 	DiscoveryEndpointSitemap   = "sitemap"
-	maxNestedSitemaps          = 50
 )
 
 type EndpointDiscoveryService struct {
@@ -90,7 +88,11 @@ func (service EndpointDiscoveryService) DiscoverHomepage(ctx context.Context, si
 		}
 	}
 	backfillDue := false
-	if _, created, stateErr := ensureBackfillState(site.ID, BackfillStrategyArchive, links.historical, clock.Now()); stateErr != nil {
+	seeds := links.historical
+	if homepageSource.UserManaged {
+		seeds = append([]string{pageURL}, seeds...)
+	}
+	if _, created, stateErr := ensureBackfillState(site.ID, BackfillStrategyArchive, seeds, clock.Now()); stateErr != nil {
 		return result, stateErr
 	} else {
 		backfillDue = backfillDue || created
@@ -160,67 +162,8 @@ func discoverHomepageEndpoints(body []byte, pageURL string, siteRootURL string) 
 }
 
 func isNonArticleNavigation(rawURL string, anchorText string) bool {
-	parsed, err := neturl.Parse(rawURL)
-	if err != nil {
-		return true
-	}
-	path := strings.ToLower(parsed.Path)
-	anchor := strings.ToLower(strings.TrimSpace(anchorText))
-	for _, marker := range []string{"/archive", "/archives", "/tag/", "/tags/", "/category/", "/categories/", "/page/", "/about", "/login", "/signin", "/feed", "/rss", "/atom", "/sitemap", "/blogroll", "/friends", "/links"} {
-		if strings.Contains(path, marker) {
-			return true
-		}
-	}
-	for _, marker := range []string{"archive", "archives", "blogroll", "friends", "links", "about", "sign in", "login"} {
-		if anchor == marker {
-			return true
-		}
-	}
-	return false
-}
-
-func parseSitemapDocument(body []byte, siteRootURL string) ([]discoveredCandidate, []string, error) {
-	var sitemap struct {
-		XMLName xml.Name
-		URLs    []struct {
-			Loc     string `xml:"loc"`
-			LastMod string `xml:"lastmod"`
-		} `xml:"url"`
-		Sitemaps []struct {
-			Loc string `xml:"loc"`
-		} `xml:"sitemap"`
-	}
-	if err := xml.Unmarshal(body, &sitemap); err != nil {
-		return nil, nil, err
-	}
-	if sitemap.XMLName.Local != "urlset" && sitemap.XMLName.Local != "sitemapindex" {
-		return nil, nil, fmt.Errorf("unsupported sitemap root %q", sitemap.XMLName.Local)
-	}
-	baseURL, err := neturl.Parse(siteRootURL)
-	if err != nil {
-		return nil, nil, err
-	}
-	candidates := make([]discoveredCandidate, 0, len(sitemap.URLs))
-	for _, item := range sitemap.URLs {
-		normalizedURL, ok := sameHostArticleURL(item.Loc, baseURL)
-		if !ok {
-			continue
-		}
-		candidates = append(candidates, discoveredCandidate{
-			URL: normalizedURL, PublishedAt: parseFeedTime(item.LastMod),
-			DiscoveryMethod: DiscoveryMethodSitemap, MetadataConfidence: metadataConfidenceForMethod(DiscoveryMethodSitemap), PublishedConfidence: "sitemap_lastmod",
-		})
-	}
-	nested := make([]string, 0, len(sitemap.Sitemaps))
-	for _, item := range sitemap.Sitemaps {
-		if len(nested) >= maxNestedSitemaps {
-			break
-		}
-		if resolved, ok := resolveWebURL(item.Loc, baseURL); ok && sameLogicalHost(resolved, baseURL) {
-			nested = append(nested, resolved.String())
-		}
-	}
-	return candidates, uniqueNormalizedURLs(nested), nil
+	_, rejected := articlerules.RejectURL(rawURL, anchorText)
+	return rejected
 }
 
 func upsertSiteEndpoint(site DiscoverySite, rawURL string, sourceType string, endpointType string, now time.Time) (DiscoverySource, bool, error) {

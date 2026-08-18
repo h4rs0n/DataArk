@@ -46,7 +46,6 @@ func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAsses
 		Where("processing_state = ? AND dedupe_state = ? AND content_version > 0", DiscoveryProcessingReady, DiscoveryDedupeReady).
 		Where("representative_id IS NULL OR representative_id = id")
 	if activate {
-		// active：找出当前指针还不是本策略模型行的候选，以便激活已观察行或重新入队。
 		query = query.Where(`NOT EXISTS (
 SELECT 1 FROM discovery_article_assessments active
 WHERE active.id = discovery_candidates.current_assessment_id
@@ -57,7 +56,6 @@ WHERE active.id = discovery_candidates.current_assessment_id
   AND active.policy_version = ?
 )`, assessor.Name(), assessor.Version(), assessor.PolicyVersion())
 	} else {
-		// observe：只补还没有本策略模型行的文章，避免反复选中指针仍停在规则行的候选。
 		query = query.Where(`NOT EXISTS (
 SELECT 1 FROM discovery_article_assessments stored
 WHERE stored.candidate_id = discovery_candidates.id
@@ -121,7 +119,7 @@ WHERE stored.candidate_id = discovery_candidates.id
 			enqueueErrors = append(enqueueErrors, fmt.Errorf("mark candidate %d assessment pending: %w", candidate.ID, err))
 			continue
 		}
-		if err := queue.EnqueueProcessCandidate(ctx, candidate.ID, strconv.FormatUint(uint64(candidate.ContentVersion), 10)); err != nil {
+		if err := queue.EnqueueAssessArticle(ctx, candidate.ID, strconv.FormatUint(uint64(candidate.ContentVersion), 10)); err != nil {
 			enqueueErrors = append(enqueueErrors, fmt.Errorf("enqueue candidate %d assessment: %w", candidate.ID, err))
 			continue
 		}

@@ -14,8 +14,9 @@ var (
 )
 
 const (
-	DiscoveryQueueName = "discovery_crawl"
-	CrawlQueueMode     = "manual"
+	DiscoveryQueueName  = "discovery_crawl"
+	AssessmentQueueName = "article_assessment"
+	CrawlQueueMode      = "manual"
 )
 
 type CrawlQueueCounts struct {

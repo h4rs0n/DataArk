@@ -21,6 +21,13 @@ const (
 	DiscoveryEligibilityEligible     = "eligible"
 	DiscoveryEligibilityReview       = "review"
 	DiscoveryEligibilityIneligible   = "ineligible"
+
+	// 评估状态写在 discovery_candidates 上，评估包读写同一列，不另建状态机。
+	DiscoveryAssessmentReady    = "ready"
+	DiscoveryAssessmentReview   = "review"
+	DiscoveryAssessmentDegraded = "degraded"
+	RuleArticleAssessorName     = "deterministic_rules"
+	RuleArticleAssessorVersion  = "2.0.0"
 )
 
 type DiscoverySite struct {

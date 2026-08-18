@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/assessment"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -291,12 +292,7 @@ func TestArticleAssessmentOutputRejectsEverySchemaViolationLocally(t *testing.T)
 		`{"qualityScore":50,"depthScore":50,"evergreenScore":50,"reasons":["one","two"],"summary":"ok","keywords":["a","b","c"],"unused":true}`,
 	}
 	for _, payload := range tests {
-		var output articleAssessmentOutput
-		decodeErr := decodeChatJSON(payload, &output, true)
-		if decodeErr == nil {
-			_, decodeErr = output.result()
-		}
-		if decodeErr == nil {
+		if err := assessment.ValidateChatAssessmentJSON(payload); err == nil {
 			t.Fatalf("invalid output accepted: %s", payload)
 		}
 	}

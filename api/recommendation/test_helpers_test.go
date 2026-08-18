@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/assessment"
 	"DataArk/discovery"
 	"testing"
 
@@ -40,9 +41,11 @@ func setupSQLiteDB(t *testing.T) {
 		t.Fatalf("failed to migrate sqlite db: %v", err)
 	}
 	oldDiscovery := discovery.SetDB(sqliteDB)
+	oldAssessment := assessment.SetDB(sqliteDB)
 	oldRecommendation := SetDB(sqliteDB)
 	t.Cleanup(func() {
 		discovery.SetDB(oldDiscovery)
+		assessment.SetDB(oldAssessment)
 		SetDB(oldRecommendation)
 	})
 }

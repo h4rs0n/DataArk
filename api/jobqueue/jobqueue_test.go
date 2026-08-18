@@ -59,6 +59,7 @@ func TestJobArgsUseStableIdentityAndUniqueOptions(t *testing.T) {
 		{ScanBlogrollJobKind, ScanBlogrollArgs{SiteID: 2}},
 		{BackfillSiteJobKind, BackfillSiteArgs{SiteID: 3}},
 		{ProcessCandidateJobKind, ProcessCandidateArgs{CandidateID: 4, ContentVersion: "2"}},
+		{AssessArticleJobKind, AssessArticleArgs{CandidateID: 6, ContentVersion: "2"}},
 		{GenerateDailyJobKind, GenerateDailyArgs{UserID: 5, LocalDate: "2026-07-13"}},
 	}
 	for _, testCase := range tests {
@@ -68,11 +69,15 @@ func TestJobArgsUseStableIdentityAndUniqueOptions(t *testing.T) {
 		if !testCase.args.InsertOpts().UniqueOpts.ByArgs {
 			t.Fatalf("%s must be unique by stable args", testCase.kind)
 		}
-		if testCase.kind == GenerateDailyJobKind && testCase.args.InsertOpts().Queue == DiscoveryQueueName {
-			t.Fatal("daily generation must not use the manually gated discovery queue")
-		}
-		if testCase.kind != GenerateDailyJobKind && testCase.args.InsertOpts().Queue != DiscoveryQueueName {
+		if testCase.kind == GenerateDailyJobKind || testCase.kind == AssessArticleJobKind {
+			if testCase.args.InsertOpts().Queue == DiscoveryQueueName {
+				t.Fatalf("%s must not use the manually gated discovery queue", testCase.kind)
+			}
+		} else if testCase.args.InsertOpts().Queue != DiscoveryQueueName {
 			t.Fatalf("%s queue = %q, want %q", testCase.kind, testCase.args.InsertOpts().Queue, DiscoveryQueueName)
+		}
+		if testCase.kind == AssessArticleJobKind && testCase.args.InsertOpts().Queue != AssessmentQueueName {
+			t.Fatalf("assessment queue = %q, want %q", testCase.args.InsertOpts().Queue, AssessmentQueueName)
 		}
 		if testCase.kind != GenerateDailyJobKind && testCase.args.InsertOpts().MaxAttempts != 1 {
 			t.Fatalf("%s max attempts = %d, want 1 so domain backoff remains manually gated", testCase.kind, testCase.args.InsertOpts().MaxAttempts)
@@ -80,10 +85,10 @@ func TestJobArgsUseStableIdentityAndUniqueOptions(t *testing.T) {
 	}
 }
 
-func TestProcessCandidateWorkerTimeoutFollowsLLMTimeout(t *testing.T) {
+func TestAssessArticleWorkerTimeoutFollowsLLMTimeout(t *testing.T) {
 	original := config.LLMTIMEOUT
 	t.Cleanup(func() { config.LLMTIMEOUT = original })
-	worker := processCandidateWorker{}
+	worker := assessArticleWorker{}
 
 	config.LLMTIMEOUT = "300s"
 	if got := worker.Timeout(nil); got != 300*time.Second {
@@ -301,6 +306,28 @@ func TestMemoryQueueManualRunDrainsDerivedJobs(t *testing.T) {
 	snapshot, err := queue.Snapshot(context.Background(), 50)
 	if err != nil || snapshot.Counts.Succeeded24h != 2 || snapshot.Counts.Pending != 0 || snapshot.State != "idle" {
 		t.Fatalf("snapshot = %#v err=%v", snapshot, err)
+	}
+}
+
+func TestMemoryQueueAssessArticleRunsWithoutManualStart(t *testing.T) {
+	store := NewMemoryStore()
+	var assessed atomic.Int32
+	queue := NewMemoryQueue(store, Handlers{AssessArticle: func(_ context.Context, candidateID uint, version string) error {
+		if candidateID != 11 || version != "4" {
+			t.Fatalf("assess args = %d %q", candidateID, version)
+		}
+		assessed.Add(1)
+		return nil
+	}})
+	if err := queue.EnqueueAssessArticle(context.Background(), 11, "4"); err != nil {
+		t.Fatal(err)
+	}
+	if assessed.Load() != 1 {
+		t.Fatalf("assessment executions = %d, want 1 before any crawl run", assessed.Load())
+	}
+	snapshot, err := queue.Snapshot(context.Background(), 50)
+	if err != nil || snapshot.Counts.Pending != 0 {
+		t.Fatalf("assessment jobs must not appear on the crawl snapshot: %#v err=%v", snapshot, err)
 	}
 }
 

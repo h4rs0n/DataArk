@@ -6,6 +6,7 @@ const view = await readFile(new URL('../src/views/RecommendationsView.vue', impo
 const feedback = await readFile(new URL('../src/components/recommendations/FeedbackControls.vue', import.meta.url), 'utf8')
 const recommendationCard = await readFile(new URL('../src/components/recommendations/RecommendationArticleCard.vue', import.meta.url), 'utf8')
 const siteInsight = await readFile(new URL('../src/components/recommendations/SiteInsightPanel.vue', import.meta.url), 'utf8')
+const metricsPanel = await readFile(new URL('../src/components/recommendations/AssessmentMetricsPanel.vue', import.meta.url), 'utf8')
 
 test('recommendation experience exposes scoped reversible feedback', () => {
   for (const action of ['valuable', 'not_interested', 'too_repetitive', 'low_value', 'deep_read', 'block_source', 'reduce_topic', 'reduce_style']) {
@@ -29,11 +30,25 @@ test('frontend has no destructive daily regeneration interaction', () => {
   assert.match(view, /admin\/recommendations\/supplement/)
 })
 
-test('discovery UI separates manual subscriptions and explicit sitemap gap fill', () => {
+test('discovery UI lists manual subscriptions without sitemap gap fill', () => {
   assert.match(view, /仅显示管理员主动设置的第一优先级来源/)
-  assert.match(view, /\/sitemap-backfill/)
-  assert.match(siteInsight, /Sitemap 默认关闭/)
-  assert.match(siteInsight, /sitemapBackfill/)
+  assert.match(view, /title="发现"/)
+  assert.match(view, /SiteInsightPanel v-if="selectedSource"/)
+  assert.doesNotMatch(view, /\/sitemap-backfill/)
+  assert.doesNotMatch(siteInsight, /Sitemap 默认关闭/)
+  assert.doesNotMatch(siteInsight, /sitemapBackfill/)
+})
+
+test('owner assessment module shows metrics and backfill onto the auto queue', () => {
+  assert.match(view, /title="评估"/)
+  assert.match(view, /AssessmentMetricsPanel/)
+  assert.match(view, /class="assess-module"/)
+  assert.match(metricsPanel, /\/api\/admin\/assessment\/metrics/)
+  assert.match(metricsPanel, /article-assessments\/backfill/)
+  assert.match(metricsPanel, /article-assessments\/rollback/)
+  assert.match(metricsPanel, /待评估队列/)
+  assert.match(metricsPanel, /class="metrics-spin"/)
+  assert.match(metricsPanel, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/)
 })
 
 test('candidate article titles open the source in a safe new tab', () => {
@@ -41,7 +56,7 @@ test('candidate article titles open the source in a safe new tab', () => {
   assert.match(view + recommendationCard, /:href="(?:candidate|item\.candidate)\.url"/)
   assert.match(view + recommendationCard, /target="_blank"/)
   assert.match(view + recommendationCard, /rel="noopener noreferrer"/)
-  assert.match(view, /@click="markCandidateRead\(candidate\)"/)
+  assert.match(view, /@mark-read="markCandidateRead"/)
 })
 
 test('today recommendation titles open the source in a safe new tab', () => {
@@ -51,7 +66,7 @@ test('today recommendation titles open the source in a safe new tab', () => {
 })
 
 test('unread discovery candidates use a refreshable personalized feed', () => {
-  assert.match(view, /candidateStatus === 'new' \? '猜你喜欢'/)
+  assert.match(view, /<h2>猜你喜欢<\/h2>/)
   assert.match(view, /\/api\/recommendations\/discovery-feed/)
   assert.match(view, /\/api\/recommendations\/discovery-feed\/refresh/)
   assert.match(view, /换一换/)
@@ -67,8 +82,8 @@ test('owner UI exposes the manual crawl queue in a dedicated tab', () => {
   assert.match(view, /\/api\/admin\/discovery\/crawl-queue\/run/)
   assert.match(view, /<a-tab-pane v-if="isOwner" key="queue" title="任务队列">/)
   assert.ok(view.indexOf('key="queue"') > view.indexOf('key="discovery"'))
-  assert.match(view, /activeTab\.value !== 'queue'/)
-  assert.match(view, /watch\(activeTab, \(tab\) =>/)
+  assert.match(view, /moduleTab\.value !== 'discover' \|\| discoveryTab\.value !== 'queue'/)
+  assert.match(view, /watch\(\[moduleTab, discoveryTab\]/)
   assert.match(view, /crawlQueue\.value\.state === 'running' \? 2000 : 10000/)
   assert.match(view, /displayedCrawlQueueTasks/)
   assert.match(view, /另有.*条相同任务已合并/)

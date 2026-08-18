@@ -12,7 +12,8 @@ DataArk is a Go backend plus Vue frontend monorepo. Backend code lives in `api/`
 - `cd api && go test ./...`: run backend tests.
 - `cd web && npm run dev`: start Vite locally.
 - `cd web && npm run build`: type-check and build the Vue app.
-- `cd docker && docker compose up -d --build`: run Postgres/pgvector, Meilisearch, SingleFile, and the API.
+- `cd docker && docker compose up --build`: rebuild and deploy Postgres/pgvector, Meilisearch, SingleFile, and the API. Required after any frontend change before Chrome DevTools MCP integration testing.
+- `cd docker && docker compose up -d --build`: same stack in detached mode when the foreground `up` would block the session.
 
 ## Coding Style & Naming Conventions
 
@@ -20,7 +21,12 @@ Format Go with `gofmt`; keep package names lower-case and imports on the `DataAr
 
 ## Testing Guidelines
 
-Place Go tests as `*_test.go` beside the package under test. Backend coverage spans controllers, auth, database behavior, discovery, recommendation, backup, and search; extend the relevant package when behavior changes. Run `cd api && go test ./...` for backend work and `cd web && npm run build` for frontend work. For UI changes, verify screenshots, console/network, and DOM state.
+Place Go tests as `*_test.go` beside the package under test. Backend coverage spans controllers, auth, database behavior, discovery, recommendation, backup, and search; extend the relevant package when behavior changes. Run `cd api && go test ./...` for backend work and `cd web && npm run build` for frontend work.
+
+**Frontend changes require Docker deploy + Chrome DevTools MCP.** Any modification under `web/` (views, components, router, styles, assets) or that updates the embedded UI in `api/assets/web` is incomplete until both of the following succeed:
+
+1. From `docker/`, run `docker compose up --build` and confirm the stack is healthy (`dataarkapi` and dependencies up; the site reachable at `http://localhost:${DATAARK_PORT}`, default `7845`).
+2. After that deploy succeeds, use **Chrome DevTools MCP** (`cursor-ide-browser`, including `browser_cdp`) for integration testing: open the deployed pages that changed, interact with the real UI, and verify DOM state, console errors, network requests, and screenshots. Unit/contract tests (`cd web && npm test`) do not replace this step.
 
 ## Commit & Pull Request Guidelines
 
@@ -33,3 +39,5 @@ Do not commit real Meilisearch keys, database passwords, archives, Docker volume
 ## Agent-Specific Instructions
 
 Follow `CONVENTIONS.md` for delegation and git workflow. For complex work, update an ExecPlan under `docs/exec-plans/` using `PLANS.md`. Prefer existing patterns, verify independently, and commit completed changes.
+
+When the work touches the frontend, do not stop at `npm test` / `npm run build`. Deploy with `docker compose up --build` from `docker/`, then run Chrome DevTools MCP integration tests against the live containerized UI before reporting the change complete.

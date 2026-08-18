@@ -150,12 +150,12 @@ func TestParseFeedCandidatesSupportsRSSAtomAndJSON(t *testing.T) {
 	}{
 		{
 			name: "rss",
-			body: `<?xml version="1.0"?><rss version="2.0"><channel><item><title>RSS Post</title><link>https://example.com/rss</link><description>RSS summary</description></item></channel></rss>`,
+			body: `<?xml version="1.0"?><rss version="2.0"><channel><item><title>RSS Post</title><link>https://example.com/rss-post</link><description>RSS summary</description></item></channel></rss>`,
 			want: "RSS Post",
 		},
 		{
 			name: "atom",
-			body: `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Atom Post</title><link href="https://example.com/atom"/><summary>Atom summary</summary></entry></feed>`,
+			body: `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Atom Post</title><link href="https://example.com/atom-post"/><summary>Atom summary</summary></entry></feed>`,
 			want: "Atom Post",
 		},
 		{

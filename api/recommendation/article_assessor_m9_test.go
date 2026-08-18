@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/assessment"
 	"DataArk/discovery"
 	"context"
 	"strings"
@@ -37,8 +38,8 @@ func TestOpenAICompatibleArticleAssessorPersistsEnhancedVersionWithoutSourceInpu
 		t.Fatal(err)
 	}
 	provider := &capturingAssessmentProvider{}
-	assessor := EnrichmentArticleAssessor{Provider: provider, Model: "fixture-llm", Mode: "active"}
-	if err := discovery.AssessCandidate(context.Background(), candidate.ID, assessor); err != nil {
+	assessor := assessment.EnrichmentArticleAssessor{Provider: provider, Model: "fixture-llm", Mode: "active"}
+	if err := assessment.AssessCandidate(context.Background(), candidate.ID, assessor); err != nil {
 		t.Fatal(err)
 	}
 	if provider.input.CandidateID != candidate.ID || provider.input.Title != candidate.Title || provider.input.BodyText != body {

@@ -19,7 +19,7 @@ Successful model assessments write `summary` and `keywords` onto the live `disco
 
 ## Summary and keyword backfill in observe mode
 
-Stock inventory still has v3 assessment rows without summaries. Owner backfill now works while `ARTICLE_ASSESSMENT_MODE=observe`: it enqueues at most 250 `process-candidate` jobs for articles that lack a v4 model row and does not activate model scores. After switching to `active`, the same endpoint activates stored v4 rows or enqueues missing ones as before.
+Stock inventory still has v3 assessment rows without summaries. Owner backfill now works while `ARTICLE_ASSESSMENT_MODE=observe`: it enqueues at most 250 `assessment_assess_article` jobs on the automatic `article_assessment` queue for articles that lack a v4 model row and does not activate model scores. After switching to `active`, the same endpoint activates stored v4 rows or enqueues missing ones as before. Discovery crawl remains on the paused `discovery_crawl` queue and still requires **推荐中心 → 发现 → 执行待处理任务**.
 
 ```text
 POST /api/admin/discovery/article-assessments/backfill
@@ -31,7 +31,7 @@ POST /api/admin/discovery/article-assessments/backfill
 
 ## Use the recommendation-center human workflow
 
-Sign in as the owner and open **推荐中心 → 人工标注工作流**. The page and all corresponding APIs are owner-only. A new run selects the gold set from the current PostgreSQL inventory, specifically each representative candidate's immutable current `discovery_article_content_versions` row. Labels never come from BlogClaw, public benchmarks, site reputation, or an LLM.
+Sign in as the owner and open **推荐中心 → 评估**. The metrics panel shows pending-queue depth, 24-hour success/failure, articles/hour, token totals, p50/p95 latency, and schema retry rate from `GET /api/admin/assessment/metrics`. The human-labelling workflow and bounded backfill/rollback live on the same page. The page and all corresponding APIs are owner-only. A new run selects the gold set from the current PostgreSQL inventory, specifically each representative candidate's immutable current `discovery_article_content_versions` row. Labels never come from BlogClaw, public benchmarks, site reputation, or an LLM.
 
 Click **创建标注批次** once. The server persists a frozen 120-item manifest in `article_assessment_workflow_runs` and `article_assessment_workflow_items`; it references immutable content-version rows rather than placing full article bodies in downloadable files. Sampling is deterministic for the stored seed, deduplicates content hashes, permits at most two articles per host, and contains 80 Chinese/English core articles across five body-length buckets plus 40 stress articles: eight each for low active score, quality boundary, saturated high score, model/rule disagreement, and overlong body.
 
@@ -65,7 +65,7 @@ POST /api/admin/discovery/article-assessments/backfill
 {"limit":250,"dryRun":false,"retryFailures":false}
 ```
 
-The hard maximum is 250. In `active` mode, a stored observe-mode v4 row is activated without another model call and its summary/keywords are written back to the candidate. Otherwise the candidate is marked assessment-pending and the existing idempotent process-candidate queue is used. The old current pointer remains valid until success. Queue insertion failure leaves durable pending state for startup recovery. A v4 failure is skipped by later ordinary batches; set `retryFailures:true` only after its cause is corrected.
+The hard maximum is 250. In `active` mode, a stored observe-mode v4 row is activated without another model call and its summary/keywords are written back to the candidate. Otherwise the candidate is marked assessment-pending and the automatic `article_assessment` queue is used. The old current pointer remains valid until success. Queue insertion failure leaves durable pending state for startup recovery. A v4 failure is skipped by later ordinary batches; set `retryFailures:true` only after its cause is corrected.
 
 Rollback never deletes assessments or edits published recommendation snapshots. Preview and then reactivate the latest prior same-content assessment, or the v3 deterministic row, with:
 

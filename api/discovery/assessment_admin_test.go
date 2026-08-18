@@ -28,11 +28,11 @@ type failingAssessmentQueue struct {
 	failCandidate uint
 }
 
-func (queue failingAssessmentQueue) EnqueueProcessCandidate(ctx context.Context, candidateID uint, contentVersion string) error {
+func (queue failingAssessmentQueue) EnqueueAssessArticle(ctx context.Context, candidateID uint, contentVersion string) error {
 	if candidateID == queue.failCandidate {
 		return errors.New("fixture queue failure")
 	}
-	return queue.recordingJobEnqueuer.EnqueueProcessCandidate(ctx, candidateID, contentVersion)
+	return queue.recordingJobEnqueuer.EnqueueAssessArticle(ctx, candidateID, contentVersion)
 }
 
 func TestArticleAssessmentBackfillReactivatesObservedRowsWithoutCallingModel(t *testing.T) {
@@ -103,7 +103,7 @@ func TestArticleAssessmentBackfillPreservesPointerAcrossPartialQueueFailure(t *t
 	if first.CurrentAssessmentID == nil || *first.CurrentAssessmentID != originalFirstAssessmentID || first.AssessmentState != DiscoveryAssessmentPending {
 		t.Fatalf("failed enqueue lost active pointer: %#v", first)
 	}
-	if _, ok := store.keys[fmt.Sprintf("candidate:%d:1", second.ID)]; !ok {
+	if _, ok := store.keys[fmt.Sprintf("assess:%d:1", second.ID)]; !ok {
 		t.Fatalf("successful job missing: %#v", store.keys)
 	}
 }
@@ -149,7 +149,7 @@ func TestArticleAssessmentBackfillObserveEnqueuesWithoutActivating(t *testing.T)
 	if err != nil || result.Selected != 1 || result.Enqueued != 1 || result.Reactivated != 0 {
 		t.Fatalf("observe backfill result=%#v err=%v", result, err)
 	}
-	if _, ok := store.keys[fmt.Sprintf("candidate:%d:1", candidate.ID)]; !ok {
+	if _, ok := store.keys[fmt.Sprintf("assess:%d:1", candidate.ID)]; !ok {
 		t.Fatalf("observe enqueue missing: %#v", store.keys)
 	}
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {

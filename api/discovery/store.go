@@ -3,6 +3,7 @@ package discovery
 import (
 	"DataArk/archive"
 	"DataArk/config"
+	"DataArk/discovery/articlerules"
 	"DataArk/jobqueue"
 	"bytes"
 	"context"
@@ -12,6 +13,7 @@ import (
 	"log"
 	"math"
 	neturl "net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -390,7 +392,10 @@ func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discove
 			candidates[index].MetadataConfidence = metadataConfidenceForMethod(DiscoveryMethodFeed)
 			candidates[index].PublishedConfidence = "feed"
 		}
-		return scoreAndLimitCandidates(candidates), 1, 0, &fetchResult, nil
+		if source.UserManaged {
+			candidates = followFeedNextPages(ctx, fetchResult.FinalURLOr(source.URL), fetchResult.Body, candidates)
+		}
+		return scoreAndLimitCandidates(candidates, source.UserManaged), 1, 0, &fetchResult, nil
 	case DiscoverySourceTypeSite:
 		site, err := siteForDiscoverySource(*source)
 		if err != nil {
@@ -443,7 +448,7 @@ func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discove
 				return nil, 0, 0, &fetchResult, err
 			}
 		}
-		return scoreAndLimitCandidates(discovered.Candidates), discovered.FeedsFound + discovered.SitemapsFound, discovered.LinksFound, &fetchResult, nil
+		return scoreAndLimitCandidates(discovered.Candidates, source.UserManaged), discovered.FeedsFound, discovered.LinksFound, &fetchResult, nil
 	default:
 		return nil, 0, 0, nil, errors.New("unsupported discovery source type")
 	}
@@ -464,7 +469,7 @@ func fetchSiteCandidates(ctx context.Context, rawURL string) ([]discoveredCandid
 	for _, articleURL := range articleURLs {
 		feedCandidates = append(feedCandidates, discoveredCandidate{URL: articleURL, Title: articleURL})
 	}
-	return scoreAndLimitCandidates(feedCandidates), len(feedURLs), len(articleURLs), nil
+	return scoreAndLimitCandidates(feedCandidates, false), len(feedURLs), len(articleURLs), nil
 }
 
 func fetchFeedCandidates(ctx context.Context, rawURL string) ([]discoveredCandidate, error) {
@@ -499,6 +504,9 @@ func parseFeedCandidates(body []byte) ([]discoveredCandidate, error) {
 		if link == "" {
 			link = strings.TrimSpace(item.GUID)
 		}
+		if _, rejected := articlerules.RejectURL(link, strings.TrimSpace(item.Title)); rejected {
+			continue
+		}
 		summary := item.Description
 		if summary == "" {
 			summary = item.Content
@@ -511,6 +519,79 @@ func parseFeedCandidates(body []byte) ([]discoveredCandidate, error) {
 		})
 	}
 	return candidates, nil
+}
+
+var feedNextHrefPattern = regexp.MustCompile(`(?is)<link[^>]+>`)
+
+// followFeedNextPages 只对人工订阅跟随 Atom/RSS 的 rel=next，最多 100 页。
+func followFeedNextPages(ctx context.Context, pageURL string, body []byte, candidates []discoveredCandidate) []discoveredCandidate {
+	seen := make(map[string]struct{}, len(candidates)+8)
+	for _, candidate := range candidates {
+		seen[candidate.URL] = struct{}{}
+	}
+	next := feedNextURL(body, pageURL)
+	for pages := 0; next != "" && pages < 100; pages++ {
+		if _, exists := seen["page:"+next]; exists {
+			break
+		}
+		seen["page:"+next] = struct{}{}
+		result, err := fetchDiscoveryRequest(ctx, FetchRequest{URL: next, Kind: FetchKindFeed})
+		if err != nil || result.StatusCode < 200 || result.StatusCode >= 300 {
+			break
+		}
+		more, parseErr := parseFeedCandidates(result.Body)
+		if parseErr != nil {
+			break
+		}
+		for _, candidate := range more {
+			if _, exists := seen[candidate.URL]; exists {
+				continue
+			}
+			seen[candidate.URL] = struct{}{}
+			candidate.DiscoveryMethod = DiscoveryMethodFeed
+			candidate.SourcePageURL = next
+			candidate.MetadataConfidence = metadataConfidenceForMethod(DiscoveryMethodFeed)
+			candidate.PublishedConfidence = "feed"
+			candidates = append(candidates, candidate)
+		}
+		next = feedNextURL(result.Body, result.FinalURLOr(next))
+	}
+	return candidates
+}
+
+func feedNextURL(body []byte, pageURL string) string {
+	base, err := neturl.Parse(pageURL)
+	if err != nil {
+		return ""
+	}
+	for _, raw := range feedNextHrefPattern.FindAll(body, -1) {
+		tag := strings.ToLower(string(raw))
+		if !strings.Contains(tag, `rel="next"`) && !strings.Contains(tag, `rel='next'`) {
+			continue
+		}
+		href := attrValueFromTag(string(raw), "href")
+		if href == "" {
+			continue
+		}
+		resolved, ok := resolveWebURL(href, base)
+		if !ok {
+			continue
+		}
+		return resolved.String()
+	}
+	return ""
+}
+
+func attrValueFromTag(tag string, name string) string {
+	pattern := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(name) + `\s*=\s*("([^"]*)"|'([^']*)')`)
+	match := pattern.FindStringSubmatch(tag)
+	if len(match) >= 4 {
+		if match[2] != "" {
+			return match[2]
+		}
+		return match[3]
+	}
+	return ""
 }
 
 func crawlSiteLinks(ctx context.Context, rawURL string) ([]string, []string, error) {
@@ -575,6 +656,9 @@ func parseRSSCandidates(body []byte) []discoveredCandidate {
 	}
 	candidates := make([]discoveredCandidate, 0, len(feed.Channel.Items))
 	for _, item := range feed.Channel.Items {
+		if _, rejected := articlerules.RejectURL(item.Link, item.Title); rejected {
+			continue
+		}
 		candidates = append(candidates, discoveredCandidate{
 			URL:         strings.TrimSpace(item.Link),
 			Title:       strings.TrimSpace(stripMarkup(item.Title)),
@@ -614,6 +698,9 @@ func parseAtomCandidates(body []byte) []discoveredCandidate {
 		if summary == "" {
 			summary = entry.Content
 		}
+		if _, rejected := articlerules.RejectURL(link, entry.Title); rejected {
+			continue
+		}
 		candidates = append(candidates, discoveredCandidate{
 			URL:         strings.TrimSpace(link),
 			Title:       strings.TrimSpace(stripMarkup(entry.Title)),
@@ -647,6 +734,9 @@ func discoverLinksFromHTML(body []byte, baseURL *neturl.URL) ([]string, []string
 			case "a":
 				href := attrValue(node, "href")
 				if absoluteURL, ok := sameHostArticleURL(href, baseURL); ok {
+					if _, rejected := articlerules.RejectURL(absoluteURL, compactNodeText(node, 160)); rejected {
+						break
+					}
 					articleSet[absoluteURL] = struct{}{}
 				}
 			}
@@ -659,11 +749,15 @@ func discoverLinksFromHTML(body []byte, baseURL *neturl.URL) ([]string, []string
 	return sortedKeys(feedSet), sortedKeys(articleSet)
 }
 
-func scoreAndLimitCandidates(candidates []discoveredCandidate) []discoveredCandidate {
+// scoreAndLimitCandidates 去重并排序。unlimited 为 true 时不截断（人工订阅全量入池）。
+func scoreAndLimitCandidates(candidates []discoveredCandidate, unlimited bool) []discoveredCandidate {
 	seen := make(map[string]discoveredCandidate)
 	for _, candidate := range candidates {
 		normalizedURL, err := NormalizeDiscoveryURL(candidate.URL)
 		if err != nil {
+			continue
+		}
+		if _, rejected := articlerules.RejectURL(normalizedURL, candidate.Title); rejected {
 			continue
 		}
 		candidate.URL = normalizedURL
@@ -679,6 +773,9 @@ func scoreAndLimitCandidates(candidates []discoveredCandidate) []discoveredCandi
 	sort.SliceStable(result, func(i, j int) bool {
 		return scoreDiscoveredCandidate(result[i]) > scoreDiscoveredCandidate(result[j])
 	})
+	if unlimited {
+		return result
+	}
 	limit := config.DISCOVERYMAXCANDIDATES
 	if limit <= 0 {
 		limit = 50

@@ -17,9 +17,7 @@ const (
 var (
 	ErrDiscoverySiteNotCrawlable    = errors.New("discovery site is paused or blocked")
 	ErrDiscoveryJobQueueUnavailable = errors.New("discovery job queue is unavailable")
-	ErrSitemapSourceDisabled        = errors.New("sitemap sources are disabled; use owner sitemap gap fill")
-	ErrSitemapRequiresManualSeed    = errors.New("sitemap gap fill requires a manually managed seed")
-	ErrSitemapDomainMismatch        = errors.New("sitemap URL must use the selected site's logical domain")
+	ErrSitemapSourceDisabled = errors.New("sitemap sources are disabled")
 )
 
 func UpdateDiscoverySiteOperationalStatus(siteID uint, status string, reason string) (*DiscoverySite, error) {
@@ -105,77 +103,6 @@ func RequestDiscoverySiteBackfill(ctx context.Context, siteID uint) error {
 	queue, available := jobqueue.Default()
 	if !available {
 		return ErrDiscoveryJobQueueUnavailable
-	}
-	return queue.EnqueueBackfillSite(ctx, siteID)
-}
-
-func RequestDiscoverySiteSitemapBackfill(ctx context.Context, siteID uint, rawURL string) error {
-	queue, available := jobqueue.Default()
-	if !available {
-		return ErrDiscoveryJobQueueUnavailable
-	}
-	return requestDiscoverySiteSitemapBackfill(ctx, siteID, rawURL, queue)
-}
-
-func requestDiscoverySiteSitemapBackfill(ctx context.Context, siteID uint, rawURL string, queue JobEnqueuer) error {
-	if db == nil || siteID == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	if queue == nil {
-		return ErrDiscoveryJobQueueUnavailable
-	}
-	normalizedURL, err := NormalizeDiscoveryURL(rawURL)
-	if err != nil {
-		return err
-	}
-	clock := discoveryClock
-	if clock == nil {
-		clock = SystemClock{}
-	}
-	now := clock.Now()
-	err = db.Transaction(func(tx *gorm.DB) error {
-		var site DiscoverySite
-		if err := tx.First(&site, siteID).Error; err != nil {
-			return err
-		}
-		if !site.CrawlAllowed || site.Status != DiscoverySiteStatusSeed {
-			return ErrSitemapRequiresManualSeed
-		}
-		sitemapDomain, err := domainKeyForURL(normalizedURL)
-		if err != nil {
-			return err
-		}
-		if sitemapDomain != siteDomainKey(site) {
-			return ErrSitemapDomainMismatch
-		}
-		var managed int64
-		if err := tx.Model(&DiscoverySource{}).Where("site_id = ? AND user_managed = ?", site.ID, true).Count(&managed).Error; err != nil {
-			return err
-		}
-		if managed == 0 {
-			return ErrSitemapRequiresManualSeed
-		}
-		cursor := encodeBackfillCursor(backfillCursor{Pending: []string{normalizedURL}, Visited: []string{}})
-		var state DiscoveryBackfillState
-		findErr := tx.Where("site_id = ? AND strategy = ?", site.ID, BackfillStrategySitemap).First(&state).Error
-		if errors.Is(findErr, gorm.ErrRecordNotFound) {
-			state = DiscoveryBackfillState{
-				SiteID: site.ID, Strategy: BackfillStrategySitemap, Cursor: cursor,
-				Status: BackfillStatusPending, NextBatchAt: &now, OwnerRequestedAt: &now,
-				CreatedAt: now, UpdatedAt: now,
-			}
-			return tx.Create(&state).Error
-		}
-		if findErr != nil {
-			return findErr
-		}
-		return tx.Model(&state).Updates(map[string]interface{}{
-			"cursor": cursor, "status": BackfillStatusPending, "completion_reason": "",
-			"failure_count": 0, "next_batch_at": &now, "owner_requested_at": &now, "updated_at": now,
-		}).Error
-	})
-	if err != nil {
-		return err
 	}
 	return queue.EnqueueBackfillSite(ctx, siteID)
 }

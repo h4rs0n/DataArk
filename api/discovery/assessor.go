@@ -14,14 +14,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const (
-	DiscoveryAssessmentReady    = "ready"
-	DiscoveryAssessmentReview   = "review"
-	DiscoveryAssessmentDegraded = "degraded"
-	RuleArticleAssessorName     = "deterministic_rules"
-	RuleArticleAssessorVersion  = "2.0.0"
-	ArticleQualityPolicyVersion = articlevalue.PolicyVersion
-)
+const ArticleQualityPolicyVersion = articlevalue.PolicyVersion
 
 // ArticleAssessmentInput intentionally contains only the current article
 // version's identity and clean text. Raw HTML, URL, author, date, source
@@ -132,7 +125,6 @@ func AssessCandidate(ctx context.Context, candidateID uint, enhanced ArticleAsse
 				return persistErr
 			}
 		}
-		// 模型评估成功后回写摘要和关键字；observe 模式也写，因为这两项不参与排序。
 		if err := applyAssessmentArticleMetadata(candidate, result); err != nil {
 			return err
 		}
@@ -190,7 +182,6 @@ func assessmentResultFromRow(assessment DiscoveryArticleAssessment) ArticleAsses
 	}
 }
 
-// shouldActivateArticleAssessment 在未实现激活接口或接口返回 true 时激活模型分。
 func shouldActivateArticleAssessment(assessor ArticleAssessor) bool {
 	activator, ok := assessor.(articleAssessmentActivator)
 	return !ok || activator.ShouldActivateAssessment()
@@ -282,7 +273,6 @@ func validateAssessmentResult(result ArticleAssessmentResult) error {
 	return nil
 }
 
-// applyAssessmentArticleMetadata 把模型产出的摘要和关键字写回候选，规则评估因字段为空而跳过。
 func applyAssessmentArticleMetadata(candidate DiscoveryCandidate, result ArticleAssessmentResult) error {
 	summary := strings.TrimSpace(result.Summary)
 	if summary == "" && len(result.Keywords) == 0 {

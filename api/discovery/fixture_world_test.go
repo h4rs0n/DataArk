@@ -145,8 +145,6 @@ func TestDeterministicSiteWorldCoversDiscoveryScenarios(t *testing.T) {
 		switch {
 		case strings.Contains(rawURL, "robots.txt"):
 			kind = FetchKindRobots
-		case strings.Contains(rawURL, "sitemap.xml"):
-			kind = FetchKindSitemap
 		case strings.Contains(rawURL, "feed.xml"), strings.Contains(rawURL, "conditional.xml"):
 			kind = FetchKindFeed
 		}
@@ -180,16 +178,15 @@ func TestDeterministicSiteWorldCoversDiscoveryScenarios(t *testing.T) {
 	if len(candidates) != 13 {
 		t.Fatalf("B feed candidate count = %d, want twelve routine plus one high-value article", len(candidates))
 	}
-	sitemap := fetch(world.B.URL+"/sitemap.xml", "", "")
 	archive := fetch(world.B.URL+"/archive/page-2.html", "", "")
-	if !strings.Contains(string(sitemap.Body), "high-sitemap.html") || strings.Contains(string(bFeed.Body), "high-sitemap.html") {
-		t.Fatal("sitemap-only high-value article is not isolated to the old sitemap")
+	if !strings.Contains(string(archive.Body), "high-sitemap.html") || strings.Contains(string(bFeed.Body), "high-sitemap.html") {
+		t.Fatal("historical high-value article is not isolated to archive pagination")
 	}
 	if !strings.Contains(string(archive.Body), "high-archive.html") || strings.Contains(string(bFeed.Body), "high-archive.html") {
 		t.Fatal("archive-only high-value article is not isolated to archive pagination")
 	}
-	if !strings.Contains(string(sitemap.Body), world.A.URL+"/articles/shared.html") || !strings.Contains(string(cHome.Body), world.A.URL+"/articles/shared.html") {
-		t.Fatal("shared article is not present in feed, sitemap, and cross-site link fixtures")
+	if !strings.Contains(string(cHome.Body), world.A.URL+"/articles/shared.html") {
+		t.Fatal("shared article is not present in feed and cross-site link fixtures")
 	}
 
 	robots := fetch(world.A.URL+"/robots.txt", "", "")

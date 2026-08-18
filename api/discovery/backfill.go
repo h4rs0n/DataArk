@@ -71,7 +71,7 @@ func RunBackfillSite(ctx context.Context, siteID uint, queue JobEnqueuer) (*Disc
 		return nil, nil
 	}
 	var states []DiscoveryBackfillState
-	if err := db.Where("site_id = ? AND status NOT IN ? AND (next_batch_at IS NULL OR next_batch_at <= ?) AND (strategy <> ? OR owner_requested_at IS NOT NULL)", siteID, []string{BackfillStatusCompleted, BackfillStatusPaused}, now, BackfillStrategySitemap).Find(&states).Error; err != nil {
+	if err := db.Where("site_id = ? AND status NOT IN ? AND (next_batch_at IS NULL OR next_batch_at <= ?) AND strategy <> ?", siteID, []string{BackfillStatusCompleted, BackfillStatusPaused}, now, BackfillStrategySitemap).Find(&states).Error; err != nil {
 		return nil, err
 	}
 	if len(states) == 0 {
@@ -92,7 +92,14 @@ func RunBackfillSite(ctx context.Context, siteID uint, queue JobEnqueuer) (*Disc
 		return &state, nil
 	}
 	batchSize := positiveOr(config.DISCOVERYBACKFILLBATCHSIZE, 1)
-	if batchSize > 20 {
+	if siteHasManualSubscription(siteID) {
+		if batchSize < 20 {
+			batchSize = 20
+		}
+		if batchSize > 40 {
+			batchSize = 40
+		}
+	} else if batchSize > 20 {
 		batchSize = 20
 	}
 	processed := 0
@@ -114,12 +121,15 @@ func RunBackfillSite(ctx context.Context, siteID uint, queue JobEnqueuer) (*Disc
 		var candidates []discoveredCandidate
 		var nextURLs []string
 		switch state.Strategy {
-		case BackfillStrategySitemap:
-			candidates, nextURLs, fetchErr = parseSitemapDocument(response.Body, site.RootURL)
 		case BackfillStrategyArchive:
 			candidates, nextURLs, fetchErr = parseHistoricalPage(response.Body, response.FinalURLOr(currentURL), site.RootURL, now)
 		default:
-			fetchErr = fmt.Errorf("unsupported backfill strategy %q", state.Strategy)
+			state.Status = BackfillStatusPaused
+			state.CompletionReason = "sitemap_removed"
+			if err := db.Model(&state).Updates(map[string]interface{}{"status": state.Status, "completion_reason": state.CompletionReason, "next_batch_at": nil}).Error; err != nil {
+				return &state, err
+			}
+			return &state, nil
 		}
 		if fetchErr != nil {
 			return &state, recordBackfillFailure(&state, cursor, now, fetchErr)
@@ -190,6 +200,9 @@ func RunBackfillSite(ctx context.Context, siteID uint, queue JobEnqueuer) (*Disc
 		updates["status"] = state.Status
 		updates["completion_reason"] = state.CompletionReason
 		updates["next_batch_at"] = nil
+	} else if siteHasManualSubscription(siteID) {
+		state.NextBatchAt = &now
+		updates["next_batch_at"] = &now
 	} else {
 		interval := configuredDuration(config.DISCOVERYBACKFILLMAXINTERVAL, 7*24*time.Hour)
 		if createdCount > 0 {
@@ -247,11 +260,18 @@ func ensureBackfillState(siteID uint, strategy string, urls []string, now time.T
 }
 
 func fetchBackfillPage(ctx context.Context, strategy string, rawURL string) (FetchResult, error) {
-	kind := FetchKindHTML
-	if strategy == BackfillStrategySitemap {
-		kind = FetchKindSitemap
+	return fetchDiscoveryRequest(ctx, FetchRequest{URL: rawURL, Kind: FetchKindHTML})
+}
+
+func siteHasManualSubscription(siteID uint) bool {
+	if db == nil || siteID == 0 {
+		return false
 	}
-	return fetchDiscoveryRequest(ctx, FetchRequest{URL: rawURL, Kind: kind})
+	var count int64
+	if err := db.Model(&DiscoverySource{}).Where("site_id = ? AND user_managed = ?", siteID, true).Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
 }
 
 func parseHistoricalPage(body []byte, pageURL string, siteRootURL string, now time.Time) ([]discoveredCandidate, []string, error) {
@@ -314,11 +334,8 @@ func isHistoricalNavigation(path string, anchor string) bool {
 	return false
 }
 
-func sourceForBackfill(site DiscoverySite, strategy string, currentURL string) (DiscoverySource, error) {
+func sourceForBackfill(site DiscoverySite, _ string, _ string) (DiscoverySource, error) {
 	var source DiscoverySource
-	if strategy == BackfillStrategySitemap {
-		return source, db.Where("site_id = ? AND endpoint_type = ?", site.ID, DiscoveryEndpointHomepage).First(&source).Error
-	}
 	return source, db.Where("site_id = ? AND endpoint_type = ?", site.ID, DiscoveryEndpointHomepage).First(&source).Error
 }
 

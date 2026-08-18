@@ -25,6 +25,7 @@ const (
 	ScanBlogrollJobKind     = "discovery_scan_blogroll"
 	BackfillSiteJobKind     = "discovery_backfill_site"
 	ProcessCandidateJobKind = "discovery_process_candidate"
+	AssessArticleJobKind    = "assessment_assess_article"
 	GenerateDailyJobKind    = "recommendation_generate_daily"
 )
 
@@ -35,6 +36,7 @@ type JobEnqueuer interface {
 	EnqueueScanBlogroll(context.Context, uint) error
 	EnqueueBackfillSite(context.Context, uint) error
 	EnqueueProcessCandidate(context.Context, uint, string) error
+	EnqueueAssessArticle(context.Context, uint, string) error
 	EnqueueGenerateDaily(context.Context, uint, string) error
 }
 
@@ -43,6 +45,7 @@ type Handlers struct {
 	ScanBlogroll     func(context.Context, uint) error
 	BackfillSite     func(context.Context, uint) error
 	ProcessCandidate func(context.Context, uint, string) error
+	AssessArticle    func(context.Context, uint, string) error
 	GenerateDaily    func(context.Context, uint, string) error
 }
 
@@ -94,6 +97,19 @@ func (GenerateDailyArgs) Kind() string { return GenerateDailyJobKind }
 func (GenerateDailyArgs) InsertOpts() river.InsertOpts {
 	opts := uniqueByArgsOpts()
 	opts.UniqueOpts.ByPeriod = 24 * time.Hour
+	return opts
+}
+
+type AssessArticleArgs struct {
+	CandidateID    uint   `json:"candidate_id"`
+	ContentVersion string `json:"content_version"`
+}
+
+func (AssessArticleArgs) Kind() string { return AssessArticleJobKind }
+func (AssessArticleArgs) InsertOpts() river.InsertOpts {
+	opts := uniqueByArgsOpts()
+	opts.Queue = AssessmentQueueName
+	opts.MaxAttempts = 1
 	return opts
 }
 
@@ -213,6 +229,11 @@ func (queue *riverQueue) EnqueueProcessCandidate(ctx context.Context, candidateI
 	return err
 }
 
+func (queue *riverQueue) EnqueueAssessArticle(ctx context.Context, candidateID uint, contentVersion string) error {
+	_, err := queue.client.Insert(ctx, AssessArticleArgs{CandidateID: candidateID, ContentVersion: contentVersion}, nil)
+	return err
+}
+
 func (queue *riverQueue) EnqueueGenerateDaily(ctx context.Context, userID uint, localDate string) error {
 	_, err := queue.client.Insert(ctx, GenerateDailyArgs{UserID: userID, LocalDate: localDate}, nil)
 	return err
@@ -238,10 +259,15 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 	}
 	workers := river.NewWorkers()
 	registerWorkers(workers, handlers)
+	assessmentWorkers := config.ARTICLEASSESSMENTCONCURRENCY
+	if assessmentWorkers < 1 {
+		assessmentWorkers = 2
+	}
 	client, err := river.NewClient(riverdatabasesql.New(sqlDB), &river.Config{
 		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 4},
-			DiscoveryQueueName: {MaxWorkers: 4},
+			river.QueueDefault:  {MaxWorkers: 4},
+			DiscoveryQueueName:  {MaxWorkers: 4},
+			AssessmentQueueName: {MaxWorkers: assessmentWorkers},
 		},
 		Workers: workers,
 	})
@@ -505,18 +531,8 @@ type processCandidateWorker struct {
 	handler func(context.Context, uint, string) error
 }
 
-// Timeout 覆盖 River 默认的 1 分钟作业时限，改用与 LLM 请求相同的 LLM_TIMEOUT，
-// 避免文章评估在模型返回前被作业 context 取消。
 func (worker *processCandidateWorker) Timeout(*river.Job[ProcessCandidateArgs]) time.Duration {
-	return processCandidateJobTimeout()
-}
-
-func processCandidateJobTimeout() time.Duration {
-	timeout, err := time.ParseDuration(strings.TrimSpace(config.LLMTIMEOUT))
-	if err != nil || timeout <= 0 {
-		return 30 * time.Second
-	}
-	return timeout
+	return 2 * time.Minute
 }
 
 func (worker *processCandidateWorker) Work(ctx context.Context, job *river.Job[ProcessCandidateArgs]) error {
@@ -525,6 +541,33 @@ func (worker *processCandidateWorker) Work(ctx context.Context, job *river.Job[P
 	}
 	err := worker.handler(ctx, job.Args.CandidateID, job.Args.ContentVersion)
 	logWorkerEvent("process_candidate", fmt.Sprint(job.ID), observability.Event{CandidateID: job.Args.CandidateID}, err)
+	return err
+}
+
+type assessArticleWorker struct {
+	river.WorkerDefaults[AssessArticleArgs]
+	handler func(context.Context, uint, string) error
+}
+
+// Timeout 评估作业跟随 LLM_TIMEOUT，避免模型返回前被 River 默认一分钟限制取消。
+func (worker *assessArticleWorker) Timeout(*river.Job[AssessArticleArgs]) time.Duration {
+	return assessArticleJobTimeout()
+}
+
+func assessArticleJobTimeout() time.Duration {
+	timeout, err := time.ParseDuration(strings.TrimSpace(config.LLMTIMEOUT))
+	if err != nil || timeout <= 0 {
+		return 30 * time.Second
+	}
+	return timeout
+}
+
+func (worker *assessArticleWorker) Work(ctx context.Context, job *river.Job[AssessArticleArgs]) error {
+	if worker.handler == nil {
+		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, AssessArticleJobKind)
+	}
+	err := worker.handler(ctx, job.Args.CandidateID, job.Args.ContentVersion)
+	logWorkerEvent("assess_article", fmt.Sprint(job.ID), observability.Event{CandidateID: job.Args.CandidateID}, err)
 	return err
 }
 
@@ -560,5 +603,6 @@ func registerWorkers(workers *river.Workers, handlers Handlers) {
 	river.AddWorker(workers, &scanBlogrollWorker{handler: handlers.ScanBlogroll})
 	river.AddWorker(workers, &backfillSiteWorker{handler: handlers.BackfillSite})
 	river.AddWorker(workers, &processCandidateWorker{handler: handlers.ProcessCandidate})
+	river.AddWorker(workers, &assessArticleWorker{handler: handlers.AssessArticle})
 	river.AddWorker(workers, &generateDailyWorker{handler: handlers.GenerateDaily})
 }

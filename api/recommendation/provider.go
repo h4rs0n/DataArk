@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/assessment"
 	"context"
 	"time"
 )
@@ -44,25 +45,8 @@ type EnrichmentResult struct {
 	PromptVersion   string
 }
 
-type ArticleAssessmentInput struct {
-	CandidateID uint
-	Title       string
-	BodyText    string
-}
-
-type ArticleAssessmentResult struct {
-	QualityScore           int      `json:"qualityScore"`
-	DepthScore             int      `json:"depthScore"`
-	EvergreenScore         int      `json:"evergreenScore"`
-	Reasons                []string `json:"reasons"`
-	Summary                string   `json:"summary"`
-	Keywords               []string `json:"keywords"`
-	Model                  string   `json:"-"`
-	PromptVersion          string   `json:"-"`
-	EvidenceTokens         int      `json:"-"`
-	OriginalEvidenceTokens int      `json:"-"`
-	EvidenceTruncated      bool     `json:"-"`
-}
+type ArticleAssessmentInput = assessment.ChatAssessmentInput
+type ArticleAssessmentResult = assessment.ChatAssessmentResult
 
 type RerankInput struct {
 	UserID          uint

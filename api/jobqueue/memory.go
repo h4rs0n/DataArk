@@ -91,6 +91,13 @@ func (queue *MemoryQueue) EnqueueProcessCandidate(_ context.Context, candidateID
 	return queue.stage(ProcessCandidateJobKind, fmt.Sprintf("candidate:%d:version:%s", candidateID, contentVersion), "candidate", candidateID, contentVersion)
 }
 
+func (queue *MemoryQueue) EnqueueAssessArticle(ctx context.Context, candidateID uint, contentVersion string) error {
+	if queue.handlers.AssessArticle == nil {
+		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, AssessArticleJobKind)
+	}
+	return queue.handlers.AssessArticle(ctx, candidateID, contentVersion)
+}
+
 func (queue *MemoryQueue) EnqueueGenerateDaily(ctx context.Context, userID uint, localDate string) error {
 	if queue.handlers.GenerateDaily == nil {
 		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, GenerateDailyJobKind)

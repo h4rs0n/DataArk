@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"DataArk/archive"
+	"DataArk/assessment"
 	"DataArk/assessmenteval"
 	"DataArk/auth"
 	"DataArk/database"
@@ -49,6 +50,7 @@ func migrateV3Compatibility(database *gorm.DB) error {
 	if database.Dialector.Name() != "postgres" {
 		models := append(discovery.V3Models(), recommendation.V3Models()...)
 		models = append(models, assessmenteval.WorkflowModels()...)
+		models = append(models, assessment.V3Models()...)
 		if err := database.AutoMigrate(models...); err != nil {
 			return fmt.Errorf("auto-migrate v3 models: %w", err)
 		}
@@ -69,5 +71,6 @@ func configureDomainDatabases(db *gorm.DB) {
 	auth.SetDB(db)
 	archive.SetDB(db)
 	discovery.SetDB(db)
+	assessment.SetDB(db)
 	recommendation.SetDB(db)
 }

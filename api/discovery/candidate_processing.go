@@ -3,6 +3,8 @@ package discovery
 import (
 	"DataArk/archive"
 	"DataArk/config"
+	"DataArk/discovery/articlerules"
+	"DataArk/jobqueue"
 	"DataArk/observability"
 	"context"
 	"errors"
@@ -41,12 +43,8 @@ func RunProcessCandidateJob(ctx context.Context, candidateID uint, contentVersio
 
 // ProcessCandidate safely fetches and extracts one logical article. The version
 // argument is an optimistic guard: stale queued work becomes a no-op after a
-// newer body has already been committed.
+// newer body has already been committed. LLM assessment is a separate job.
 func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion string) error {
-	return ProcessCandidateWithAssessor(ctx, candidateID, expectedVersion, nil)
-}
-
-func ProcessCandidateWithAssessor(ctx context.Context, candidateID uint, expectedVersion string, enhanced ArticleAssessor) error {
 	if db == nil || candidateID == 0 {
 		return gorm.ErrRecordNotFound
 	}
@@ -65,10 +63,13 @@ func ProcessCandidateWithAssessor(ctx context.Context, candidateID uint, expecte
 		if err := ResolveCandidateDuplicates(ctx, candidate.ID); err != nil {
 			return err
 		}
-		return AssessCandidate(ctx, candidate.ID, enhanced)
+		return enqueueCandidateForAssessment(ctx, candidate.ID)
 	}
 	if candidate.ProcessingState == DiscoveryProcessingReady && candidate.DedupeState == DiscoveryDedupeReady && candidate.AssessmentState == DiscoveryAssessmentPending {
-		return AssessCandidate(ctx, candidate.ID, enhanced)
+		return enqueueCandidateForAssessment(ctx, candidate.ID)
+	}
+	if reason, rejected := articlerules.RejectURL(candidate.URL, candidate.Title); rejected {
+		return finishCandidateIneligible(&candidate, processingErrorNotArticle, reason, discoveryClock.Now())
 	}
 	if err := ensureDiscoveryURLNotBlacklisted(ctx, candidate.URL); err != nil {
 		if errors.Is(err, ErrDiscoveryDomainBlacklisted) {
@@ -126,7 +127,31 @@ func ProcessCandidateWithAssessor(ctx context.Context, candidateID uint, expecte
 	if err := ResolveCandidateDuplicates(ctx, candidate.ID); err != nil {
 		return err
 	}
-	return AssessCandidate(ctx, candidate.ID, enhanced)
+	return enqueueCandidateForAssessment(ctx, candidate.ID)
+}
+
+// enqueueCandidateForAssessment 把已抽取的代表文章送进评估队列。测试环境没有作业队列时原地跑规则评估。
+func enqueueCandidateForAssessment(ctx context.Context, candidateID uint) error {
+	if db == nil || candidateID == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	var candidate DiscoveryCandidate
+	if err := db.First(&candidate, candidateID).Error; err != nil {
+		return err
+	}
+	if candidate.ProcessingState != DiscoveryProcessingReady {
+		return nil
+	}
+	if err := db.Model(&candidate).Updates(map[string]interface{}{
+		"assessment_state": DiscoveryAssessmentPending, "updated_at": discoveryClock.Now(),
+	}).Error; err != nil {
+		return err
+	}
+	queue, available := jobqueue.Default()
+	if available && queue != nil {
+		return queue.EnqueueAssessArticle(ctx, candidate.ID, candidateContentVersion(candidate))
+	}
+	return AssessCandidate(ctx, candidate.ID, nil)
 }
 
 func parseExpectedContentVersion(value string) (uint, error) {
@@ -145,23 +170,14 @@ func articleEligibilityFailure(rawURL string, article *ExtractedArticle) (string
 	if article == nil {
 		return "article extraction returned no result", processingErrorExtractionFailed, true
 	}
-	if isNonArticleNavigation(rawURL, article.Title) || !article.IsArticle {
-		return "page is navigation, listing, login, tag, or another non-article type", processingErrorNotArticle, false
-	}
-	if strings.TrimSpace(article.Title) == "" {
-		return "article title is missing", processingErrorMissingTitle, false
-	}
 	minimumCharacters := config.DISCOVERYARTICLEMINCHARS
 	if minimumCharacters <= 0 {
 		minimumCharacters = 120
 	}
-	if len([]rune(strings.TrimSpace(article.Text))) < minimumCharacters {
-		return fmt.Sprintf("extracted article text is shorter than %d characters", minimumCharacters), processingErrorBodyTooShort, false
-	}
-	if strings.TrimSpace(article.Language) == "" {
-		return "article language could not be identified", processingErrorLanguageUnknown, true
-	}
-	return "", "", false
+	return articlerules.RejectPage(articlerules.Page{
+		URL: rawURL, Title: article.Title, Text: article.Text, Language: article.Language,
+		IsArticle: article.IsArticle, HasPasswordInput: article.HasPasswordInput,
+	}, minimumCharacters)
 }
 
 func recordCandidateFetchFailure(candidate *DiscoveryCandidate, fetchErr error, now time.Time) error {

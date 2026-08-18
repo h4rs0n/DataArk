@@ -15,8 +15,8 @@ type robotsCacheEntry struct {
 	expiresAt  time.Time
 }
 
-// RobotsInspection contains advisory data discovered in robots.txt. Sitemaps
-// are path hints only; Allow, Disallow and Crawl-delay never gate a request.
+// RobotsInspection 只记录 robots.txt 是否可解析。不再消费 Sitemap 提示；
+// Allow、Disallow 与 Crawl-delay 从不拦截 owner 触发的抓取。
 type RobotsInspection struct {
 	Status   string
 	Sitemaps []string
@@ -64,11 +64,8 @@ func (cache *RobotsCache) Inspect(ctx context.Context, rawURL string) RobotsInsp
 	}
 	switch result.StatusCode {
 	case http.StatusOK:
-		robots, parseErr := robotstxt.FromBytes(result.Body)
+		_, parseErr := robotstxt.FromBytes(result.Body)
 		inspection.Status = "available"
-		if robots != nil {
-			inspection.Sitemaps = append([]string(nil), robots.Sitemaps...)
-		}
 		if parseErr != nil {
 			inspection.Status = "invalid"
 		}

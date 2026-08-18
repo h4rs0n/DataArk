@@ -153,6 +153,49 @@ func TestUpsertCandidateHashesLongURLIdentity(t *testing.T) {
 	}
 }
 
+func TestParseFeedCandidatesSkipsListingURLs(t *testing.T) {
+	body := []byte(`<?xml version="1.0"?><rss version="2.0"><channel>
+<title>Notes</title>
+<item><title>Go</title><link>https://example.com/tag/go</link></item>
+<item><title>Sign in</title><link>https://example.com/login</link></item>
+<item><title>Durable note</title><link>https://example.com/posts/durable-note</link></item>
+</channel></rss>`)
+	items, err := parseFeedCandidates(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].URL != "https://example.com/posts/durable-note" {
+		t.Fatalf("feed listing URLs leaked into candidates: %#v", items)
+	}
+}
+
+func TestProcessCandidateRejectsListingURLWithoutFetch(t *testing.T) {
+	setupSQLiteDB(t)
+	fetched := false
+	oldFetch := fetchDiscoveryRequest
+	fetchDiscoveryRequest = func(context.Context, FetchRequest) (FetchResult, error) {
+		fetched = true
+		return FetchResult{}, errors.New("listing URLs must not be fetched")
+	}
+	t.Cleanup(func() { fetchDiscoveryRequest = oldFetch })
+	candidate := createProcessingCandidate(t, "https://example.com/tag/go")
+	if err := ProcessCandidate(context.Background(), candidate.ID, "0"); err != nil {
+		t.Fatal(err)
+	}
+	if fetched {
+		t.Fatal("listing URL was fetched before the admission gate")
+	}
+	if err := db.First(&candidate, candidate.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if candidate.ProcessingState != DiscoveryProcessingIneligible || candidate.ProcessingErrorType != processingErrorNotArticle {
+		t.Fatalf("listing URL state = %#v", candidate)
+	}
+	if candidate.AssessmentState == DiscoveryAssessmentReady || candidate.CurrentAssessmentID != nil {
+		t.Fatalf("listing URL must not enter assessment: %#v", candidate)
+	}
+}
+
 func TestProcessCandidateClassifiesNonArticlesAndShortBodies(t *testing.T) {
 	setupSQLiteDB(t)
 	oldFetch := fetchDiscoveryRequest

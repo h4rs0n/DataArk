@@ -265,7 +265,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 27 || migrations[len(migrations)-1].Version != 27 {
+	if len(migrations) != 29 || migrations[len(migrations)-1].Version != 29 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
@@ -466,6 +466,24 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"discovery_article_assessments", "ADD COLUMN IF NOT EXISTS summary", "ADD COLUMN IF NOT EXISTS keywords", "Data-preserving rollback"} {
 		if !strings.Contains(string(assessmentSummary), required) {
 			t.Fatalf("article assessment summary migration missing %q", required)
+		}
+	}
+	removeSitemap, err := appmigrations.FS.ReadFile("000028_remove_sitemap_capability.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"sitemap_removed", "enabled = FALSE", "Data-preserving rollback"} {
+		if !strings.Contains(string(removeSitemap), required) {
+			t.Fatalf("sitemap removal migration missing %q", required)
+		}
+	}
+	llmCalls, err := appmigrations.FS.ReadFile("000029_assessment_llm_calls.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"CREATE TABLE IF NOT EXISTS assessment_llm_calls", "prompt_tokens", "Data-preserving rollback"} {
+		if !strings.Contains(string(llmCalls), required) {
+			t.Fatalf("assessment llm call migration missing %q", required)
 		}
 	}
 }

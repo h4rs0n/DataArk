@@ -65,6 +65,10 @@ func (queue recordingJobEnqueuer) EnqueueProcessCandidate(_ context.Context, can
 	return queue.enqueue(fmt.Sprintf("candidate:%d:%s", candidateID, contentVersion))
 }
 
+func (queue recordingJobEnqueuer) EnqueueAssessArticle(_ context.Context, candidateID uint, contentVersion string) error {
+	return queue.enqueue(fmt.Sprintf("assess:%d:%s", candidateID, contentVersion))
+}
+
 func (queue recordingJobEnqueuer) EnqueueGenerateDaily(_ context.Context, userID uint, localDate string) error {
 	return queue.enqueue(fmt.Sprintf("daily:%d:%s", userID, localDate))
 }

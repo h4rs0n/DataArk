@@ -27,9 +27,11 @@ func (assessor fixtureArticleAssessor) Assess(context.Context, ArticleAssessment
 
 type contentAwareArticleAssessor struct{}
 
-func (contentAwareArticleAssessor) Name() string          { return "semantic_fixture" }
-func (contentAwareArticleAssessor) Version() string       { return "1" }
-func (contentAwareArticleAssessor) PolicyVersion() string { return ArticleQualityPolicyVersion }
+func (contentAwareArticleAssessor) Name() string    { return "semantic_fixture" }
+func (contentAwareArticleAssessor) Version() string { return "1" }
+func (contentAwareArticleAssessor) PolicyVersion() string {
+	return ArticleQualityPolicyVersion
+}
 func (contentAwareArticleAssessor) Assess(_ context.Context, input ArticleAssessmentInput) (ArticleAssessmentResult, error) {
 	quality, depth, evergreen := .15, .10, .15
 	if strings.Contains(input.BodyText, "measurement 42") {

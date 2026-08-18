@@ -110,7 +110,7 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 	}
 
 	assertPostgresScalar(t, database,
-		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "25")
+		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "29")
 	assertPostgresScalar(t, database,
 		"SELECT extname FROM pg_extension WHERE extname = 'vector'", "vector")
 	assertPostgresScalar(t, database,
@@ -120,9 +120,11 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 	assertPostgresScalar(t, database,
 		fmt.Sprintf("SELECT enabled::text || ':' || user_managed::text FROM discovery_sources WHERE id = %d", legacySitemap.ID), "false:false")
 	assertPostgresScalar(t, database,
-		fmt.Sprintf("SELECT status || ':' || completion_reason FROM discovery_backfill_states WHERE id = %d", legacyBackfill.ID), "paused:sitemap_requires_owner_request")
+		fmt.Sprintf("SELECT status || ':' || completion_reason FROM discovery_backfill_states WHERE id = %d", legacyBackfill.ID), "paused:sitemap_removed")
 	assertPostgresScalar(t, database,
 		fmt.Sprintf("SELECT (owner_requested_at IS NULL)::text FROM discovery_backfill_states WHERE id = %d", legacyBackfill.ID), "true")
+	assertPostgresScalar(t, database,
+		"SELECT to_regclass('public.assessment_llm_calls')::text", "assessment_llm_calls")
 
 	now := time.Now().UTC()
 	source := discovery.DiscoverySource{

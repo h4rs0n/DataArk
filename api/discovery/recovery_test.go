@@ -8,11 +8,12 @@ import (
 )
 
 type recoveryRecordingQueue struct {
-	fetches    []uint
-	scans      []uint
-	backfills  []uint
-	candidates []uint
-	failSource uint
+	fetches     []uint
+	scans       []uint
+	backfills   []uint
+	candidates  []uint
+	assessments []uint
+	failSource  uint
 }
 
 func (queue *recoveryRecordingQueue) EnqueueFetchSource(_ context.Context, sourceID uint) error {
@@ -35,6 +36,11 @@ func (queue *recoveryRecordingQueue) EnqueueBackfillSite(_ context.Context, site
 
 func (queue *recoveryRecordingQueue) EnqueueProcessCandidate(_ context.Context, candidateID uint, _ string) error {
 	queue.candidates = append(queue.candidates, candidateID)
+	return nil
+}
+
+func (queue *recoveryRecordingQueue) EnqueueAssessArticle(_ context.Context, candidateID uint, _ string) error {
+	queue.assessments = append(queue.assessments, candidateID)
 	return nil
 }
 
@@ -90,6 +96,33 @@ func TestRecoverDueJobsContinuesAfterIndependentSourceFailure(t *testing.T) {
 	}
 	if len(queue.candidates) != 1 || queue.candidates[0] != candidate.ID {
 		t.Fatalf("candidate recoveries = %#v", queue.candidates)
+	}
+}
+
+func TestRecoverDueJobsEnqueuesPendingAssessmentsSeparately(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	source := DiscoverySource{Name: "Due", URL: "https://assess.example/feed.xml", Type: DiscoverySourceTypeFeed, EndpointType: "feed", Enabled: true}
+	if err := db.Create(&source).Error; err != nil {
+		t.Fatal(err)
+	}
+	pendingBody := DiscoveryCandidate{SourceID: source.ID, SourceName: source.Name, URL: "https://assess.example/fetch", Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingFetchPending, EligibilityState: DiscoveryEligibilityUnknown, LastSeenAt: now}
+	pendingAssess := DiscoveryCandidate{SourceID: source.ID, SourceName: source.Name, URL: "https://assess.example/ready", Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingReady, DedupeState: DiscoveryDedupeReady, AssessmentState: DiscoveryAssessmentPending, ContentVersion: 1, EligibilityState: DiscoveryEligibilityUnknown, LastSeenAt: now}
+	if err := db.Create(&pendingBody).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&pendingAssess).Error; err != nil {
+		t.Fatal(err)
+	}
+	queue := &recoveryRecordingQueue{}
+	if err := RecoverDueJobs(context.Background(), queue, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.candidates) != 1 || queue.candidates[0] != pendingBody.ID {
+		t.Fatalf("body recoveries = %#v", queue.candidates)
+	}
+	if len(queue.assessments) != 0 {
+		t.Fatalf("discovery recovery must not enqueue assessments = %#v", queue.assessments)
 	}
 }
 

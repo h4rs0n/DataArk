@@ -98,7 +98,7 @@ func TestRobotsRulesAreAdvisoryAndExposeSitemapHints(t *testing.T) {
 		t.Fatalf("result status=%q user-agent=%q", result.RobotsStatus, articleUserAgent)
 	}
 	inspection := robots.Inspect(context.Background(), server.URL+"/another")
-	if len(inspection.Sitemaps) != 1 || inspection.Sitemaps[0] != server.URL+"/sitemap.xml" || robotsRequests.Load() != 1 {
+	if inspection.Status != "available" || len(inspection.Sitemaps) != 0 || robotsRequests.Load() != 1 {
 		t.Fatalf("cached robots inspection = %#v, requests=%d", inspection, robotsRequests.Load())
 	}
 }

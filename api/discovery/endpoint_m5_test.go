@@ -167,23 +167,6 @@ func TestFeedPreservesMetadataAndDoesNotRepeatProcessing(t *testing.T) {
 	}
 }
 
-func TestSitemapIndexParserKeepsOnlySameSiteChildren(t *testing.T) {
-	setupSQLiteDB(t)
-	now := time.Date(2026, 7, 13, 16, 0, 0, 0, time.UTC)
-	site := DiscoverySite{RootURL: "https://index.example/", HostKey: "index.example", DisplayName: "Index", Status: DiscoverySiteStatusObserving, DiscoveryMethod: "test", CrawlAllowed: true, RobotsStatus: "unknown", FirstDiscoveredAt: now, CreatedAt: now}
-	if err := db.Create(&site).Error; err != nil {
-		t.Fatal(err)
-	}
-	candidates, nested, err := parseSitemapDocument([]byte(`<?xml version="1.0"?><sitemapindex><sitemap><loc>https://index.example/sitemaps/posts.xml</loc></sitemap><sitemap><loc>https://other.example/foreign.xml</loc></sitemap></sitemapindex>`), site.RootURL)
-	if err != nil || len(candidates) != 0 || len(nested) != 1 {
-		t.Fatalf("sitemap index candidates=%#v nested=%#v err=%v", candidates, nested, err)
-	}
-	var sitemapEndpoints int64
-	if err := db.Model(&DiscoverySource{}).Where("endpoint_type = ?", DiscoveryEndpointSitemap).Count(&sitemapEndpoints).Error; err != nil || sitemapEndpoints != 0 {
-		t.Fatalf("parser created sitemap endpoints: %d, %v", sitemapEndpoints, err)
-	}
-}
-
 func TestDeclaredFeedMediaTypesExcludeWordPressMetadata(t *testing.T) {
 	body := []byte(`<html><head>
 <link rel="alternate" type="application/rss+xml" href="/feed.xml">
