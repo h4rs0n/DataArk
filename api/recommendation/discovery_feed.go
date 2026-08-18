@@ -12,7 +12,7 @@ import (
 const (
 	RecommendationFeedBatchStatusActive   = "active"
 	RecommendationFeedBatchStatusReplaced = "replaced"
-	recommendationFeedPolicyVersion       = "discovery-feed-v3"
+	recommendationFeedPolicyVersion       = "discovery-feed-v4"
 )
 
 type RecommendationFeedSnapshot struct {

@@ -15,6 +15,8 @@ A user opening “猜你喜欢” or “今日推荐” should see a mixed set o
 - [x] (2026-08-18 22:58+08:00) Ran `cd api && go test ./recommendation -count=1` and `cd api && go test ./...`. Both passed.
 - [x] (2026-08-18 23:08+08:00) Relaxed source uniqueness only after unique sources cannot fill the requested count; supplement prefers unused sources then repeats a source to fill.
 - [x] (2026-08-18 23:08+08:00) Re-ran recommendation tests after the fill-on-shortage change.
+- [x] (2026-08-19 00:05+08:00) Diagnosed live “Security Lab” flooding: the quality-ranked pool of 100 was filled by one source, so source_limit relaxed even though other sources existed later in rank order.
+- [x] (2026-08-19 00:08+08:00) Changed pool collection to keep one article per source first, and only append extra same-source articles after unique sources in the scan are exhausted. Added discovery-feed regressions.
 
 ## Surprises & Discoveries
 
@@ -24,8 +26,8 @@ A user opening “猜你喜欢” or “今日推荐” should see a mixed set o
   Evidence: `maxSource` and the `relaxSource` branch in `diversifyRecommendationCandidatesV3`.
 - Observation: Daily supplement only skipped duplicate candidate identities, so a later article from the same source could still be appended.
   Evidence: `appendRecommendationSupplement` matches `candidate_id` / `dedupe_key` only.
-- Observation: Blindly relaxing author then topic after a source deadlock recorded fake `author_limit` and `topic_limit` shortages even when every leftover article was from an already chosen source.
-  Evidence: The first unit test with limit 10 returned two articles plus those two relaxations; the loop now relaxes a cap only when a remaining unique-source candidate is blocked by it.
+- Observation: A high-volume source such as “Security Lab” can occupy the entire quality-ranked pool of 100 unseen eligible articles. Diversify then sees too few unique sources in that truncated pool and relaxes `source_limit`, filling the batch with that one source even when thousands of other sources exist later in rank order.
+  Evidence: `collectHardEligibleSelectionPool` previously appended every hard-eligible row until `poolSize`. A fixture of 100 high-scoring “Security Lab” articles plus 12 lower-scoring others reproduced a 10-item Security Lab batch before the pool change.
 
 ## Decision Log
 
@@ -44,12 +46,15 @@ A user opening “猜你喜欢” or “今日推荐” should see a mixed set o
 - Decision: Prefer one article per source, then relax `source_limit` only after unique sources cannot fill the requested count. Daily supplement seeds already-used sources so unused sources still win first.
   Rationale: The user later asked to fill the list when sources are insufficient, rather than leaving it short. Repeating a source is a last resort, not the default.
   Date/Author: 2026-08-18 / Cursor Grok 4.6
+- Decision: Collect the selection pool with at most one article per displayed source first, and only use extra same-source articles to pad the pool when the scan cannot find enough unique sources.
+  Rationale: “来源不够填满 10 条” must mean the eligible inventory, not the first 100 rows of a single prolific feed. Otherwise a source like Security Lab floods “猜你喜欢”.
+  Date/Author: 2026-08-19 / Cursor Grok 4.6
 
 ## Outcomes & Retrospective
 
-Both “猜你喜欢” and “今日推荐” prefer one article per displayed source. When unique sources can fill the requested count, no source is repeated. When they cannot, leftover slots are filled from the remaining articles, including a second article from an already chosen source. Daily supplement uses the same order: unused sources first, then repeat a source to fill. Author and topic diversity remain soft. Backend tests passed; no frontend, API, or migration change was required.
+Both “猜你喜欢” and “今日推荐” prefer one article per displayed source. The candidate pool itself is collected with one article per source first, so a prolific feed cannot hide other sources behind the ranking limit. When unique sources in the eligible inventory can fill the requested count, no source is repeated. When they cannot, leftover slots are filled from remaining articles. Daily supplement uses the same order. Backend tests passed.
 
-What remains: existing published days and feed batches are unchanged until the next generation or “换一批”.
+What remains: rebuild and restart the API so the running container picks up the pool change, then press “换一批”. Existing batches stay as stored.
 
 ## Context and Orientation
 
@@ -108,8 +113,10 @@ Add an unexported helper:
 
     func recommendationSourceKey(candidate DiscoveryCandidate, host string) string
 
-Daily supplement seeds already-used source counts into `diversifyRecommendationCandidatesV3WithReserved`, so unused sources still fill first and a repeated source is only used after that. Newly published days store policy `v3-selection-3`. New feed batches store `discovery-feed-v3`. No API, migration, or frontend change.
+Daily supplement seeds already-used source counts into `diversifyRecommendationCandidatesV3WithReserved`, so unused sources still fill first and a repeated source is only used after that. Pool collection in `collectHardEligibleSelectionPool` now prefers unique sources. Newly published days store policy `v3-selection-4`. New feed batches store `discovery-feed-v4`. No API, migration, or frontend change.
 
 Revision 2026-08-18: implementation completed. After the first recommendation-package run, a unit test requesting ten items recorded spurious author and topic relaxations, and a shared-database soft-relaxation case under-filled. Diversify now relaxes those caps only when they actually block a unique-source leftover, the unit test requests two items, and author/topic relaxation lives in its own SQLite world.
 
 Revision 2026-08-18 later: the user asked to fill the requested count when unique sources are insufficient. Source uniqueness is again a last-resort soft cap (`source_limit`) after author and topic, not a hard stop.
+
+Revision 2026-08-19: Security Lab still dominated “猜你喜欢” because the quality pool was source-homogeneous. Pool collection now skips extra articles from a source already represented until unique sources are exhausted.

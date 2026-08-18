@@ -297,3 +297,89 @@ func TestDiscoveryFeedItemSupportsFeedbackAndContext(t *testing.T) {
 		t.Fatalf("feedback should be reverted: %#v", current)
 	}
 }
+
+func TestDiscoveryFeedRefreshKeepsDominantSourceToOneWhenOthersExist(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Now()
+	for index := 0; index < 100; index++ {
+		candidate := DiscoveryCandidate{
+			SourceID: 1, SourceName: "Security Lab",
+			URL: fmt.Sprintf("https://securitylab.example/post-%d", index), Title: fmt.Sprintf("Lab %02d", index),
+			QualityScore: 1, DepthScore: 1, Status: discovery.DiscoveryCandidateStatusNew,
+			ProcessingState: discovery.DiscoveryProcessingReady, EligibilityState: discovery.DiscoveryEligibilityEligible,
+			DedupeState: discovery.DiscoveryDedupeReady, DedupeKey: fmt.Sprintf("lab-%d", index),
+			PublishedAt: &now, LastSeenAt: now,
+		}
+		if err := db.Create(&candidate).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index := 0; index < 12; index++ {
+		candidate := DiscoveryCandidate{
+			SourceID: uint(index + 2), SourceName: fmt.Sprintf("other-%d", index),
+			URL: fmt.Sprintf("https://other-%d.example/post", index), Title: fmt.Sprintf("Other %d", index),
+			QualityScore: 0.4, DepthScore: 0.4, Status: discovery.DiscoveryCandidateStatusNew,
+			ProcessingState: discovery.DiscoveryProcessingReady, EligibilityState: discovery.DiscoveryEligibilityEligible,
+			DedupeState: discovery.DiscoveryDedupeReady, DedupeKey: fmt.Sprintf("other-%d", index),
+			PublishedAt: &now, LastSeenAt: now,
+		}
+		if err := db.Create(&candidate).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	snapshot, err := RefreshDiscoveryFeed(context.Background(), 7001, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Batch == nil || snapshot.Batch.ActualCount != 10 || len(snapshot.Items) != 10 {
+		t.Fatalf("diversified snapshot = %#v", snapshot)
+	}
+	assertUniqueRecommendationSources(t, snapshot.Items)
+	labCount := 0
+	for _, item := range snapshot.Items {
+		if recommendationSourceKeyFromItem(item) == recommendationSourceKey(DiscoveryCandidate{SourceName: "Security Lab"}, "securitylab.example") {
+			labCount++
+		}
+	}
+	if labCount != 1 {
+		t.Fatalf("Security Lab count = %d, want 1 even though it dominates the quality ranking", labCount)
+	}
+	if strings.Contains(snapshot.Batch.ShortageReasons, `"source_limit"`) {
+		t.Fatalf("should not relax source when other sources exist: %s", snapshot.Batch.ShortageReasons)
+	}
+}
+
+func TestDiscoveryFeedRefreshRepeatsDominantSourceOnlyAfterUniqueSourcesRunOut(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Now()
+	for index := 0; index < 15; index++ {
+		candidate := DiscoveryCandidate{
+			SourceID: 1, SourceName: "Security Lab",
+			URL: fmt.Sprintf("https://securitylab.example/only-%d", index), Title: fmt.Sprintf("Only %02d", index),
+			QualityScore: 1, DepthScore: 1, Status: discovery.DiscoveryCandidateStatusNew,
+			ProcessingState: discovery.DiscoveryProcessingReady, EligibilityState: discovery.DiscoveryEligibilityEligible,
+			DedupeState: discovery.DiscoveryDedupeReady, DedupeKey: fmt.Sprintf("only-lab-%d", index),
+			PublishedAt: &now, LastSeenAt: now,
+		}
+		if err := db.Create(&candidate).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	snapshot, err := RefreshDiscoveryFeed(context.Background(), 7002, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Batch == nil || snapshot.Batch.ActualCount != 10 || len(snapshot.Items) != 10 {
+		t.Fatalf("shortage-fill snapshot = %#v", snapshot)
+	}
+	for _, item := range snapshot.Items {
+		if recommendationSourceKeyFromItem(item) != recommendationSourceKey(DiscoveryCandidate{SourceName: "Security Lab"}, "securitylab.example") {
+			t.Fatalf("unexpected source %q", recommendationSourceKeyFromItem(item))
+		}
+	}
+	if !strings.Contains(snapshot.Batch.ShortageReasons, `"source_limit"`) {
+		t.Fatalf("should relax source after unique sources run out: %s", snapshot.Batch.ShortageReasons)
+	}
+}

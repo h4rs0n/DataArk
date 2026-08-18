@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const recommendationSelectionPolicyV3 = "v3-selection-3"
+const recommendationSelectionPolicyV3 = "v3-selection-4"
 
 var recommendationClock discovery.Clock = discovery.SystemClock{}
 
@@ -217,17 +217,29 @@ func normalizedPreferenceSet(values []string) map[string]struct{} {
 
 // collectHardEligibleSelectionPool 按质量排序分页扫描，直到凑满 poolSize 篇通过硬过滤的候选。
 // 来源屏蔽、已读和冷却不能再占住第一页，把后面仍合格的文章挡在 LIMIT 之外。
+// 组池时每个来源先只收一篇，避免单一高产来源占满前 100 篇后，多样化误以为没有其他来源而放宽限制。
 func collectHardEligibleSelectionPool(userID uint, poolSize int, options recommendationSelectionOptions, history map[string]recommendationHistoryEntry, blockRules []UserBlockRule, now time.Time, cooldown time.Duration) ([]DiscoveryCandidate, map[string]int, error) {
 	excluded := make(map[string]int)
 	if poolSize <= 0 {
 		return []DiscoveryCandidate{}, excluded, nil
 	}
-	selected := make([]DiscoveryCandidate, 0, poolSize)
+	unique := make([]DiscoveryCandidate, 0, poolSize)
+	overflow := make([]DiscoveryCandidate, 0, poolSize)
+	sourceSeen := make(map[string]bool)
 	offset := 0
-	for len(selected) < poolSize {
+	scanned := 0
+	maxScan := poolSize * 50
+	if maxScan < 2000 {
+		maxScan = 2000
+	}
+	pageLimit := poolSize * 4
+	if pageLimit < poolSize {
+		pageLimit = poolSize
+	}
+	for len(unique) < poolSize && scanned < maxScan {
 		query := recommendationEligibleCandidateQuery(userID, options.UnseenOrUpdatedOnly)
 		var page []DiscoveryCandidate
-		if err := query.Offset(offset).Limit(poolSize).Find(&page).Error; err != nil {
+		if err := query.Offset(offset).Limit(pageLimit).Find(&page).Error; err != nil {
 			return nil, nil, err
 		}
 		if len(page) == 0 {
@@ -238,6 +250,10 @@ func collectHardEligibleSelectionPool(userID uint, poolSize int, options recomme
 			return nil, nil, err
 		}
 		for _, candidate := range page {
+			scanned++
+			if scanned > maxScan {
+				break
+			}
 			state, hasState := states[candidate.ID]
 			historyEntry, hasHistory := recommendationHistoryForCandidate(history, candidate)
 			_, _, exclusion := recommendationRecurrenceDecision(candidate, state, hasState, historyEntry, hasHistory, now, cooldown)
@@ -249,14 +265,31 @@ func collectHardEligibleSelectionPool(userID uint, poolSize int, options recomme
 				excluded["user_block"]++
 				continue
 			}
-			selected = append(selected, candidate)
-			if len(selected) >= poolSize {
-				break
+			key := recommendationSourceKeyFromCandidate(candidate)
+			if !sourceSeen[key] {
+				unique = append(unique, candidate)
+				sourceSeen[key] = true
+				if len(unique) >= poolSize {
+					break
+				}
+				continue
+			}
+			if len(overflow) < poolSize {
+				overflow = append(overflow, candidate)
 			}
 		}
 		offset += len(page)
-		if len(page) < poolSize {
+		if len(page) < pageLimit {
 			break
+		}
+	}
+	selected := unique
+	if len(selected) < poolSize {
+		for _, candidate := range overflow {
+			if len(selected) >= poolSize {
+				break
+			}
+			selected = append(selected, candidate)
 		}
 	}
 	return selected, excluded, nil
@@ -651,7 +684,11 @@ func recommendationSourceKey(candidate DiscoveryCandidate, host string) string {
 }
 
 func recommendationSourceKeyFromScore(candidate recommendationCandidateScore) string {
-	return recommendationSourceKey(candidate.Candidate, candidate.SourceHost)
+	return recommendationSourceKey(candidate.Candidate, firstNonEmpty(candidate.SourceHost, candidate.Candidate.CrawlHost))
+}
+
+func recommendationSourceKeyFromCandidate(candidate DiscoveryCandidate) string {
+	return recommendationSourceKey(candidate, firstNonEmpty(candidate.CrawlHost, sourceHost(candidate.URL)))
 }
 
 func recommendationSourceKeyFromItem(item RecommendationItem) string {
