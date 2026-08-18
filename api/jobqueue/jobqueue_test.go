@@ -1,6 +1,7 @@
 package jobqueue
 
 import (
+	"DataArk/config"
 	"DataArk/observability"
 	"context"
 	"database/sql"
@@ -76,6 +77,27 @@ func TestJobArgsUseStableIdentityAndUniqueOptions(t *testing.T) {
 		if testCase.kind != GenerateDailyJobKind && testCase.args.InsertOpts().MaxAttempts != 1 {
 			t.Fatalf("%s max attempts = %d, want 1 so domain backoff remains manually gated", testCase.kind, testCase.args.InsertOpts().MaxAttempts)
 		}
+	}
+}
+
+func TestProcessCandidateWorkerTimeoutFollowsLLMTimeout(t *testing.T) {
+	original := config.LLMTIMEOUT
+	t.Cleanup(func() { config.LLMTIMEOUT = original })
+	worker := processCandidateWorker{}
+
+	config.LLMTIMEOUT = "300s"
+	if got := worker.Timeout(nil); got != 300*time.Second {
+		t.Fatalf("timeout = %s, want 300s from LLM_TIMEOUT", got)
+	}
+
+	config.LLMTIMEOUT = "  "
+	if got := worker.Timeout(nil); got != 30*time.Second {
+		t.Fatalf("timeout = %s, want 30s fallback", got)
+	}
+
+	config.LLMTIMEOUT = "-5s"
+	if got := worker.Timeout(nil); got != 30*time.Second {
+		t.Fatalf("timeout = %s, want 30s fallback for non-positive duration", got)
 	}
 }
 

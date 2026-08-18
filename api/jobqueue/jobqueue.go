@@ -1,12 +1,14 @@
 package jobqueue
 
 import (
+	"DataArk/config"
 	"DataArk/observability"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -501,6 +503,20 @@ func (worker *backfillSiteWorker) Work(ctx context.Context, job *river.Job[Backf
 type processCandidateWorker struct {
 	river.WorkerDefaults[ProcessCandidateArgs]
 	handler func(context.Context, uint, string) error
+}
+
+// Timeout 覆盖 River 默认的 1 分钟作业时限，改用与 LLM 请求相同的 LLM_TIMEOUT，
+// 避免文章评估在模型返回前被作业 context 取消。
+func (worker *processCandidateWorker) Timeout(*river.Job[ProcessCandidateArgs]) time.Duration {
+	return processCandidateJobTimeout()
+}
+
+func processCandidateJobTimeout() time.Duration {
+	timeout, err := time.ParseDuration(strings.TrimSpace(config.LLMTIMEOUT))
+	if err != nil || timeout <= 0 {
+		return 30 * time.Second
+	}
+	return timeout
 }
 
 func (worker *processCandidateWorker) Work(ctx context.Context, job *river.Job[ProcessCandidateArgs]) error {
