@@ -21,6 +21,7 @@ An operator can observe: listing and login URLs never appear in the assessment q
 - [x] (2026-08-18) Persist safe LLM call rows and expose owner assessment metrics API plus UI panel.
 - [x] (2026-08-18) Remove Sitemap code, API, UI, and docs; unlimited ingest plus aggressive archive backfill for `user_managed` seeds; keep bounded backfill for blogroll sites.
 - [x] (2026-08-18 20:50+08:00) Invert scheduling: automatic `discovery_crawl` workers, paused `article_assessment` queue with owner **执行 LLM 评估**.
+- [x] (2026-08-18 22:30+08:00) Assessment metrics: 24h success/failure count complete jobs; third row shows output token/s and estimated drain time.
 
 ## Surprises & Discoveries
 
@@ -80,7 +81,7 @@ Second, stop calling `AssessCandidate` from `ProcessCandidate`. After extract an
 
 Third, create `api/llm` with the OpenAI-compatible HTTP client, `ChatJSON`, embeddings, thinking switches, and `llm_call` logging. Create `api/assessment` with `AssessCandidate`, rule and model assessors, observe/active activation, backfill/rollback, and the assess job handler. Point `bootstrap.configureDomainDatabases` at `assessment.SetDB`. Move `ConfiguredArticleAssessor` out of recommendation. Keep `discovery_article_assessments` rows.
 
-Fourth, persist one compact `assessment_llm_calls` row per chat attempt using the same safe fields as `observability.Event` (no prompt or completion text). Add `GET /api/admin/assessment/metrics` for queue depth, 24-hour success/failure, articles per hour, token totals, p50/p95 duration, and schema retry rate. Add an owner “评估” panel. Keep the human labelling workflow.
+Fourth, persist one compact `assessment_llm_calls` row per chat attempt using the same safe fields as `observability.Event` (no prompt or completion text). Add `GET /api/admin/assessment/metrics` for queue depth, 24-hour complete-job success/failure, articles per hour, token totals, p50/p95 duration, schema retry rate, output token/s, and average job duration. Add an owner “评估” panel. Keep the human labelling workflow.
 
 Fifth, delete Sitemap parsing, `FetchKindSitemap`, endpoint type, owner API, UI, robots Sitemap consumption, and tests. Migration `000028` disables leftover sitemap sources and pauses sitemap backfill rows with reason `sitemap_removed`. For `user_managed` sites, do not truncate Feed/homepage candidates at 50, always start archive backfill (homepage plus historical navigation), and schedule the next archive batch immediately while the cursor has work. Observing/blogroll sites keep the 50-item cap and the 7-day empty-backfill interval. Follow Atom/RSS `rel=next` only for user-managed Feeds.
 

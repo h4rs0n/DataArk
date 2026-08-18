@@ -19,8 +19,8 @@
       <p v-if="errorMessage" class="ops-error">{{ errorMessage }}</p>
       <div v-else class="metrics-grid">
         <div><strong>{{ metrics.pendingQueue }}</strong><span>待评估队列</span></div>
-        <div><strong>{{ metrics.last24h.success }}</strong><span>近 24 小时成功</span></div>
-        <div><strong>{{ metrics.last24h.failure }}</strong><span>近 24 小时失败</span></div>
+        <div><strong>{{ queue.counts.succeeded24h }}</strong><span>近 24 小时成功</span></div>
+        <div><strong>{{ queue.counts.failed24h }}</strong><span>近 24 小时失败</span></div>
         <div><strong>{{ metrics.articlesPerHour.toFixed(2) }}</strong><span>articles/hour</span></div>
         <div><strong>{{ metrics.tokenTotals.total }}</strong><span>token 合计</span></div>
         <div><strong>{{ metrics.tokenTotals.prompt }} / {{ metrics.tokenTotals.completion }}</strong><span>prompt / completion</span></div>
@@ -28,10 +28,8 @@
         <div><strong>{{ (metrics.schemaRetryRate * 100).toFixed(1) }}%</strong><span>schema 重试率</span></div>
       </div>
       <div class="queue-summary">
-        <div><strong>{{ queue.counts.pending }}</strong><span>等待执行</span></div>
-        <div><strong>{{ queue.counts.running }}</strong><span>正在运行</span></div>
-        <div><strong>{{ queue.counts.succeeded24h }}</strong><span>近 24 小时成功</span></div>
-        <div><strong>{{ queue.counts.failed24h }}</strong><span>近 24 小时失败</span></div>
+        <div><strong>{{ tokenRateLabel }}</strong><span>token/s</span></div>
+        <div><strong>{{ estimatedCompletionLabel }}</strong><span>预计完成</span></div>
       </div>
     </a-spin>
 
@@ -74,6 +72,8 @@ interface AssessmentMetrics {
   tokenTotals: { prompt: number; completion: number; reasoning: number; cached: number; total: number }
   duration: { p50Ms: number; p95Ms: number }
   schemaRetryRate: number
+  tokensPerSecond: number
+  avgJobDurationMs: number
 }
 
 interface AssessmentQueueSnapshot {
@@ -97,6 +97,8 @@ const emptyMetrics = (): AssessmentMetrics => ({
   tokenTotals: { prompt: 0, completion: 0, reasoning: 0, cached: 0, total: 0 },
   duration: { p50Ms: 0, p95Ms: 0 },
   schemaRetryRate: 0,
+  tokensPerSecond: 0,
+  avgJobDurationMs: 0,
 })
 
 const metrics = reactive(emptyMetrics())
@@ -115,6 +117,39 @@ const queueStateLabel = computed(() => ({
   waiting: '等待手动执行',
   running: '正在执行',
 }[queue.state]))
+
+const remainingQueueJobs = computed(() => queue.counts.pending + queue.counts.running)
+
+// 输出吞吐：近 24 小时各作业 completion token 之和 / 各作业耗时之和。
+const tokenRateLabel = computed(() => formatTokenRate(metrics.tokensPerSecond))
+
+// 预计完成：剩余作业数 × 近 24 小时单作业平均耗时。
+const estimatedCompletionLabel = computed(() => {
+  if (remainingQueueJobs.value <= 0) return '队列已空'
+  if (!(metrics.avgJobDurationMs > 0)) return '—'
+  return formatRemaining(remainingQueueJobs.value * metrics.avgJobDurationMs)
+})
+
+function formatTokenRate(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '—'
+  if (value >= 100) return value.toFixed(0)
+  if (value >= 10) return value.toFixed(1)
+  return value.toFixed(2)
+}
+
+// 把剩余毫秒格式化为中文时长。
+function formatRemaining(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '—'
+  const totalSeconds = Math.max(1, Math.round(ms / 1000))
+  const days = Math.floor(totalSeconds / 86400)
+  const hours = Math.floor((totalSeconds % 86400) / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (days > 0) return `${days} 天 ${hours} 小时`
+  if (hours > 0) return `${hours} 小时 ${minutes} 分`
+  if (minutes > 0) return `${minutes} 分 ${seconds} 秒`
+  return `${seconds} 秒`
+}
 
 function authHeaders(json = false): HeadersInit {
   const token = localStorage.getItem('token')
@@ -387,7 +422,7 @@ onUnmounted(() => {
 
 .queue-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   width: 100%;
   margin-top: 16px;

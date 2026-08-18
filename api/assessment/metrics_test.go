@@ -21,6 +21,7 @@ func TestGetMetricsAggregatesQueueAndSafeTokenRows(t *testing.T) {
 	}
 	rows := []LLMCall{
 		{CandidateID: 7, Stage: llm.StageArticleAssessment, Status: "success", Attempt: 1, DurationMS: 100, PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15, CreatedAt: now.Add(-time.Hour)},
+		{CandidateID: 8, Stage: llm.StageArticleAssessment, Status: "failed", Attempt: 1, DurationMS: 50, CompletionTokens: 2, ErrorType: "invalid_output", CreatedAt: now.Add(-time.Hour)},
 		{CandidateID: 8, Stage: llm.StageArticleAssessment, Status: "success", Attempt: 2, DurationMS: 400, PromptTokens: 20, CompletionTokens: 6, TotalTokens: 26, CreatedAt: now.Add(-time.Hour)},
 		{CandidateID: 9, Stage: llm.StageArticleAssessment, Status: "failed", Attempt: 1, DurationMS: 50, ErrorType: "invalid_output", CreatedAt: now.Add(-time.Hour)},
 		{CandidateID: 10, Stage: llm.StageRecommendationRerank, Status: "success", Attempt: 1, DurationMS: 10, PromptTokens: 99, CreatedAt: now.Add(-time.Hour)},
@@ -43,10 +44,17 @@ func TestGetMetricsAggregatesQueueAndSafeTokenRows(t *testing.T) {
 	if metrics.TokenTotals.Prompt != 30 || metrics.TokenTotals.Total != 41 {
 		t.Fatalf("tokens = %#v", metrics.TokenTotals)
 	}
-	if metrics.Duration.P50 != 100 || metrics.Duration.P95 != 400 {
+	if metrics.Duration.P50 != 50 || metrics.Duration.P95 != 400 {
 		t.Fatalf("duration = %#v", metrics.Duration)
 	}
-	if metrics.SchemaRetryRate < 0.3 || metrics.SchemaRetryRate > 0.4 {
+	if metrics.SchemaRetryRate < 0.2 || metrics.SchemaRetryRate > 0.3 {
 		t.Fatalf("schemaRetryRate = %v", metrics.SchemaRetryRate)
+	}
+	// 候选 7/8 有输出：token/s = (5+2+6) / ((100+50+400)/1000) = 23.636...
+	if metrics.TokensPerSecond < 23.6 || metrics.TokensPerSecond > 23.7 {
+		t.Fatalf("tokensPerSecond = %v", metrics.TokensPerSecond)
+	}
+	if metrics.AvgJobDurationMs != 200 {
+		t.Fatalf("avgJobDurationMs = %d", metrics.AvgJobDurationMs)
 	}
 }
