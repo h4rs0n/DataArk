@@ -100,7 +100,7 @@ func TestDailyDigestM14SupplementOnlyAppendsMissingItems(t *testing.T) {
 	firstID := initial.Items[0].ID
 	publishedAt := *initial.Day.PublishedAt
 	clock.Advance(time.Hour)
-	createReadyCandidate(t, "https://supplement.example/second", "Second", []string{"rust"}, "supplement-second", 0.85, 0.75)
+	createReadyCandidate(t, "https://supplement-two.example/second", "Second", []string{"rust"}, "supplement-second", 0.85, 0.75)
 	supplemented, err := SupplementDailyRecommendations(context.Background(), 804, "2026-03-01")
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +117,33 @@ func TestDailyDigestM14SupplementOnlyAppendsMissingItems(t *testing.T) {
 	}
 	if len(again.Items) != 2 || again.Items[0].ID != firstID || again.Items[1].ID != supplemented.Items[1].ID {
 		t.Fatalf("repeat supplement changed items: %#v", again.Items)
+	}
+}
+
+func TestDailyDigestM14SupplementFillsFromSameSourceWhenShort(t *testing.T) {
+	setupSQLiteDB(t)
+	clock := useRecommendationTestClock(t, time.Date(2026, 3, 2, 8, 0, 0, 0, time.UTC))
+	settings := DefaultRecommendationSettings(806)
+	settings.DailyLimit = 2
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	createReadyCandidate(t, "https://same-source.example/first", "First", []string{"go"}, "same-source-first", 0.9, 0.8)
+	initial, err := GenerateDailyRecommendations(context.Background(), 806, "2026-03-02")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.Day.ActualCount != 1 {
+		t.Fatalf("initial = %#v", initial)
+	}
+	clock.Advance(time.Hour)
+	second := createReadyCandidate(t, "https://same-source.example/second", "Second", []string{"rust"}, "same-source-second", 0.95, 0.75)
+	supplemented, err := SupplementDailyRecommendations(context.Background(), 806, "2026-03-02")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if supplemented.Day.ActualCount != 2 || len(supplemented.Items) != 2 || supplemented.Items[1].CandidateID != second.ID {
+		t.Fatalf("same-source supplement should fill the shortage: %#v", supplemented.Items)
 	}
 }
 

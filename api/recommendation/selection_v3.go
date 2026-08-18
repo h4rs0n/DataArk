@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const recommendationSelectionPolicyV3 = "v3-selection-1"
+const recommendationSelectionPolicyV3 = "v3-selection-3"
 
 var recommendationClock discovery.Clock = discovery.SystemClock{}
 
@@ -510,6 +510,10 @@ func recommendationReasonV3(candidate DiscoveryCandidate, topics []string, poolT
 }
 
 func diversifyRecommendationCandidatesV3(candidates []recommendationCandidateScore, limit int, explorationRate float64) ([]recommendationCandidateScore, []string) {
+	return diversifyRecommendationCandidatesV3WithReserved(candidates, limit, explorationRate, nil)
+}
+
+func diversifyRecommendationCandidatesV3WithReserved(candidates []recommendationCandidateScore, limit int, explorationRate float64, reservedSources map[string]int) ([]recommendationCandidateScore, []string) {
 	if limit <= 0 || len(candidates) == 0 {
 		return []recommendationCandidateScore{}, []string{}
 	}
@@ -535,13 +539,19 @@ func diversifyRecommendationCandidatesV3(candidates []recommendationCandidateSco
 	if explorationTarget > limit {
 		explorationTarget = limit
 	}
-	maxSource := maxInt(1, int(math.Ceil(float64(limit)*0.3)))
+	// 每个来源先只选一篇；来源不足以填满目标条数时，再放宽允许同一来源多篇。
+	maxSource := 1
 	maxTopic := maxInt(1, int(math.Ceil(float64(limit)*0.4)))
 	maxAuthor := maxInt(1, int(math.Ceil(float64(limit)*0.2)))
 	selected := make([]recommendationCandidateScore, 0, limit)
 	used := make(map[int]bool)
 	usedIdentity := make(map[string]bool)
 	sourceCounts := make(map[string]int)
+	for source, count := range reservedSources {
+		if count > 0 {
+			sourceCounts[source] = count
+		}
+	}
 	topicCounts := make(map[string]int)
 	authorCounts := make(map[string]int)
 	poolCounts := make(map[string]int)
@@ -557,7 +567,7 @@ func diversifyRecommendationCandidatesV3(candidates []recommendationCandidateSco
 			if used[index] || usedIdentity[recommendationCandidateIdentity(candidate.Candidate)] || (needExploration && !candidate.Exploration) {
 				continue
 			}
-			source := firstNonEmpty(candidate.Candidate.SourceName, candidate.SourceHost)
+			source := recommendationSourceKeyFromScore(candidate)
 			author := strings.ToLower(candidate.Author)
 			if !relaxSource && sourceCounts[source] >= maxSource {
 				continue
@@ -577,14 +587,32 @@ func diversifyRecommendationCandidatesV3(candidates []recommendationCandidateSco
 			}
 		}
 		if bestIndex == -1 {
+			canRelaxAuthor, canRelaxTopic, canRelaxSource := false, false, false
+			for index, candidate := range candidates {
+				if used[index] || usedIdentity[recommendationCandidateIdentity(candidate.Candidate)] {
+					continue
+				}
+				sourceBlocked := !relaxSource && sourceCounts[recommendationSourceKeyFromScore(candidate)] >= maxSource
+				if sourceBlocked {
+					canRelaxSource = true
+					continue
+				}
+				author := strings.ToLower(candidate.Author)
+				if !relaxAuthor && author != "" && authorCounts[author] >= maxAuthor {
+					canRelaxAuthor = true
+				}
+				if !relaxTopic && dominantTopicCount(candidate.Topics, topicCounts) >= maxTopic {
+					canRelaxTopic = true
+				}
+			}
 			switch {
-			case !relaxAuthor:
+			case !relaxAuthor && canRelaxAuthor:
 				relaxAuthor = true
 				relaxations = append(relaxations, "author_limit")
-			case !relaxTopic:
+			case !relaxTopic && canRelaxTopic:
 				relaxTopic = true
 				relaxations = append(relaxations, "topic_limit")
-			case !relaxSource:
+			case !relaxSource && canRelaxSource:
 				relaxSource = true
 				relaxations = append(relaxations, "source_limit")
 			default:
@@ -601,7 +629,7 @@ func diversifyRecommendationCandidatesV3(candidates []recommendationCandidateSco
 		selected = append(selected, chosen)
 		used[bestIndex] = true
 		usedIdentity[recommendationCandidateIdentity(chosen.Candidate)] = true
-		sourceCounts[firstNonEmpty(chosen.Candidate.SourceName, chosen.SourceHost)]++
+		sourceCounts[recommendationSourceKeyFromScore(chosen)]++
 		for _, topic := range chosen.Topics {
 			topicCounts[topic]++
 		}
@@ -611,6 +639,34 @@ func diversifyRecommendationCandidatesV3(candidates []recommendationCandidateSco
 		poolCounts[chosen.PoolType]++
 	}
 	return selected, relaxations
+}
+
+// recommendationSourceKey 用卡片上展示的来源名（或 URL 主机）标识来源，优先保证每批同一来源只出现一次。
+func recommendationSourceKey(candidate DiscoveryCandidate, host string) string {
+	key := strings.ToLower(strings.TrimSpace(firstNonEmpty(candidate.SourceName, host)))
+	if key != "" {
+		return key
+	}
+	return fmt.Sprintf("candidate:%d", candidate.ID)
+}
+
+func recommendationSourceKeyFromScore(candidate recommendationCandidateScore) string {
+	return recommendationSourceKey(candidate.Candidate, candidate.SourceHost)
+}
+
+func recommendationSourceKeyFromItem(item RecommendationItem) string {
+	host := sourceHost(firstNonEmpty(item.SnapshotURL, item.Candidate.URL))
+	name := firstNonEmpty(item.SnapshotSource, item.Candidate.SourceName)
+	return recommendationSourceKey(DiscoveryCandidate{ID: item.CandidateID, SourceName: name}, host)
+}
+
+// recommendationSourceCountsFromItems 统计当前推荐里各来源已占用的篇数，补篇时用来优先选尚未出现的来源。
+func recommendationSourceCountsFromItems(items []RecommendationItem) map[string]int {
+	counts := make(map[string]int, len(items))
+	for _, item := range items {
+		counts[recommendationSourceKeyFromItem(item)]++
+	}
+	return counts
 }
 
 func candidateSelectionScore(candidate recommendationCandidateScore) float64 {

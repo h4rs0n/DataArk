@@ -529,7 +529,7 @@ func SupplementDailyRecommendationsWithReranker(ctx context.Context, userID uint
 		return nil, err
 	}
 	reranked, rerankModel, rerankPrompt, degradationReason := applyRecommendationReranker(ctx, userID, selectionLimit, selection.Candidates, profile, reranker)
-	selected, relaxations := diversifyRecommendationCandidatesV3(reranked, missing, settings.ExplorationRate)
+	selected, relaxations := diversifyRecommendationCandidatesV3WithReserved(reranked, missing, settings.ExplorationRate, recommendationSourceCountsFromItems(snapshot.Items))
 	now := recommendationClock.Now()
 	items := buildRecommendationItems(day.ID, userID, selected, day.ActualCount+1, profile.ProfileVersion, true, now)
 	if err := appendRecommendationSupplement(day.ID, userID, day.RequestedCount, items, selection, relaxations, rerankModel, rerankPrompt, degradationReason, now); err != nil {
@@ -1313,7 +1313,8 @@ func diversifyRecommendationCandidates(candidates []recommendationCandidateScore
 	usedDedupe := make(map[string]struct{})
 	sourceCounts := make(map[string]int)
 	topicCounts := make(map[string]int)
-	maxSource := maxInt(1, int(float64(limit)*0.3+0.999))
+	// 遗留路径同样先每来源一篇，凑不满时再允许同一来源补位。
+	maxSource := 1
 	maxTopic := maxInt(1, int(float64(limit)*0.4+0.999))
 
 	for len(selected) < limit {
@@ -1326,7 +1327,7 @@ func diversifyRecommendationCandidates(candidates []recommendationCandidateScore
 			if _, ok := usedDedupe[strings.TrimSpace(candidate.Candidate.DedupeKey)]; ok && strings.TrimSpace(candidate.Candidate.DedupeKey) != "" {
 				continue
 			}
-			if sourceCounts[firstNonEmpty(candidate.Candidate.SourceName, candidate.SourceHost)] >= maxSource {
+			if sourceCounts[recommendationSourceKeyFromScore(candidate)] >= maxSource {
 				continue
 			}
 			if dominantTopicCount(candidate.Topics, topicCounts) >= maxTopic {
@@ -1349,7 +1350,7 @@ func diversifyRecommendationCandidates(candidates []recommendationCandidateScore
 		if key := strings.TrimSpace(chosen.Candidate.DedupeKey); key != "" {
 			usedDedupe[key] = struct{}{}
 		}
-		sourceCounts[firstNonEmpty(chosen.Candidate.SourceName, chosen.SourceHost)]++
+		sourceCounts[recommendationSourceKeyFromScore(chosen)]++
 		for _, topic := range chosen.Topics {
 			topicCounts[topic]++
 		}
@@ -1371,6 +1372,7 @@ func diversifyRecommendationCandidates(candidates []recommendationCandidateScore
 			usedDedupe[key] = struct{}{}
 		}
 		selected = append(selected, candidate)
+		sourceCounts[recommendationSourceKeyFromScore(candidate)]++
 	}
 	return selected
 }

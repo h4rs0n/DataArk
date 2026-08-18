@@ -32,15 +32,13 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 		t.Fatalf("bounded A -> B -> C -> A edge count = %d, err=%v", edgeCount, err)
 	}
 
-	// B deliberately has a low eligible hit rate. Three articles initially pass
-	// article-level assessment, while the other 47 remain explicit ineligible
-	// records. Two later become eligible to prove new B gems survive per-article
-	// dislike and per-user source blocking while the site stays at 10%.
+	// B 有意保持低合格率。最初只有 Sitemap gem 合格，其余明确不合格。
+	// 后续再放行两篇，用来证明单篇不喜欢不会连坐来源，而显式屏蔽来源只会作用于该用户。
 	bCandidates := make([]DiscoveryCandidate, 0, 50)
 	for index := 0; index < 50; index++ {
 		quality := 0.2
 		if index == 0 {
-			quality = 0.56 // ordinary but valid; used for article-only feedback.
+			quality = 0.56
 		}
 		if index == 1 {
 			quality = 0.99 // historical Sitemap gem.
@@ -53,7 +51,7 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 			t.Fatal(err)
 		}
 		candidate.SourceID, candidate.SourceName, candidate.ContentVersion = sources[1].ID, sources[1].Name, 1
-		if index > 2 {
+		if index != 1 {
 			if err := db.Model(&candidate).Updates(map[string]interface{}{"eligibility_state": discovery.DiscoveryEligibilityIneligible, "eligibility_reasons": "article_quality_below_threshold"}).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -76,13 +74,13 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 		t.Fatalf("single representative provenance count = %d, err=%v", gemProvenance, err)
 	}
 
-	// Seven independent eligible candidates make the initial target exactly 10.
-	for index := 0; index < 7; index++ {
-		candidate := createReadyCandidate(t, fmt.Sprintf("https://a.example/articles/%02d", index), fmt.Sprintf("A article %02d", index), []string{fmt.Sprintf("topic-%d", index)}, fmt.Sprintf("a-%02d", index), 0.8-float64(index)*0.01, 0.7)
-		if err := db.Model(&candidate).Updates(map[string]interface{}{"source_id": sources[0].ID, "source_name": sources[0].Name, "content_version": 1}).Error; err != nil {
+	// 九个独立来源加上一篇 B，凑满每日 10 篇且每个来源只有一篇。
+	for index := 0; index < 9; index++ {
+		candidate := createReadyCandidate(t, fmt.Sprintf("https://seed-%d.example/articles/%02d", index, index), fmt.Sprintf("Seed article %02d", index), []string{fmt.Sprintf("topic-%d", index)}, fmt.Sprintf("seed-%02d", index), 0.8-float64(index)*0.01, 0.7)
+		if err := db.Model(&candidate).Updates(map[string]interface{}{"content_version": 1}).Error; err != nil {
 			t.Fatal(err)
 		}
-		createM17Provenance(t, sites[0], sources[0], candidate, "feed", fmt.Sprintf("a-%02d", index), clock.Now())
+		createM17Provenance(t, sites[0], sources[0], candidate, "feed", fmt.Sprintf("seed-%02d", index), clock.Now())
 	}
 
 	for _, value := range []RecommendationSettings{
@@ -115,6 +113,7 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 	if userOneDay.Day.RequestedCount != 10 || userOneDay.Day.ActualCount != 10 || len(userOneDay.Items) != 10 {
 		t.Fatalf("full digest = %#v", userOneDay.Day)
 	}
+	assertUniqueRecommendationSources(t, userOneDay.Items)
 	explorationItems := 0
 	for _, item := range userOneDay.Items {
 		if item.PoolType == "exploration" {
@@ -124,13 +123,12 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 	if explorationItems < 2 {
 		t.Fatalf("exploration items = %d, want ceil(10*0.15)=2", explorationItems)
 	}
-	ordinaryItem := m17ItemForCandidate(t, userOneDay, bCandidates[0].ID)
-	immutableItem := m17ItemForCandidate(t, userOneDay, bCandidates[1].ID)
-	if _, _, err := RecordRecommendationFeedback(1701, ordinaryItem.ID, RecommendationFeedbackNotInterested, nil); err != nil {
+	bItem := m17ItemForCandidate(t, userOneDay, bCandidates[1].ID)
+	if _, _, err := RecordRecommendationFeedback(1701, bItem.ID, RecommendationFeedbackNotInterested, nil); err != nil {
 		t.Fatal(err)
 	}
 	var sharedOrdinary DiscoveryCandidate
-	if err := db.First(&sharedOrdinary, bCandidates[0].ID).Error; err != nil || sharedOrdinary.Status != DiscoveryCandidateStatusNew {
+	if err := db.First(&sharedOrdinary, bCandidates[1].ID).Error; err != nil || sharedOrdinary.Status != DiscoveryCandidateStatusNew {
 		t.Fatalf("article feedback mutated shared candidate = %#v, err=%v", sharedOrdinary, err)
 	}
 
@@ -141,7 +139,7 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 	if len(userTwoDay.Items) != 10 {
 		t.Fatalf("U2 inherited U1 state: %d items", len(userTwoDay.Items))
 	}
-	m17ItemForCandidate(t, userTwoDay, bCandidates[0].ID)
+	m17ItemForCandidate(t, userTwoDay, bCandidates[1].ID)
 
 	// A newly qualified B article is still recommended to U1 after U1 disliked a
 	// different B article.
@@ -160,7 +158,7 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 	if _, rules, err := RecordRecommendationFeedback(1701, userOneSecond.Items[0].ID, RecommendationFeedbackBlockSource, []RecommendationBlockTarget{{Type: UserBlockRuleSource, Value: "b.example"}}); err != nil || len(rules) != 1 {
 		t.Fatalf("explicit source block rules=%#v err=%v", rules, err)
 	}
-	m17MakeEligible(t, &bCandidates[4], 0.96)
+	m17MakeEligible(t, &bCandidates[4], 0.99)
 	createM17Provenance(t, sites[1], sources[1], bCandidates[4], "archive_backfill", "b-later-gem-archive", clock.Now())
 	clock.Advance(23 * time.Hour)
 	userOneBlocked, err := GenerateDailyRecommendations(context.Background(), 1701, "2026-07-16")
@@ -184,15 +182,15 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 
 	// Published display values survive candidate mutation and a compatibility
 	// retry. A separate user proves a failed optional reranker still publishes.
-	originalTitle := immutableItem.SnapshotTitle
-	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", immutableItem.CandidateID).Updates(map[string]interface{}{"title": "mutated after publication", "eligibility_state": discovery.DiscoveryEligibilityIneligible}).Error; err != nil {
+	originalTitle := bItem.SnapshotTitle
+	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", bItem.CandidateID).Updates(map[string]interface{}{"title": "mutated after publication", "eligibility_state": discovery.DiscoveryEligibilityIneligible}).Error; err != nil {
 		t.Fatal(err)
 	}
 	retried, err := RegenerateDailyRecommendations(context.Background(), 1701, "2026-07-14")
 	if err != nil {
 		t.Fatal(err)
 	}
-	retriedItem := m17ItemForCandidate(t, retried, immutableItem.CandidateID)
+	retriedItem := m17ItemForCandidate(t, retried, bItem.CandidateID)
 	if retriedItem.SnapshotTitle != originalTitle || retriedItem.Candidate.Title != originalTitle || len(retried.Items) != len(userOneDay.Items) {
 		t.Fatalf("published snapshot changed after retry: %#v", retriedItem)
 	}

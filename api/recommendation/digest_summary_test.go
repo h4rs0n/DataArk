@@ -3,6 +3,7 @@ package recommendation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func seedDigestSummaryDay(t *testing.T, userID uint, candidateCount int) *Recomm
 	}
 	for index := 0; index < candidateCount; index++ {
 		createReadyCandidate(t,
-			"https://digest.example/article-"+string(rune('a'+index)),
+			fmt.Sprintf("https://digest-%d.example/article", index),
 			"Digest article "+string(rune('a'+index)),
 			[]string{"go", "systems"},
 			"digest-"+string(rune('a'+index)),

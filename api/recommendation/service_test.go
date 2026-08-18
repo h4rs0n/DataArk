@@ -343,7 +343,7 @@ func TestGenerateDailyRecommendationsUsesFeedbackProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	postgres := createReadyCandidate(t, "https://new.example/postgres", "New PostgreSQL", []string{"PostgreSQL"}, "new-pg", 0.45, 0.6)
-	generic := createReadyCandidate(t, "https://new.example/generic", "Generic", []string{"Release"}, "generic", 0.65, 0.4)
+	generic := createReadyCandidate(t, "https://generic.example/generic", "Generic", []string{"Release"}, "generic", 0.65, 0.4)
 
 	snapshot, err := GenerateDailyRecommendations(context.Background(), 10, "2026-06-28")
 	if err != nil {

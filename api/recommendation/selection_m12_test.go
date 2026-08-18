@@ -43,6 +43,58 @@ func useRecommendationTestClock(t *testing.T, now time.Time) *recommendationTest
 	return clock
 }
 
+func TestDiversifyRecommendationCandidatesV3KeepsOneArticlePerSource(t *testing.T) {
+	candidates := []recommendationCandidateScore{
+		{Candidate: DiscoveryCandidate{ID: 4, SourceName: "Alpha", DedupeKey: "alpha-high"}, SourceHost: "alpha.example", FinalScore: 0.99},
+		{Candidate: DiscoveryCandidate{ID: 1, SourceName: "Alpha", DedupeKey: "alpha-mid"}, SourceHost: "alpha.example", FinalScore: 0.9},
+		{Candidate: DiscoveryCandidate{ID: 2, SourceName: "Alpha", DedupeKey: "alpha-low"}, SourceHost: "alpha.example", FinalScore: 0.8},
+		{Candidate: DiscoveryCandidate{ID: 3, SourceName: "Beta", DedupeKey: "beta"}, SourceHost: "beta.example", FinalScore: 0.7},
+	}
+	selected, relaxations := diversifyRecommendationCandidatesV3(candidates, 2, 0)
+	if len(selected) != 2 || len(relaxations) != 0 {
+		t.Fatalf("selected=%#v relaxations=%#v", selected, relaxations)
+	}
+	if selected[0].Candidate.ID != 4 || selected[1].Candidate.ID != 3 {
+		t.Fatalf("expected highest Alpha then Beta, got %#v", selected)
+	}
+}
+
+func TestDiversifyRecommendationCandidatesV3RelaxesSourceToFill(t *testing.T) {
+	candidates := []recommendationCandidateScore{
+		{Candidate: DiscoveryCandidate{ID: 4, SourceName: "Alpha", DedupeKey: "alpha-high"}, SourceHost: "alpha.example", FinalScore: 0.99},
+		{Candidate: DiscoveryCandidate{ID: 1, SourceName: "Alpha", DedupeKey: "alpha-mid"}, SourceHost: "alpha.example", FinalScore: 0.9},
+		{Candidate: DiscoveryCandidate{ID: 2, SourceName: "Alpha", DedupeKey: "alpha-low"}, SourceHost: "alpha.example", FinalScore: 0.8},
+		{Candidate: DiscoveryCandidate{ID: 3, SourceName: "Beta", DedupeKey: "beta"}, SourceHost: "beta.example", FinalScore: 0.7},
+	}
+	selected, relaxations := diversifyRecommendationCandidatesV3(candidates, 4, 0)
+	if len(selected) != 4 {
+		t.Fatalf("selected=%#v relaxations=%#v", selected, relaxations)
+	}
+	if selected[0].Candidate.ID != 4 || selected[1].Candidate.ID != 3 {
+		t.Fatalf("unique sources should fill first: %#v", selected)
+	}
+	gotSourceLimit := false
+	for _, value := range relaxations {
+		if value == "source_limit" {
+			gotSourceLimit = true
+		}
+	}
+	if !gotSourceLimit {
+		t.Fatalf("expected source_limit after unique sources were exhausted: %#v", relaxations)
+	}
+}
+
+func TestDiversifyRecommendationCandidatesV3PrefersUnusedSourceBeforeRelaxing(t *testing.T) {
+	candidates := []recommendationCandidateScore{
+		{Candidate: DiscoveryCandidate{ID: 1, SourceName: "Alpha", DedupeKey: "alpha-two"}, SourceHost: "alpha.example", FinalScore: 0.99},
+		{Candidate: DiscoveryCandidate{ID: 2, SourceName: "Beta", DedupeKey: "beta"}, SourceHost: "beta.example", FinalScore: 0.5},
+	}
+	selected, relaxations := diversifyRecommendationCandidatesV3WithReserved(candidates, 1, 0, map[string]int{"alpha": 1})
+	if len(selected) != 1 || selected[0].Candidate.ID != 2 || len(relaxations) != 0 {
+		t.Fatalf("should fill with unused Beta before repeating Alpha: selected=%#v relaxations=%#v", selected, relaxations)
+	}
+}
+
 func TestRecommendationV3SelectsTargetWithExplorationAndSoftDiversity(t *testing.T) {
 	setupSQLiteDB(t)
 	now := time.Date(2026, 7, 14, 6, 0, 0, 0, time.UTC)
@@ -56,7 +108,7 @@ func TestRecommendationV3SelectsTargetWithExplorationAndSoftDiversity(t *testing
 	}
 	topics := []string{"Go", "Databases", "Systems", "Security", "Web"}
 	for index := 0; index < 16; index++ {
-		host := fmt.Sprintf("source-%d.example", index%4)
+		host := fmt.Sprintf("source-%d.example", index)
 		candidate := createReadyCandidate(t, fmt.Sprintf("https://%s/post-%d", host, index), fmt.Sprintf("Post %d", index), []string{topics[index%len(topics)]}, fmt.Sprintf("key-%d", index), 0.95-float64(index)*0.01, 0.7)
 		if err := db.Model(&candidate).Updates(map[string]interface{}{"author": fmt.Sprintf("Author %d", index%8), "content_version": 1, "published_at": &now}).Error; err != nil {
 			t.Fatal(err)
@@ -70,6 +122,7 @@ func TestRecommendationV3SelectsTargetWithExplorationAndSoftDiversity(t *testing
 	if snapshot.Day.RequestedCount != 10 || snapshot.Day.ActualCount != 10 || len(snapshot.Items) != 10 {
 		t.Fatalf("target/actual snapshot = %#v", snapshot)
 	}
+	assertUniqueRecommendationSources(t, snapshot.Items)
 	sourceCounts := make(map[string]int)
 	topicCounts := make(map[string]int)
 	explorationCount := 0
@@ -92,8 +145,8 @@ func TestRecommendationV3SelectsTargetWithExplorationAndSoftDiversity(t *testing
 		t.Fatalf("exploration count = %d, want at least ceil(10*0.15)=2", explorationCount)
 	}
 	for source, count := range sourceCounts {
-		if count > 3 {
-			t.Fatalf("source %s count = %d, want <= 3", source, count)
+		if count > 1 {
+			t.Fatalf("source %s count = %d, want 1", source, count)
 		}
 	}
 	for topic, count := range topicCounts {
@@ -259,15 +312,15 @@ func TestRecommendationV3SoftRelaxationIsAuditedButHardIdentityIsNot(t *testing.
 			t.Fatal(err)
 		}
 	}
-	snapshot, err := GenerateDailyRecommendations(context.Background(), 404, "2026-07-14")
+	sameSource, err := GenerateDailyRecommendations(context.Background(), 404, "2026-07-14")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Items) != 5 {
-		t.Fatalf("soft constraints should relax to fill: %#v", snapshot.Items)
+	if len(sameSource.Items) != 5 {
+		t.Fatalf("same source should fill after unique-source shortage: %#v", sameSource.Items)
 	}
-	if !strings.Contains(snapshot.Day.ShortageReasons, "author_limit") || !strings.Contains(snapshot.Day.ShortageReasons, "topic_limit") || !strings.Contains(snapshot.Day.ShortageReasons, "source_limit") {
-		t.Fatalf("soft relaxation audit = %s", snapshot.Day.ShortageReasons)
+	if !strings.Contains(sameSource.Day.ShortageReasons, "author_limit") || !strings.Contains(sameSource.Day.ShortageReasons, "topic_limit") || !strings.Contains(sameSource.Day.ShortageReasons, "source_limit") {
+		t.Fatalf("soft relaxation audit = %s", sameSource.Day.ShortageReasons)
 	}
 
 	duplicateA := createReadyCandidate(t, "https://dup-a.example/post", "Duplicate A", []string{"A"}, "duplicate-a", 0.99, 0.9)
@@ -287,6 +340,35 @@ func TestRecommendationV3SoftRelaxationIsAuditedButHardIdentityIsNot(t *testing.
 	}
 	if clusterCount != 1 {
 		t.Fatalf("hard duplicate cluster count = %d, want 1", clusterCount)
+	}
+}
+
+func TestRecommendationV3SoftAuthorAndTopicLimitsStillRelax(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC)
+	useRecommendationTestClock(t, now)
+	settings := DefaultRecommendationSettings(406)
+	settings.DailyLimit = 5
+	settings.ExplorationRate = 0
+	settings.Enabled = true
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 6; index++ {
+		candidate := createReadyCandidate(t, fmt.Sprintf("https://many-%d.example/post", index), fmt.Sprintf("Shared Author %d", index), []string{"Same Topic"}, fmt.Sprintf("shared-author-%d", index), 0.88-float64(index)*0.01, 0.8)
+		if err := db.Model(&candidate).Update("author", "Same Author").Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := GenerateDailyRecommendations(context.Background(), 406, "2026-07-14")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Items) != 5 {
+		t.Fatalf("soft constraints should relax to fill: %#v", snapshot.Items)
+	}
+	if !strings.Contains(snapshot.Day.ShortageReasons, "author_limit") || !strings.Contains(snapshot.Day.ShortageReasons, "topic_limit") || strings.Contains(snapshot.Day.ShortageReasons, "source_limit") {
+		t.Fatalf("soft relaxation audit = %s", snapshot.Day.ShortageReasons)
 	}
 }
 
@@ -310,7 +392,7 @@ func TestRecommendationV3SkipsExposedHighScorePage(t *testing.T) {
 	}
 	freshIDs := make(map[uint]bool, 10)
 	for index := 0; index < 10; index++ {
-		candidate := createReadyCandidate(t, fmt.Sprintf("https://fresh.example/post-%d", index), fmt.Sprintf("Fresh %d", index), []string{fmt.Sprintf("Fresh %d", index)}, fmt.Sprintf("fresh-%d", index), 0.5, 0.5)
+		candidate := createReadyCandidate(t, fmt.Sprintf("https://fresh-%d.example/post", index), fmt.Sprintf("Fresh %d", index), []string{fmt.Sprintf("Fresh %d", index)}, fmt.Sprintf("fresh-%d", index), 0.5, 0.5)
 		freshIDs[candidate.ID] = true
 	}
 

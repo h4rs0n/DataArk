@@ -15,7 +15,7 @@ func createDiscoveryFeedCandidates(t *testing.T, count int) []DiscoveryCandidate
 	candidates := make([]DiscoveryCandidate, 0, count)
 	for index := 0; index < count; index++ {
 		candidate := DiscoveryCandidate{
-			SourceID: 1, SourceName: fmt.Sprintf("source-%d", index%5),
+			SourceID: 1, SourceName: fmt.Sprintf("source-%d", index),
 			URL: fmt.Sprintf("https://feed.example/articles/%d", index), Title: fmt.Sprintf("Article %02d", index),
 			Summary: fmt.Sprintf("Summary %d", index), Topics: fmt.Sprintf("[\"topic-%d\"]", index%6),
 			QualityScore: float64(count-index) / float64(count), DepthScore: 0.7,
@@ -31,6 +31,18 @@ func createDiscoveryFeedCandidates(t *testing.T, count int) []DiscoveryCandidate
 	return candidates
 }
 
+func assertUniqueRecommendationSources(t *testing.T, items []RecommendationItem) {
+	t.Helper()
+	seen := make(map[string]uint, len(items))
+	for _, item := range items {
+		source := recommendationSourceKeyFromItem(item)
+		if previous, exists := seen[source]; exists {
+			t.Fatalf("source %q appeared on candidates %d and %d", source, previous, item.CandidateID)
+		}
+		seen[source] = item.CandidateID
+	}
+}
+
 func TestDiscoveryFeedCurrentAndRefreshAvoidRecentRepeats(t *testing.T) {
 	setupSQLiteDB(t)
 	createDiscoveryFeedCandidates(t, 25)
@@ -43,6 +55,7 @@ func TestDiscoveryFeedCurrentAndRefreshAvoidRecentRepeats(t *testing.T) {
 		t.Fatalf("first snapshot = %#v", first)
 	}
 	firstIDs := map[uint]bool{}
+	assertUniqueRecommendationSources(t, first.Items)
 	for _, item := range first.Items {
 		firstIDs[item.CandidateID] = true
 		if item.DayID != nil || item.FeedBatchID == nil || *item.FeedBatchID != first.Batch.ID {
@@ -76,6 +89,7 @@ func TestDiscoveryFeedCurrentAndRefreshAvoidRecentRepeats(t *testing.T) {
 	if second.Batch == nil || second.Batch.ID == first.Batch.ID || len(second.Items) != 10 {
 		t.Fatalf("second snapshot = %#v", second)
 	}
+	assertUniqueRecommendationSources(t, second.Items)
 	for _, item := range second.Items {
 		if firstIDs[item.CandidateID] {
 			t.Fatalf("candidate %d repeated before inventory exhaustion", item.CandidateID)
