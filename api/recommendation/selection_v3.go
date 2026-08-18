@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 const recommendationSelectionPolicyV3 = "v3-selection-1"
@@ -77,41 +79,25 @@ func selectRecommendationCandidatesV3(ctx context.Context, userID uint, settings
 	if poolSize < 100 {
 		poolSize = 100
 	}
-	var candidates []DiscoveryCandidate
-	query := discovery.ExcludeBlacklistedCandidateDomains(db, "")
-	if options.UnseenOrUpdatedOnly {
-		query = query.Select("discovery_candidates.*").
-			Joins("LEFT JOIN user_candidate_states AS candidate_exposure ON candidate_exposure.user_id = ? AND candidate_exposure.candidate_id = discovery_candidates.id", userID).
-			Where(`candidate_exposure.id IS NULL OR candidate_exposure.exposure_count = 0 OR EXISTS (
-SELECT 1
-FROM recommendation_items AS prior_item
-WHERE prior_item.user_id = ?
-  AND prior_item.content_version < discovery_candidates.content_version
-  AND (
-		prior_item.candidate_id = discovery_candidates.id OR
-		(discovery_candidates.dedupe_key <> '' AND prior_item.dedupe_key = discovery_candidates.dedupe_key)
-  )
-)`, userID)
-	}
-	if err := query.Where("discovery_candidates.processing_state = ? AND discovery_candidates.eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
-		Where("discovery_candidates.dedupe_state = ? AND (discovery_candidates.representative_id IS NULL OR discovery_candidates.representative_id = discovery_candidates.id)", discovery.DiscoveryDedupeReady).
-		Order("discovery_candidates.quality_score desc, discovery_candidates.depth_score desc, discovery_candidates.score desc, discovery_candidates.last_seen_at desc, discovery_candidates.id asc").
-		Limit(poolSize).Find(&candidates).Error; err != nil {
-		return nil, err
-	}
-	report := &recommendationSelectionReport{Candidates: make([]recommendationCandidateScore, 0, len(candidates)), Excluded: make(map[string]int)}
-	if err := populateGlobalSelectionExclusions(report.Excluded); err != nil {
-		return nil, err
-	}
 	history, err := loadRecommendationHistoryV3(userID)
 	if err != nil {
 		return nil, err
 	}
-	states, err := inventoryUserStates(userID, candidates)
+	blockRules, err := ListUserBlockRules(userID, true)
 	if err != nil {
 		return nil, err
 	}
-	blockRules, err := ListUserBlockRules(userID, true)
+	now := recommendationClock.Now()
+	cooldown := configuredRecommendationReexposureCooldown()
+	candidates, scanExcluded, err := collectHardEligibleSelectionPool(userID, poolSize, options, history, blockRules, now, cooldown)
+	if err != nil {
+		return nil, err
+	}
+	report := &recommendationSelectionReport{Candidates: make([]recommendationCandidateScore, 0, len(candidates)), Excluded: scanExcluded}
+	if err := populateGlobalSelectionExclusions(report.Excluded); err != nil {
+		return nil, err
+	}
+	states, err := inventoryUserStates(userID, candidates)
 	if err != nil {
 		return nil, err
 	}
@@ -135,8 +121,6 @@ WHERE prior_item.user_id = ?
 	for index, id := range vectorCandidateIDs {
 		vectorBoosts[id] = 0.25 * (1 - float64(index)/float64(len(vectorCandidateIDs)+1))
 	}
-	now := recommendationClock.Now()
-	cooldown := configuredRecommendationReexposureCooldown()
 	topicWeights := parseWeightMap(profile.TopicWeights)
 	styleWeights := parseWeightMap(profile.StyleWeights)
 	preferredLanguages := normalizedPreferenceSet(parseStringList(settings.PreferredLanguages))
@@ -229,6 +213,75 @@ func normalizedPreferenceSet(values []string) map[string]struct{} {
 		}
 	}
 	return result
+}
+
+// collectHardEligibleSelectionPool 按质量排序分页扫描，直到凑满 poolSize 篇通过硬过滤的候选。
+// 来源屏蔽、已读和冷却不能再占住第一页，把后面仍合格的文章挡在 LIMIT 之外。
+func collectHardEligibleSelectionPool(userID uint, poolSize int, options recommendationSelectionOptions, history map[string]recommendationHistoryEntry, blockRules []UserBlockRule, now time.Time, cooldown time.Duration) ([]DiscoveryCandidate, map[string]int, error) {
+	excluded := make(map[string]int)
+	if poolSize <= 0 {
+		return []DiscoveryCandidate{}, excluded, nil
+	}
+	selected := make([]DiscoveryCandidate, 0, poolSize)
+	offset := 0
+	for len(selected) < poolSize {
+		query := recommendationEligibleCandidateQuery(userID, options.UnseenOrUpdatedOnly)
+		var page []DiscoveryCandidate
+		if err := query.Offset(offset).Limit(poolSize).Find(&page).Error; err != nil {
+			return nil, nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		states, err := inventoryUserStates(userID, page)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, candidate := range page {
+			state, hasState := states[candidate.ID]
+			historyEntry, hasHistory := recommendationHistoryForCandidate(history, candidate)
+			_, _, exclusion := recommendationRecurrenceDecision(candidate, state, hasState, historyEntry, hasHistory, now, cooldown)
+			if exclusion != "" {
+				excluded[exclusion]++
+				continue
+			}
+			if candidateBlocked(candidate, parseStringList(candidate.Topics), sourceHost(candidate.URL), blockRules) {
+				excluded["user_block"]++
+				continue
+			}
+			selected = append(selected, candidate)
+			if len(selected) >= poolSize {
+				break
+			}
+		}
+		offset += len(page)
+		if len(page) < poolSize {
+			break
+		}
+	}
+	return selected, excluded, nil
+}
+
+// recommendationEligibleCandidateQuery 构造推荐硬合格代表的有序查询；每页从干净的 DB 句柄重建，避免 GORM Where 累积。
+func recommendationEligibleCandidateQuery(userID uint, unseenOrUpdatedOnly bool) *gorm.DB {
+	query := discovery.ExcludeBlacklistedCandidateDomains(db, "")
+	if unseenOrUpdatedOnly {
+		query = query.Select("discovery_candidates.*").
+			Joins("LEFT JOIN user_candidate_states AS candidate_exposure ON candidate_exposure.user_id = ? AND candidate_exposure.candidate_id = discovery_candidates.id", userID).
+			Where(`candidate_exposure.id IS NULL OR candidate_exposure.exposure_count = 0 OR EXISTS (
+SELECT 1
+FROM recommendation_items AS prior_item
+WHERE prior_item.user_id = ?
+  AND prior_item.content_version < discovery_candidates.content_version
+  AND (
+		prior_item.candidate_id = discovery_candidates.id OR
+		(discovery_candidates.dedupe_key <> '' AND prior_item.dedupe_key = discovery_candidates.dedupe_key)
+  )
+)`, userID)
+	}
+	return query.Where("discovery_candidates.processing_state = ? AND discovery_candidates.eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
+		Where("discovery_candidates.dedupe_state = ? AND (discovery_candidates.representative_id IS NULL OR discovery_candidates.representative_id = discovery_candidates.id)", discovery.DiscoveryDedupeReady).
+		Order("discovery_candidates.quality_score desc, discovery_candidates.depth_score desc, discovery_candidates.score desc, discovery_candidates.last_seen_at desc, discovery_candidates.id asc")
 }
 
 func explicitSourcePreferenceMatches(candidate DiscoveryCandidate, host string, favorites map[string]struct{}) bool {

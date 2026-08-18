@@ -154,6 +154,58 @@ func TestDiscoveryFeedRefreshSearchesPastExposedRetrievalPage(t *testing.T) {
 	}
 }
 
+func TestDiscoveryFeedRefreshSkipsBlockedHighScorePage(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Now()
+	for index := 0; index < 100; index++ {
+		candidate := DiscoveryCandidate{
+			SourceID: 1, SourceName: "Hugo",
+			URL: fmt.Sprintf("https://blocked.example/high-%d", index), Title: fmt.Sprintf("Blocked %d", index),
+			QualityScore: 1, DepthScore: 1, Status: discovery.DiscoveryCandidateStatusNew,
+			ProcessingState: discovery.DiscoveryProcessingReady, EligibilityState: discovery.DiscoveryEligibilityEligible,
+			DedupeState: discovery.DiscoveryDedupeReady, DedupeKey: fmt.Sprintf("blocked-%d", index),
+			PublishedAt: &now, LastSeenAt: now,
+		}
+		if err := db.Create(&candidate).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	unblockedIDs := make(map[uint]bool, 12)
+	for index := 0; index < 12; index++ {
+		candidate := DiscoveryCandidate{
+			SourceID: 2, SourceName: fmt.Sprintf("ok-source-%d", index),
+			URL: fmt.Sprintf("https://ok.example/post-%d", index), Title: fmt.Sprintf("OK %d", index),
+			QualityScore: 0.5, DepthScore: 0.5, Status: discovery.DiscoveryCandidateStatusNew,
+			ProcessingState: discovery.DiscoveryProcessingReady, EligibilityState: discovery.DiscoveryEligibilityEligible,
+			DedupeState: discovery.DiscoveryDedupeReady, DedupeKey: fmt.Sprintf("ok-%d", index),
+			PublishedAt: &now, LastSeenAt: now,
+		}
+		if err := db.Create(&candidate).Error; err != nil {
+			t.Fatal(err)
+		}
+		unblockedIDs[candidate.ID] = true
+	}
+	if err := db.Create(&UserBlockRule{UserID: 6001, RuleType: UserBlockRuleSource, RuleValue: "Hugo", Active: true, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := RefreshDiscoveryFeed(context.Background(), 6001, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Batch == nil || snapshot.Batch.ActualCount != 10 || len(snapshot.Items) != 10 {
+		t.Fatalf("blocked high-score page should not empty the feed: %#v", snapshot)
+	}
+	for _, item := range snapshot.Items {
+		if !unblockedIDs[item.CandidateID] {
+			t.Fatalf("feed selected blocked or unexpected candidate %d (%s)", item.CandidateID, item.SnapshotSource)
+		}
+	}
+	if strings.Contains(snapshot.Batch.ShortageReasons, "newInventoryShortage\":true") {
+		t.Fatalf("unblocked inventory should fill the batch: %s", snapshot.Batch.ShortageReasons)
+	}
+}
+
 func TestDiscoveryFeedRefreshAllowsMaterialContentUpdate(t *testing.T) {
 	setupSQLiteDB(t)
 	candidate := createDiscoveryFeedCandidates(t, 1)[0]

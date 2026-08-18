@@ -289,3 +289,41 @@ func TestRecommendationV3SoftRelaxationIsAuditedButHardIdentityIsNot(t *testing.
 		t.Fatalf("hard duplicate cluster count = %d, want 1", clusterCount)
 	}
 }
+
+func TestRecommendationV3SkipsExposedHighScorePage(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Date(2026, 8, 18, 7, 0, 0, 0, time.UTC)
+	useRecommendationTestClock(t, now)
+	settings := DefaultRecommendationSettings(410)
+	settings.DailyLimit = 10
+	settings.Enabled = true
+	if _, err := SaveRecommendationSettings(&settings); err != nil {
+		t.Fatal(err)
+	}
+	exposedIDs := make(map[uint]bool, 100)
+	for index := 0; index < 100; index++ {
+		candidate := createReadyCandidate(t, fmt.Sprintf("https://hot.example/post-%d", index), fmt.Sprintf("Hot %d", index), []string{"Hot"}, fmt.Sprintf("hot-%d", index), 1, 1)
+		if err := discovery.RecordUserCandidateExposure(db, 410, candidate.ID, now.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		exposedIDs[candidate.ID] = true
+	}
+	freshIDs := make(map[uint]bool, 10)
+	for index := 0; index < 10; index++ {
+		candidate := createReadyCandidate(t, fmt.Sprintf("https://fresh.example/post-%d", index), fmt.Sprintf("Fresh %d", index), []string{fmt.Sprintf("Fresh %d", index)}, fmt.Sprintf("fresh-%d", index), 0.5, 0.5)
+		freshIDs[candidate.ID] = true
+	}
+
+	snapshot, err := GenerateDailyRecommendations(context.Background(), 410, "2026-08-18")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Day.ActualCount != 10 || len(snapshot.Items) != 10 {
+		t.Fatalf("exposed high-score page should not empty the digest: %#v", snapshot)
+	}
+	for _, item := range snapshot.Items {
+		if exposedIDs[item.CandidateID] || !freshIDs[item.CandidateID] {
+			t.Fatalf("digest selected exposed or unexpected candidate %d", item.CandidateID)
+		}
+	}
+}
