@@ -180,10 +180,13 @@ func DecodeChatJSON(content string, output interface{}, strict bool) error {
 	return nil
 }
 
+// disableModelThinking 按模型族关闭推理。Qwen 走 vLLM/sglang 的 chat_template_kwargs，
+// 仅顶层 enable_thinking=false 会被忽略并继续输出 reasoning_content。
 func disableModelThinking(payload map[string]interface{}, model string) {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if strings.Contains(model, "qwen") {
 		payload["enable_thinking"] = false
+		payload["chat_template_kwargs"] = map[string]interface{}{"enable_thinking": false}
 		return
 	}
 	for _, marker := range []string{"deepseek", "mimo", "kimi", "minimax", "glm", "hy3", "hunyuan"} {

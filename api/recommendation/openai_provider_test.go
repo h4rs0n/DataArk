@@ -251,6 +251,10 @@ func TestOpenAICompatibleProviderArticleAssessmentUsesCompactSchemaAndQwenSwitch
 	if payload["enable_thinking"] != false {
 		t.Fatalf("request controls = %#v", payload)
 	}
+	templateKwargs, ok := payload["chat_template_kwargs"].(map[string]interface{})
+	if !ok || templateKwargs["enable_thinking"] != false {
+		t.Fatalf("chat_template_kwargs = %#v", payload["chat_template_kwargs"])
+	}
 	responseFormat := requireMap(t, payload["response_format"])
 	if responseFormat["type"] != "json_schema" {
 		t.Fatalf("response format = %#v", responseFormat)
@@ -272,8 +276,13 @@ func TestOpenAICompatibleProviderArticleAssessmentUsesCompactSchemaAndQwenSwitch
 	messages := payload["messages"].([]interface{})
 	user := requireMap(t, messages[1])
 	prompt, _ := user["content"].(string)
-	if !strings.Contains(prompt, "summary:") || !strings.Contains(prompt, "keywords:") {
-		t.Fatalf("prompt missing summary/keywords contract: %#v", user["content"])
+	if !strings.Contains(prompt, "summary：") || !strings.Contains(prompt, "keywords：") || !strings.Contains(prompt, "简体中文") || !strings.Contains(prompt, "无论原文语种如何") {
+		t.Fatalf("prompt missing Chinese output contract: %#v", user["content"])
+	}
+	system := requireMap(t, messages[0])
+	systemContent, _ := system["content"].(string)
+	if !strings.Contains(systemContent, "你是文章阅读价值评估器") || !strings.Contains(systemContent, "简体中文") {
+		t.Fatalf("system prompt missing Chinese contract: %#v", system["content"])
 	}
 }
 
@@ -409,7 +418,7 @@ func TestArticleAssessmentRetriesSchemaWithConcreteValidatorError(t *testing.T) 
 	assertNoAssistantReplay(t, client.payloads[1], invalid)
 	user := requireMap(t, messages[len(messages)-1])
 	content, _ := user["content"].(string)
-	if user["role"] != "user" || !strings.Contains(content, `unknown field "unused"`) || !strings.Contains(content, "Parser/validator error:") {
+	if user["role"] != "user" || !strings.Contains(content, `unknown field "unused"`) || !strings.Contains(content, "解析/校验错误：") || !strings.Contains(content, "简体中文") {
 		t.Fatalf("retry user = %q", content)
 	}
 	if strings.Contains(content, "invalid chat json") {
