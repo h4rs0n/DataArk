@@ -71,6 +71,28 @@ test('candidate article titles open the source in a safe new tab', () => {
   assert.match(view, /@mark-read="markCandidateRead"/)
 })
 
+test('daily recommendation tab navigates history with date arrows', () => {
+  assert.match(view, /title="每日推荐"/)
+  assert.doesNotMatch(view, /title="今日推荐"/)
+  assert.doesNotMatch(view, /title="历史日报"/)
+  assert.doesNotMatch(view, /key="history"/)
+  assert.match(view, /shiftDigestDate\(-1\)/)
+  assert.match(view, /shiftDigestDate\(1\)/)
+  assert.match(view, /aria-label="前一天"/)
+  assert.match(view, /aria-label="后一天"/)
+  assert.match(view, /isViewingToday/)
+  assert.match(view, /\/api\/recommendations\/days\/\$\{date\}/)
+  assert.match(view, /\/api\/recommendations\/days\/\$\{date\}\/summary/)
+  assert.match(view, /addCalendarDays/)
+  assert.match(view, /暂无每日推荐/)
+  assert.match(view, /<a-date-picker/)
+  assert.match(view, /disableDigestCalendarDate/)
+  assert.match(view, /\/api\/recommendations\/history\?page=/)
+  assert.match(view, /aria-label="选择日报日期"/)
+  assert.match(view, /day\.status === 'published' \|\| day\.status === 'supplemented'/)
+  assert.match(view, /digest-calendar-popup/)
+})
+
 test('today recommendation titles open the source in a safe new tab', () => {
   assert.match(recommendationCard, /:href="item\.candidate\.url"/)
   assert.match(recommendationCard, /\$emit\('mark-read', item\.candidate\)/)

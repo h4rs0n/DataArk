@@ -1019,12 +1019,31 @@ func GetRecommendationTodaySummary(c *gin.Context) {
 		c.JSON(500, gin.H{"Status": "0", "Message": "计算用户本地日期失败", "Error": err.Error()})
 		return
 	}
-	summary, err := getRecommendationDaySummary(c.Request.Context(), userID, date)
-	if err != nil {
-		c.JSON(500, gin.H{"Status": "0", "Message": "生成今日推荐总结失败", "Error": err.Error()})
+	writeRecommendationDaySummary(c, userID, date)
+}
+
+// GetRecommendationDaySummary 按路径中的日期返回该日推荐总结，供每日推荐页翻阅历史日报。
+func GetRecommendationDaySummary(c *gin.Context) {
+	userID, ok := requireCurrentUserID(c)
+	if !ok {
 		return
 	}
-	c.JSON(200, gin.H{"Status": "1", "Message": "查询今日推荐总结成功", "Data": summary})
+	date := strings.TrimSpace(c.Param("date"))
+	if date == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "缺少日报日期"})
+		return
+	}
+	writeRecommendationDaySummary(c, userID, date)
+}
+
+// writeRecommendationDaySummary 生成或读取指定日期的日报总结并写入 JSON 响应。
+func writeRecommendationDaySummary(c *gin.Context, userID uint, date string) {
+	summary, err := getRecommendationDaySummary(c.Request.Context(), userID, date)
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "生成推荐总结失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Message": "查询推荐总结成功", "Data": summary})
 }
 
 func GetDiscoveryRecommendationFeed(c *gin.Context) {
@@ -1787,6 +1806,7 @@ func WebStarter(debugMode bool) {
 		protected.GET("/recommendations/discovery-feed", GetDiscoveryRecommendationFeed)
 		protected.POST("/recommendations/discovery-feed/refresh", RefreshDiscoveryRecommendationFeed)
 		protected.GET("/recommendations/history", GetRecommendationHistory)
+		protected.GET("/recommendations/days/:date/summary", GetRecommendationDaySummary)
 		protected.GET("/recommendations/days/:date", GetRecommendationDay)
 		protected.POST("/admin/recommendations/generate", GenerateRecommendationDay)
 		protected.POST("/admin/recommendations/supplement", SupplementRecommendationDay)

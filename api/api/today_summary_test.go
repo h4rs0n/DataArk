@@ -57,3 +57,21 @@ func TestRecommendationTodaySummaryPropagatesServiceErrors(t *testing.T) {
 		t.Fatalf("body = %s", response.Body.String())
 	}
 }
+
+func TestRecommendationDaySummaryUsesPathDate(t *testing.T) {
+	oldSummary := getRecommendationDaySummary
+	t.Cleanup(func() { getRecommendationDaySummary = oldSummary })
+	getRecommendationDaySummary = func(_ context.Context, userID uint, date string) (*recommendation.RecommendationDaySummary, error) {
+		if userID != 905 || date != "2026-06-01" {
+			t.Fatalf("summary identity = %d/%s", userID, date)
+		}
+		return &recommendation.RecommendationDaySummary{Date: date, Available: true, Overview: "历史总结。", Highlights: []string{}, Topics: []string{}}, nil
+	}
+	response := performUserPathControllerRequest(http.MethodGet, "/recommendations/days/:date/summary", "/recommendations/days/2026-06-01/summary", &auth.User{ID: 905}, GetRecommendationDaySummary)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"Status":"1"`) || !strings.Contains(response.Body.String(), "历史总结。") {
+		t.Fatalf("body = %s", response.Body.String())
+	}
+}

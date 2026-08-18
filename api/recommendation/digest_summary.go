@@ -58,7 +58,7 @@ func (generator RuleBasedDigestSummaryGenerator) GenerateDigestSummary(_ context
 	}
 	topTopics := topCountedValues(topicCounts, 3)
 
-	overview := fmt.Sprintf("今日共推荐 %d 篇文章", len(input.Items))
+	overview := fmt.Sprintf("当天共推荐 %d 篇文章", len(input.Items))
 	if len(sourceCounts) > 0 {
 		overview += fmt.Sprintf("，覆盖 %d 个来源", len(sourceCounts))
 	}
@@ -129,10 +129,10 @@ func GetRecommendationDaySummaryWithGenerator(ctx context.Context, userID uint, 
 	day := snapshot.Day
 	date = day.RecommendationDate
 	if day.Status != RecommendationDayStatusPublished && day.Status != RecommendationDayStatusSupplemented {
-		return &RecommendationDaySummary{Date: date, Highlights: []string{}, Topics: []string{}, Reason: "今日推荐尚未生成"}, nil
+		return &RecommendationDaySummary{Date: date, Highlights: []string{}, Topics: []string{}, Reason: "该日推荐尚未生成"}, nil
 	}
 	if len(snapshot.Items) == 0 {
-		return &RecommendationDaySummary{Date: date, Highlights: []string{}, Topics: []string{}, Reason: "今日推荐暂无文章"}, nil
+		return &RecommendationDaySummary{Date: date, Highlights: []string{}, Topics: []string{}, Reason: "该日推荐暂无文章"}, nil
 	}
 	if strings.TrimSpace(day.SummaryText) != "" && day.SummaryActualCount == day.ActualCount {
 		return daySummaryFromDay(day), nil

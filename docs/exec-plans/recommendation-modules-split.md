@@ -22,6 +22,8 @@ An operator can observe: listing and login URLs never appear in the assessment q
 - [x] (2026-08-18) Remove Sitemap code, API, UI, and docs; unlimited ingest plus aggressive archive backfill for `user_managed` seeds; keep bounded backfill for blogroll sites.
 - [x] (2026-08-18 20:50+08:00) Invert scheduling: automatic `discovery_crawl` workers, paused `article_assessment` queue with owner **执行 LLM 评估**.
 - [x] (2026-08-18 22:30+08:00) Assessment metrics: 24h success/failure count complete jobs; third row shows output token/s and estimated drain time.
+- [x] (2026-08-18 23:20+08:00) Daily digest tab: remove 历史日报; rename 今日推荐 to 每日推荐; browse past days with left/right arrows.
+- [x] (2026-08-18 23:35+08:00) Daily digest date label opens a calendar; dates without a published digest are gray and unselectable.
 
 ## Surprises & Discoveries
 
@@ -52,6 +54,12 @@ An operator can observe: listing and login URLs never appear in the assessment q
 - Decision: Leave assessment row writes in `discovery` and expose them through `api/assessment`.
   Rationale: Moving the state machine would force discovery tests to import assessment, which then imports discovery.
   Date/Author: 2026-08-18 / Cursor
+- Decision: Remove the 历史日报 tab. 每日推荐 uses left/right arrows to change the calendar date, loads `/api/recommendations/days/:date` plus `/summary` for past days, and keeps owner supplement on today only.
+  Rationale: The operator asked to browse history in the same card UI as today instead of a separate compact list.
+  Date/Author: 2026-08-18 / user and Cursor
+- Decision: Clicking the daily digest date opens Arco DatePicker. `disabledDate` grays any day after today and any past day that is not `published` or `supplemented`. Today stays selectable even if empty.
+  Rationale: The operator asked for a calendar jump, with missing digests visually unavailable.
+  Date/Author: 2026-08-18 / user and Cursor
 
 ## Outcomes & Retrospective
 
@@ -85,7 +93,7 @@ Fourth, persist one compact `assessment_llm_calls` row per chat attempt using th
 
 Fifth, delete Sitemap parsing, `FetchKindSitemap`, endpoint type, owner API, UI, robots Sitemap consumption, and tests. Migration `000028` disables leftover sitemap sources and pauses sitemap backfill rows with reason `sitemap_removed`. For `user_managed` sites, do not truncate Feed/homepage candidates at 50, always start archive backfill (homepage plus historical navigation), and schedule the next archive batch immediately while the cursor has work. Observing/blogroll sites keep the 50-item cap and the 7-day empty-backfill interval. Follow Atom/RSS `rel=next` only for user-managed Feeds.
 
-Sixth, leave selection, digest, feedback, and inventory algorithms in `api/recommendation`. Regroup the Vue tabs: 推荐 (feed, today, history, settings), 发现 (subscriptions, graph, crawl queue, blacklist), 评估 (metrics, labelling workflow, backfill). Update `README.md`, `README_en.md`, and `docs/operations/article-assessment-v3-runbook.md`. New Go comments are in Chinese. Files are UTF-8.
+Sixth, leave selection, digest, feedback, and inventory algorithms in `api/recommendation`. Regroup the Vue tabs: 推荐 (feed, 每日推荐 with date arrows for history, settings), 发现 (subscriptions, graph, crawl queue, blacklist), 评估 (metrics, labelling workflow, backfill). Update `README.md`, `README_en.md`, and `docs/operations/article-assessment-v3-runbook.md`. New Go comments are in Chinese. Files are UTF-8.
 
 ## Concrete Steps
 
@@ -163,3 +171,5 @@ In `api/assessment`, define:
 `api/api/controller.go` `startApplicationJobQueue` wires `ProcessCandidate` to `discovery.ProcessCandidate` and `AssessArticle` to `assessment` with `ConfiguredArticleAssessor`. Recovery joins `discovery.RecoverDueJobs` and `assessment.RecoverDueJobs` and `recommendation.RecoverDueJobs`.
 
 Revision note (2026-08-18): living ExecPlan after the three-module split landed. Goose count is 29. Assessment persistence stays in discovery to avoid a test import cycle.
+
+Revision note (2026-08-18 evening): 每日推荐 absorbed historical digests. The separate 历史日报 tab is gone. `GET /api/recommendations/days/:date/summary` returns a past day's summary for the date arrows.

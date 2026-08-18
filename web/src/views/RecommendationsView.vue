@@ -67,106 +67,94 @@
           </section>
         </a-tab-pane>
 
-        <a-tab-pane key="today" title="今日推荐">
+        <a-tab-pane key="today" title="每日推荐">
           <section class="panel">
             <div class="section-title">
               <div>
-                <h2>{{ todaySnapshot.day.date }}</h2>
-                <span>{{ todayStatusText }}</span>
+                <!-- 左右箭头按自然日翻阅今日与历史日报 -->
+                <div class="digest-date-nav">
+                  <a-button class="digest-date-btn" type="text" aria-label="前一天" :disabled="digestLoading" @click="shiftDigestDate(-1)">
+                    <template #icon><icon-left /></template>
+                  </a-button>
+                  <!-- 点击日期弹出日历；无日报日期由 disabledDate 显示为灰色 -->
+                  <a-config-provider :locale="zhCN">
+                    <a-date-picker
+                      class="digest-date-picker"
+                      :model-value="digestDate"
+                      value-format="YYYY-MM-DD"
+                      format="YYYY-MM-DD"
+                      :allow-clear="false"
+                      :show-now-btn="false"
+                      :disabled="digestLoading"
+                      :disabled-date="disableDigestCalendarDate"
+                      :day-start-of-week="1"
+                      position="bl"
+                      :trigger-props="{ contentClass: 'digest-calendar-popup' }"
+                      @change="onDigestCalendarChange"
+                      @popup-visible-change="onDigestCalendarVisible"
+                    >
+                      <h2 class="digest-date-label" role="button" tabindex="0" aria-label="选择日报日期">{{ digestDate }}</h2>
+                    </a-date-picker>
+                  </a-config-provider>
+                  <a-button class="digest-date-btn" type="text" aria-label="后一天" :disabled="isViewingToday || digestLoading" @click="shiftDigestDate(1)">
+                    <template #icon><icon-right /></template>
+                  </a-button>
+                  <a-tag v-if="isViewingToday" size="small" color="arcoblue">今天</a-tag>
+                </div>
+                <span>{{ digestStatusText }}</span>
               </div>
               <a-space wrap>
-                <a-button v-if="isOwner && todaySnapshot.day.actualCount < todaySnapshot.day.requestedCount && ['published', 'supplemented'].includes(todaySnapshot.day.status)" :loading="generating" type="primary" @click="supplementDaily(todaySnapshot.day.date)">
+                <a-button v-if="isOwner && isViewingToday && digestSnapshot.day.actualCount < digestSnapshot.day.requestedCount && ['published', 'supplemented'].includes(digestSnapshot.day.status)" :loading="generating" type="primary" @click="supplementDaily(digestSnapshot.day.date)">
                   补充缺少文章
                 </a-button>
-                <a-button @click="loadToday">
+                <a-button :loading="digestLoading" @click="reloadSelectedDigest">
                   <template #icon><icon-refresh /></template>
                   刷新
                 </a-button>
               </a-space>
             </div>
 
-            <div class="today-summary">
-              <a-spin v-if="todaySummaryLoading" :size="16" tip="正在生成今日总结…" class="today-summary-loading" />
-              <template v-else-if="todaySummary?.available">
-                <p class="today-summary-overview">{{ todaySummary.overview }}</p>
-                <ul v-if="todaySummary.highlights.length" class="today-summary-highlights">
-                  <li v-for="(highlight, index) in todaySummary.highlights" :key="index">{{ highlight }}</li>
-                </ul>
-                <div v-if="todaySummary.topics.length" class="today-summary-topics">
-                  <a-tag v-for="topic in todaySummary.topics" :key="topic" size="small">{{ topic }}</a-tag>
-                </div>
-                <small class="today-summary-meta">
-                  {{ todaySummary.model === 'rule-based' ? '统计总结' : 'AI 总结' }}
-                  <template v-if="todaySummary.generatedAt"> · 生成于 {{ formatDateTime(todaySummary.generatedAt) }}</template>
-                </small>
-              </template>
-              <p v-else-if="todaySummaryError" class="today-summary-error">总结暂不可用：{{ todaySummaryError }}</p>
-              <p v-else-if="todaySummary" class="today-summary-empty">{{ todaySummary.reason || '今日推荐生成后将自动总结' }}</p>
-            </div>
-
-            <DigestSummary :day="todaySnapshot.day" />
-
-            <a-empty v-if="todaySnapshot.items.length === 0" description="暂无今日推荐" />
-            <div v-else class="recommendation-list">
-              <RecommendationArticleCard
-                v-for="item in todaySnapshot.items"
-                :key="item.id"
-                :item="item"
-                :archiving="archivingCandidateId === item.candidateId"
-                :current-action="feedbackByItem[item.id]?.action"
-                :feedback-loading="feedbackLoadingId === item.id"
-                @open="openCandidate"
-                @archive="archiveCandidate"
-                @context="openItemContext"
-                @mark-read="markCandidateRead"
-                @feedback="(action) => sendFeedback(item, action)"
-                @scope="(scope) => openImpactDialog(item, scope)"
-                @revert="revertFeedback(item)"
-              />
-            </div>
-          </section>
-        </a-tab-pane>
-
-        <a-tab-pane key="history" title="历史日报">
-          <section class="panel">
-            <div class="section-title">
-              <div>
-                <h2>历史日报</h2>
-                <span>历史快照保持生成时的排序和理由</span>
-              </div>
-              <label class="inline-field" for="history-date">
-                <span>日期</span>
-                <input id="history-date" v-model="historyDate" type="date" @change="loadHistoryDay" />
-              </label>
-            </div>
-            <div class="history-layout">
-              <aside class="day-list">
-                <button v-for="day in historyDays" :key="day.id" type="button" :class="{ active: day.date === historyDate }" @click="selectHistoryDay(day.date)">
-                  <strong>{{ day.date }}</strong>
-                  <span>{{ day.actualCount }}/{{ day.requestedCount }} · {{ day.status }}</span>
-                </button>
-              </aside>
-              <div class="history-detail">
-                <a-empty v-if="historySnapshot.items.length === 0" description="暂无历史推荐" />
-                <template v-else>
-                  <article v-for="item in historySnapshot.items" :key="item.id" class="compact-card">
-                    <div class="item-main">
-                      <div class="item-meta">
-                        <span>#{{ item.rank }}</span>
-                        <span>{{ item.candidate.sourceName || sourceHost(item.candidate.url) }}</span>
-                      </div>
-                      <h3>{{ item.candidate.title }}</h3>
-                      <p>{{ item.candidate.summary || item.candidate.url }}</p>
-                      <small>{{ item.reason }}</small>
-                    </div>
-                    <a-button @click="openCandidate(item.candidate)">
-                      <template #icon><icon-link /></template>
-                      原文
-                    </a-button>
-                  </article>
+            <a-spin :loading="digestLoading" class="digest-spin">
+              <div class="today-summary">
+                <a-spin v-if="digestSummaryLoading" :size="16" tip="正在生成日报总结…" class="today-summary-loading" />
+                <template v-else-if="digestSummary?.available">
+                  <p class="today-summary-overview">{{ digestSummary.overview }}</p>
+                  <ul v-if="digestSummary.highlights.length" class="today-summary-highlights">
+                    <li v-for="(highlight, index) in digestSummary.highlights" :key="index">{{ highlight }}</li>
+                  </ul>
+                  <div v-if="digestSummary.topics.length" class="today-summary-topics">
+                    <a-tag v-for="topic in digestSummary.topics" :key="topic" size="small">{{ topic }}</a-tag>
+                  </div>
+                  <small class="today-summary-meta">
+                    {{ digestSummary.model === 'rule-based' ? '统计总结' : 'AI 总结' }}
+                    <template v-if="digestSummary.generatedAt"> · 生成于 {{ formatDateTime(digestSummary.generatedAt) }}</template>
+                  </small>
                 </template>
+                <p v-else-if="digestSummaryError" class="today-summary-error">总结暂不可用：{{ digestSummaryError }}</p>
+                <p v-else-if="digestSummary" class="today-summary-empty">{{ digestSummary.reason || '日报生成后将自动总结' }}</p>
               </div>
-            </div>
+
+              <DigestSummary :day="digestSnapshot.day" />
+
+              <a-empty v-if="digestSnapshot.items.length === 0" :description="isViewingToday ? '暂无每日推荐' : '该日暂无推荐'" />
+              <div v-else class="recommendation-list">
+                <RecommendationArticleCard
+                  v-for="item in digestSnapshot.items"
+                  :key="item.id"
+                  :item="item"
+                  :archiving="archivingCandidateId === item.candidateId"
+                  :current-action="feedbackByItem[item.id]?.action"
+                  :feedback-loading="feedbackLoadingId === item.id"
+                  @open="openCandidate"
+                  @archive="archiveCandidate"
+                  @context="openItemContext"
+                  @mark-read="markCandidateRead"
+                  @feedback="(action) => sendFeedback(item, action)"
+                  @scope="(scope) => openImpactDialog(item, scope)"
+                  @revert="revertFeedback(item)"
+                />
+              </div>
+            </a-spin>
           </section>
         </a-tab-pane>
 
@@ -488,6 +476,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message, Notification } from '@arco-design/web-vue'
+import zhCN from '@arco-design/web-vue/es/locale/lang/zh-cn'
 import DigestSummary from '@/components/recommendations/DigestSummary.vue'
 import ArticleAssessmentWorkflow from '@/components/recommendations/ArticleAssessmentWorkflow.vue'
 import AssessmentMetricsPanel from '@/components/recommendations/AssessmentMetricsPanel.vue'
@@ -498,9 +487,10 @@ import {
   IconArrowLeft,
   IconDelete,
   IconEye,
-  IconLink,
+  IconLeft,
   IconPlus,
   IconRefresh,
+  IconRight,
   IconRobot,
   IconSettings,
   IconSync,
@@ -718,7 +708,6 @@ const addingBlacklist = ref(false)
 const deletingBlacklistId = ref<number | null>(null)
 const rankingWindow = ref<'7d' | 'all'>('7d')
 const keywordWindow = ref<'7d' | 'all'>('7d')
-const historyDate = ref(formatLocalDate(new Date()))
 const rankings = ref<ArchiveRankingItem[]>([])
 const archiveRecommendations = ref<ArchiveRecommendationItem[]>([])
 const keywords = ref<KeywordItem[]>([])
@@ -736,7 +725,6 @@ watch(() => sources.value.length, (total) => {
 const discoveryFeed = ref<RecommendationFeedSnapshot>({ batch: null, items: [] })
 const crawlQueue = ref<CrawlQueueSnapshot>(emptyCrawlQueue())
 const domainBlacklist = ref<DomainBlacklistEntry[]>([])
-const historyDays = ref<RecommendationDay[]>([])
 const blockRules = ref<BlockRule[]>([])
 const feedbackByItem = reactive<Record<number, { action: string } | undefined>>({})
 const isOwner = ref(false)
@@ -747,11 +735,16 @@ const siteBackfills = ref<any[]>([])
 const contextDrawerVisible = ref(false)
 const contextLoading = ref(false)
 const itemContext = ref<any>()
-const todaySnapshot = ref<RecommendationSnapshot>(emptySnapshot(formatLocalDate(new Date())))
-const todaySummary = ref<TodayDigestSummary | null>(null)
-const todaySummaryLoading = ref(false)
-const todaySummaryError = ref('')
-const historySnapshot = ref<RecommendationSnapshot>(emptySnapshot(historyDate.value))
+const digestDate = ref(formatLocalDate(new Date()))
+const todayDate = ref(digestDate.value)
+const digestSnapshot = ref<RecommendationSnapshot>(emptySnapshot(digestDate.value))
+const digestSummary = ref<TodayDigestSummary | null>(null)
+const digestSummaryLoading = ref(false)
+const digestSummaryError = ref('')
+const digestLoading = ref(false)
+const digestAvailableDates = ref<Set<string>>(new Set())
+const digestCalendarReady = ref(false)
+let digestLoadToken = 0
 const sourceForm = reactive({ name: '', url: '', type: 'feed' })
 const blacklistForm = reactive({ domain: '', reason: '' })
 const settingsForm = reactive<RecommendationSettings>({
@@ -782,13 +775,20 @@ const crawlQueueStateLabel = computed(() => ({
 
 const displayedCrawlQueueTasks = computed(() => groupCrawlQueueTasks(crawlQueue.value.tasks))
 
-const todayStatusText = computed(() => {
-  const day = todaySnapshot.value.day
+const isViewingToday = computed(() => digestDate.value === todayDate.value)
+
+const digestStatusText = computed(() => {
+  const day = digestSnapshot.value.day
+  let status = day.status
   if (day.status === 'published' || day.status === 'supplemented') {
-    return `${day.actualCount}/${day.requestedCount} 篇 · ${day.generatedAt ? formatDateTime(day.generatedAt) : '已生成'}`
+    status = `${day.actualCount}/${day.requestedCount} 篇 · ${day.generatedAt ? formatDateTime(day.generatedAt) : '已生成'}`
+  } else if (day.status === 'missing') {
+    status = isViewingToday.value ? '尚未生成' : '该日尚未生成日报'
   }
-  if (day.status === 'missing') return '尚未生成'
-  return day.status
+  if (!isViewingToday.value && day.status !== 'missing') {
+    return `${status} · 历史快照保持生成时的排序和理由`
+  }
+  return status
 })
 
 const impactOptions = computed<BlockTarget[]>(() => {
@@ -824,22 +824,119 @@ const requestJSON = async <T>(url: string, options: RequestInit = {}): Promise<T
   return payload.Data as T
 }
 
-const loadToday = async () => {
-  todaySnapshot.value = normalizeSnapshot(await requestJSON<RecommendationSnapshot>('/api/recommendations/today', { headers: authHeaders() }))
-  await Promise.all(todaySnapshot.value.items.map(loadItemFeedback))
+// loadTodayAnchor 用服务器时区下的“今天”校正可翻阅上限，避免浏览器时区与用户设置不一致。
+const loadTodayAnchor = async () => {
+  const snapshot = normalizeSnapshot(await requestJSON<RecommendationSnapshot>('/api/recommendations/today', { headers: authHeaders() }))
+  todayDate.value = snapshot.day.date || formatLocalDate(new Date())
+  if (!digestDate.value || digestDate.value >= todayDate.value) {
+    digestDate.value = todayDate.value
+  }
+  return snapshot
 }
 
-const loadTodaySummary = async () => {
-  todaySummaryLoading.value = true
-  todaySummaryError.value = ''
+const digestSnapshotURL = (date: string) => (
+  date === todayDate.value ? '/api/recommendations/today' : `/api/recommendations/days/${date}`
+)
+
+const digestSummaryURL = (date: string) => (
+  date === todayDate.value ? '/api/recommendations/today/summary' : `/api/recommendations/days/${date}/summary`
+)
+
+const applyDigestSnapshot = async (snapshot: RecommendationSnapshot) => {
+  digestSnapshot.value = snapshot
+  await Promise.all(digestSnapshot.value.items.map(loadItemFeedback))
+}
+
+const loadSelectedDigest = async (refreshToday = false) => {
+  const token = ++digestLoadToken
+  digestLoading.value = true
   try {
-    todaySummary.value = await requestJSON<TodayDigestSummary>('/api/recommendations/today/summary', { headers: authHeaders() })
-  } catch (error) {
-    todaySummary.value = null
-    todaySummaryError.value = error instanceof Error ? error.message : '总结生成失败'
+    let snapshot: RecommendationSnapshot
+    const selected = digestDate.value
+    if (refreshToday || selected === todayDate.value) {
+      const todaySnapshot = await loadTodayAnchor()
+      if (token !== digestLoadToken) return
+      snapshot = digestDate.value === todayDate.value
+        ? todaySnapshot
+        : normalizeSnapshot(await requestJSON<RecommendationSnapshot>(digestSnapshotURL(digestDate.value), { headers: authHeaders() }))
+    } else {
+      snapshot = normalizeSnapshot(await requestJSON<RecommendationSnapshot>(digestSnapshotURL(selected), { headers: authHeaders() }))
+    }
+    if (token !== digestLoadToken) return
+    digestSummary.value = null
+    digestSummaryError.value = ''
+    await applyDigestSnapshot(snapshot)
+    await loadDigestSummary(digestDate.value, token)
   } finally {
-    todaySummaryLoading.value = false
+    if (token === digestLoadToken) digestLoading.value = false
   }
+}
+
+const reloadSelectedDigest = async () => {
+  await loadSelectedDigest(true)
+}
+
+const loadDigestSummary = async (date = digestDate.value, token = digestLoadToken) => {
+  digestSummaryLoading.value = true
+  digestSummaryError.value = ''
+  try {
+    const summary = await requestJSON<TodayDigestSummary>(digestSummaryURL(date), { headers: authHeaders() })
+    if (token !== digestLoadToken) return
+    digestSummary.value = summary
+  } catch (error) {
+    if (token !== digestLoadToken) return
+    digestSummary.value = null
+    digestSummaryError.value = error instanceof Error ? error.message : '总结生成失败'
+  } finally {
+    if (token === digestLoadToken) digestSummaryLoading.value = false
+  }
+}
+
+// loadDigestCalendarDates 拉取已发布日报日期，供日历把无日报的日子标灰。
+const loadDigestCalendarDates = async () => {
+  try {
+    const dates = new Set<string>()
+    for (let page = 1; page <= 12; page++) {
+      const days = (await requestJSON<RecommendationDay[]>(`/api/recommendations/history?page=${page}&pageSize=100`, { headers: authHeaders() })) ?? []
+      for (const day of days) {
+        if (day.status === 'published' || day.status === 'supplemented') dates.add(day.date)
+      }
+      if (days.length < 100) break
+    }
+    digestAvailableDates.value = dates
+    digestCalendarReady.value = true
+  } catch {
+    digestCalendarReady.value = false
+  }
+}
+
+// disableDigestCalendarDate 禁止选择明天及以后；已加载日历时，没有发布日报的历史日期显示为灰色。
+const disableDigestCalendarDate = (current?: Date) => {
+  if (!current) return true
+  const date = formatLocalDate(current)
+  if (!todayDate.value || date > todayDate.value) return true
+  if (date === todayDate.value) return false
+  if (!digestCalendarReady.value) return false
+  return !digestAvailableDates.value.has(date)
+}
+
+const onDigestCalendarVisible = (visible: boolean) => {
+  if (visible) void loadDigestCalendarDates()
+}
+
+const onDigestCalendarChange = async (value?: string | Date | number) => {
+  const date = typeof value === 'string' ? value : value ? formatLocalDate(new Date(value)) : ''
+  if (!date || date === digestDate.value || date > todayDate.value) return
+  digestDate.value = date
+  await loadSelectedDigest()
+}
+
+// shiftDigestDate 按公历日前后翻页，不能翻到用户时区的明天及以后。
+const shiftDigestDate = async (delta: number) => {
+  const next = addCalendarDays(digestDate.value, delta)
+  if (next > todayDate.value) return
+  digestDate.value = next
+  await loadSelectedDigest()
 }
 
 const loadIdentity = async () => {
@@ -934,24 +1031,6 @@ const loadItemFeedback = async (item: RecommendationItem) => {
   feedbackByItem[item.id] = data?.current ? { action: data.current.action === 'duplicate' ? 'too_repetitive' : data.current.action } : undefined
 }
 
-const loadHistory = async () => {
-  historyDays.value = (await requestJSON<RecommendationDay[]>('/api/recommendations/history?page=1&pageSize=30', { headers: authHeaders() })) ?? []
-  if (!historyDate.value && historyDays.value.length > 0) {
-    historyDate.value = historyDays.value[0].date
-  }
-  await loadHistoryDay()
-}
-
-const loadHistoryDay = async () => {
-  if (!historyDate.value) return
-  historySnapshot.value = normalizeSnapshot(await requestJSON<RecommendationSnapshot>(`/api/recommendations/days/${historyDate.value}`, { headers: authHeaders() }))
-}
-
-const selectHistoryDay = async (date: string) => {
-  historyDate.value = date
-  await loadHistoryDay()
-}
-
 const loadSettings = async () => {
   const settings = await requestJSON<RecommendationSettings>('/api/recommendations/settings', { headers: authHeaders() })
   Object.assign(settingsForm, settings)
@@ -1013,9 +1092,8 @@ const loadAll = async () => {
     loading.value = true
     await Promise.all([
       loadIdentity(),
-      loadToday(),
-      loadTodaySummary(),
-      loadHistory(),
+      loadSelectedDigest(true),
+      loadDigestCalendarDates(),
       loadSettings(),
       loadBlocks(),
       loadRankings(),
@@ -1036,9 +1114,9 @@ const supplementDaily = async (date: string) => {
   try {
     generating.value = true
     const query = date ? `?date=${encodeURIComponent(date)}` : ''
-    todaySnapshot.value = normalizeSnapshot(await requestJSON<RecommendationSnapshot>(`/api/admin/recommendations/supplement${query}`, { method: 'POST', headers: authHeaders() }))
-    await loadHistory()
-    void loadTodaySummary()
+    digestSnapshot.value = normalizeSnapshot(await requestJSON<RecommendationSnapshot>(`/api/admin/recommendations/supplement${query}`, { method: 'POST', headers: authHeaders() }))
+    void loadDigestSummary()
+    void loadDigestCalendarDates()
     Message.success('日报已按缺口追加')
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '补充日报失败')
@@ -1263,6 +1341,16 @@ function formatLocalDate(date: Date): string {
   const month = `${date.getMonth() + 1}`.padStart(2, '0')
   const day = `${date.getDate()}`.padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+// addCalendarDays 用 UTC 日历加减，避免本地夏令时把日期跳成两天或零天。
+function addCalendarDays(date: string, delta: number): string {
+  const [year, month, day] = date.split('-').map((part) => Number(part))
+  const utc = new Date(Date.UTC(year, month - 1, day + delta))
+  const nextYear = utc.getUTCFullYear()
+  const nextMonth = `${utc.getUTCMonth() + 1}`.padStart(2, '0')
+  const nextDay = `${utc.getUTCDate()}`.padStart(2, '0')
+  return `${nextYear}-${nextMonth}-${nextDay}`
 }
 
 function formatDateTime(value: string): string {
@@ -1509,10 +1597,54 @@ onBeforeUnmount(clearCrawlQueueTimer)
 
 .recommendation-list,
 .item-list,
-.source-list,
-.history-detail {
+.source-list {
   display: grid;
   gap: 12px;
+}
+
+.digest-spin {
+  display: block;
+  width: 100%;
+  min-height: 180px;
+}
+
+.digest-date-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.digest-date-picker {
+  display: inline-flex;
+  align-items: center;
+}
+
+.digest-date-nav :deep(.arco-picker) {
+  width: auto;
+}
+
+.digest-date-label {
+  margin: 0;
+  min-width: 11ch;
+  padding: 2px 8px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  user-select: none;
+}
+
+.digest-date-label:hover,
+.digest-date-label:focus-visible {
+  background: #f2f3f5;
+  outline: none;
+}
+
+.digest-date-btn {
+  padding: 0 6px;
+  color: #4e5969;
 }
 
 .source-pagination {
@@ -1613,19 +1745,6 @@ onBeforeUnmount(clearCrawlQueueTimer)
   justify-content: flex-end;
 }
 
-.history-layout {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 16px;
-}
-
-.day-list {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-}
-
-.day-list button,
 .keyword-tile {
   display: grid;
   gap: 6px;
@@ -1638,8 +1757,6 @@ onBeforeUnmount(clearCrawlQueueTimer)
   text-align: left;
 }
 
-.day-list button.active,
-.day-list button:hover,
 .keyword-tile:hover {
   border-color: #165dff;
   box-shadow: inset 3px 0 0 #165dff;
@@ -1860,7 +1977,6 @@ onBeforeUnmount(clearCrawlQueueTimer)
   .recommendation-card,
   .compact-card,
   .source-row,
-  .history-layout,
   .settings-grid,
   .source-form,
   .blacklist-form,
@@ -1893,5 +2009,15 @@ onBeforeUnmount(clearCrawlQueueTimer)
   .content {
     padding-top: 0;
   }
+}
+</style>
+
+<style>
+/* 日历面板 teleport 到 body，无日报日期用灰色且不可点 */
+.digest-calendar-popup .arco-picker-cell-disabled,
+.digest-calendar-popup .arco-picker-cell-disabled .arco-picker-date {
+  color: #c9cdd4;
+  background: transparent;
+  cursor: not-allowed;
 }
 </style>
