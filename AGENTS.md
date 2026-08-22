@@ -1,43 +1,89 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+DataArk is a Go API plus Vue 3 UI monorepo. This file is the current source of truth for agents. If another document disagrees (especially anything under `docs/exec-plans/` that still mentions `api/common/`), follow this file and the live tree.
 
-DataArk is a Go backend plus Vue frontend monorepo. Backend code lives in `api/`: handlers in `api/api/`, shared services in `api/common/`, recommendations in `api/recommendation/`, discovery in `api/discovery/`, search in `api/search/`, Goose migrations in `api/migrations/`, and embedded assets in `api/assets/web/`. Frontend code lives in `web/src/`: pages in `views/`, UI in `components/`, routing in `router/`, and styles/assets in `assets/`. Docker files are in `docker/`; design notes and ExecPlans live in `docs/`.
+There is **no** `api/common/` package. Flags live in `api/flag/flag.go` and write package-level vars in `api/config/config.go`. Startup wiring is `api/bootstrap`. HTTP lives in `api/api/` (today mostly `controller.go`).
 
-## Build, Test, and Development Commands
+## Project Structure
 
-- `make all`: build Vue assets, move `web/dist` into `api/assets/web`, then build `bin/EchoArkServer`.
-- `make api`: run `go mod tidy` and compile the backend.
-- `make web`: install frontend dependencies and run the production Vite build.
-- `cd api && go test ./...`: run backend tests.
-- `cd web && npm run dev`: start Vite locally.
-- `cd web && npm run build`: type-check and build the Vue app.
-- `cd docker && docker compose up --build`: rebuild and deploy Postgres/pgvector, Meilisearch, SingleFile, and the API. Required after any frontend change before Chrome DevTools MCP integration testing.
-- `cd docker && docker compose up -d --build`: same stack in detached mode when the foreground `up` would block the session.
+Backend (`api/`, Go module `DataArk`, Go 1.26):
 
-## Coding Style & Naming Conventions
+- `api/api/` — Gin routes, middleware, `WebStarter` (listens on `0.0.0.0:7845`)
+- `api/archive/` — archived HTML metadata, stats, engagement
+- `api/auth/` — users, JWT
+- `api/discovery/` — crawl, feeds, blogroll graph, candidate pipeline, rule assessment persistence
+- `api/discovery/articlerules/` — URL/body hard gates
+- `api/assessment/` — LLM article assessment adapter, manual queue, metrics (state machine still forwards into `discovery`)
+- `api/assessmenteval/` — owner gold-label workflow
+- `api/articlevalue/` — shared scoring/evidence helpers
+- `api/recommendation/` — daily digest, discovery feed, feedback, inventory
+- `api/jobqueue/` — River (Postgres) and in-memory queue
+- `api/search/` — Meilisearch index
+- `api/backup/` — backup/restore
+- `api/database/` — GORM connection; Goose runner
+- `api/migrations/` — numbered Goose SQL (`000001`–`000029` and later)
+- `api/llm/`, `api/logging/`, `api/observability/`, `api/assets/`
+- `api/flag/`, `api/config/`
 
-Format Go with `gofmt`; keep package names lower-case and imports on the `DataArk/...` module path. Add database changes as numbered Goose migrations. Vue code should use Vue 3 Composition API with `<script setup lang="ts">` where practical. Name route pages `*View.vue` and CSS classes in kebab-case.
+Frontend (`web/src/`): `views/` (`*View.vue`), `components/`, `router/`, `assets/`. Node `>=24.15 <25`. The npm package name is still `web2`.
 
-## Testing Guidelines
+Ops: `docker/` (Compose + Dockerfile). Docs: `docs/operations/` runbooks, `docs/references/frontend-pitfalls.md` (Arco API traps), `docs/exec-plans/` (historical living plans; many are finished). `docs/design-docs/dbDesign.md` is stale (still names `api/common/db.go`).
 
-Place Go tests as `*_test.go` beside the package under test. Backend coverage spans controllers, auth, database behavior, discovery, recommendation, backup, and search; extend the relevant package when behavior changes. Run `cd api && go test ./...` for backend work and `cd web && npm run build` for frontend work.
+## Build and development commands
 
-**Frontend changes require Docker deploy + Chrome DevTools MCP.** Any modification under `web/` (views, components, router, styles, assets) or that updates the embedded UI in `api/assets/web` is incomplete until both of the following succeed:
+There is **no** `make build` target. README that says otherwise is wrong.
 
-1. From `docker/`, run `docker compose up --build` and confirm the stack is healthy (`dataarkapi` and dependencies up; the site reachable at `http://localhost:${DATAARK_PORT}`, default `7845`).
-2. After that deploy succeeds, use **Chrome DevTools MCP** (`cursor-ide-browser`, including `browser_cdp`) for integration testing: open the deployed pages that changed, interact with the real UI, and verify DOM state, console errors, network requests, and screenshots. Unit/contract tests (`cd web && npm test`) do not replace this step.
+| Command | What it actually does |
+| --- | --- |
+| `make all` | `web` → `web2api` → `api` |
+| `make web` | `npm i` and production Vite build. **Side effect:** sets the user-global npm registry to `https://registry.npmmirror.com`. Prefer `cd web && npm ci && npm run build` in sandboxes. |
+| `make web2api` | `mv web/dist/*` into `api/assets/web/` |
+| `make api` | `go mod tidy` and compile `bin/EchoArkServer` (makefile name). GitHub release workflow names the binary `DataArkServer`. README's `./api/bin/DataArk.exe` is wrong. |
+| `cd api && go test ./...` | Default backend suite (SQLite + GORM AutoMigrate) |
+| `cd web && npm test` | Node test runner on `web/tests/*.test.mjs` (mostly source-string contracts, not DOM) |
+| `cd web && npm run build` | `vue-tsc` + Vite production build |
+| `cd web && npm run dev` | Vite only. **No proxy** to the API is configured. |
+| `cd docker && docker compose up --build` | Full stack: API, Postgres/pgvector, Meilisearch, SingleFile. Site: `http://localhost:${DATAARK_PORT}` (default `7845`). |
+| `cd docker && docker compose up -d --build` | Same stack, detached |
 
-## Commit & Pull Request Guidelines
+`makefile` and `docker/Dockerfile` pin `GOPROXY=https://goproxy.cn`. If module download fails outside that network, set `GOPROXY` yourself (for example `https://proxy.golang.org,direct`) rather than editing the makefile unless the task is to change it.
 
-Recent commits use `Add:`, `Fix:`, `Change:`, or `Repo:` plus an imperative summary. Keep commits focused and exclude unrelated generated files or local data. Use one commit per PR, rebased without merge commits. PRs should describe behavior changes, verification commands, linked issues, and UI screenshots when relevant.
+Optional Postgres proof (Goose, JSONB, River, pgvector): set `DATAARK_POSTGRES_TEST_DSN` and run `cd api && go test ./bootstrap -run TestPostgresV3MigrationsRiverRestartAndPGVector`. SQLite green does not prove production schema.
 
-## Security & Configuration Tips
+Discovery/search tests that call `httptest.NewServer` need a local listen. Isolated sandboxes that block `listen tcp` will fail those packages; re-run them outside the sandbox rather than deleting the tests.
 
-Do not commit real Meilisearch keys, database passwords, archives, Docker volumes, or credential files. Backend flags live in `api/common/flag.go`; document new required flags in `README.md`, `README_en.md`, Docker compose, and release workflows. LLM flags are optional; without them, enrichment is rule-based.
+## Coding style
 
-## Agent-Specific Instructions
+Format Go with `gofmt`. Package names are lower-case; imports use the `DataArk/...` path. New schema goes in a numbered Goose migration, not only GORM `AutoMigrate`. Vue 3 Composition API with `<script setup lang="ts">` where practical. Route pages are `*View.vue`; CSS classes are kebab-case. Check `docs/references/frontend-pitfalls.md` before assuming Arco props match Ant Design Vue.
 
-Follow `CONVENTIONS.md` for delegation and git workflow. For complex work, update an ExecPlan under `docs/exec-plans/` using `PLANS.md`. Prefer existing patterns, verify independently, and commit completed changes.
+## Verification (match the change radius)
 
-When the work touches the frontend, do not stop at `npm test` / `npm run build`. Deploy with `docker compose up --build` from `docker/`, then run Chrome DevTools MCP integration tests against the live containerized UI before reporting the change complete.
+Do not rebuild Docker for a Go unit-test fix. Do not treat `npm test` greps as a substitute for clicking a flow you actually changed.
+
+| Change radius | Minimum proof | Do not |
+| --- | --- | --- |
+| One Go package, no SQL | `cd api && go test ./thatpkg` | `docker compose` |
+| Several Go packages / HTTP | `cd api && go test ./...` | assume Postgres behavior |
+| Goose / JSONB / River / pgvector | opt-in Postgres test or Compose logs | trust SQLite AutoMigrate alone |
+| Vue copy, layout, non-interactive CSS | `cd web && npm test && npm run build` | rebuild the API image for padding |
+| User-visible UI behavior, Arco widgets, authz, embedded `api/assets/web` | From `docker/`: `docker compose up --build` (or `-d --build` if a stack is already needed in the background). Confirm `dataarkapi` is healthy at `http://localhost:${DATAARK_PORT}`. Then Chrome DevTools MCP (`cursor-ide-browser`, including `browser_cdp`): open the changed pages, interact, check DOM, console, network, screenshot. | report UI work complete from `npm test` only |
+
+If Compose is already running in a terminal, do not start a second foreground `up --build` that fights for the same ports. Rebuild that existing stack or use `-d`.
+
+## Git
+
+Commit only when the user asks. Message style: `Add:`, `Fix:`, `Change:`, or `Repo:` plus an imperative summary. Do not commit `passwd.txt`, `docker/.env`, archives, volumes, Meilisearch keys, or database passwords.
+
+PRs: exactly one squashed commit, rebase onto the target branch, no merge commits (`CONVENTIONS.md`).
+
+## Configuration and secrets
+
+CLI flags: `api/flag/flag.go`. Runtime vars: `api/config/config.go`. New required flags must be documented in `README.md`, `README_en.md`, `docker/docker-compose.yml`, and release workflows. LLM flags are optional; without them, enrichment/assessment stays rule-based.
+
+Do not commit real credentials. `passwd.txt` at the repo root is a local admin-password note and must stay untracked.
+
+## ExecPlans and workers
+
+Follow `CONVENTIONS.md` for delegation: worker outputs are untrusted; verify with an independent command; at most one delegation retry, then do the work directly.
+
+For large new work, an ExecPlan under `docs/exec-plans/` following `PLANS.md` is optional when the user wants a living spec. **Do not execute finished historical plans as if they were current.** Plans that name `api/common/`, sitemap owner gap-fill, or `make build` are outdated. Current recommendation-center split: discovery crawls automatically, LLM assessment is a paused manual queue, recommendation reads ready eligible inventory. Ops detail: `docs/operations/recommendation-v3-runbook.md` and `docs/operations/article-assessment-v3-runbook.md`.
