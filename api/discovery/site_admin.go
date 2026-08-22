@@ -17,7 +17,7 @@ const (
 var (
 	ErrDiscoverySiteNotCrawlable    = errors.New("discovery site is paused or blocked")
 	ErrDiscoveryJobQueueUnavailable = errors.New("discovery job queue is unavailable")
-	ErrSitemapSourceDisabled = errors.New("sitemap sources are disabled")
+	ErrSitemapSourceDisabled        = errors.New("sitemap sources are disabled")
 )
 
 func UpdateDiscoverySiteOperationalStatus(siteID uint, status string, reason string) (*DiscoverySite, error) {

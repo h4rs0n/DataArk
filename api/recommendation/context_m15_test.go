@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/assessment"
 	"DataArk/discovery"
 	"errors"
 	"testing"
@@ -29,15 +30,15 @@ func TestRecommendationExperienceM15ContextIsTraceableAndUserScoped(t *testing.T
 	if err := db.Create(&provenance).Error; err != nil {
 		t.Fatal(err)
 	}
-	assessment := discovery.DiscoveryArticleAssessment{CandidateID: candidate.ID, ContentVersion: candidate.ContentVersion, Assessor: "rules", AssessorVersion: "1", PolicyVersion: "v1", OverallQuality: 0.9}
-	if err := db.Create(&assessment).Error; err != nil {
+	row := assessment.ArticleAssessment{CandidateID: candidate.ID, ContentVersion: candidate.ContentVersion, Assessor: "rules", AssessorVersion: "1", PolicyVersion: "v1", OverallQuality: 0.9}
+	if err := db.Create(&row).Error; err != nil {
 		t.Fatal(err)
 	}
 	day, err := CreateRecommendationDay(910, "2026-05-01", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(day.ID), UserID: 910, CandidateID: candidate.ID, AssessmentID: &assessment.ID, Rank: 1})
+	item, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(day.ID), UserID: 910, CandidateID: candidate.ID, AssessmentID: &row.ID, Rank: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

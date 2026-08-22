@@ -11,9 +11,9 @@ Backend (`api/`, Go module `DataArk`, Go 1.26):
 - `api/api/` — Gin HTTP surface: `starter.go` (`WebStarter`, listens on `0.0.0.0:7845`), `routes.go` (`/api/*`), `deps.go` (test seams), `jobs.go`, `helpers.go`, `middleware.go`, and domain handlers (`auth.go`, `search.go`, `archive.go`, `discovery.go`, `assessment.go`, `recommendation.go`, `backup.go`)
 - `api/archive/` — archived HTML metadata, stats, engagement
 - `api/auth/` — users, JWT
-- `api/discovery/` — crawl, feeds, blogroll graph, candidate pipeline, rule assessment persistence
+- `api/discovery/` — crawl, feeds, blogroll graph, candidate pipeline; hands off extracted articles as `assessment_state=pending`
 - `api/discovery/articlerules/` — URL/body hard gates
-- `api/assessment/` — LLM article assessment adapter, manual queue, metrics (state machine still forwards into `discovery`)
+- `api/assessment/` — LLM article assessment adapter, immutable assessment rows, state machine, manual queue, backfill/rollback, metrics
 - `api/assessmenteval/` — owner gold-label workflow
 - `api/articlevalue/` — shared scoring/evidence helpers
 - `api/recommendation/` — daily digest (`digest.go`, `day.go`, `selection_v3.go`), settings, feedback, profile, enrichment, rerank, discovery feed, inventory

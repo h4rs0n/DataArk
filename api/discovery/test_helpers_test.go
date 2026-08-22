@@ -32,7 +32,6 @@ func setupSQLiteDB(t *testing.T) {
 		&DiscoveryDuplicateCluster{},
 		&DiscoveryCandidateIdentity{},
 		&DiscoveryDuplicateReviewSignal{},
-		&DiscoveryArticleAssessment{},
 		&UserCandidateState{},
 		&DiscoveryLegacyCandidateStateReview{},
 		&DiscoverySiteOperationalStats{},

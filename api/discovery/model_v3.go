@@ -22,12 +22,10 @@ const (
 	DiscoveryEligibilityReview       = "review"
 	DiscoveryEligibilityIneligible   = "ineligible"
 
-	// 评估状态写在 discovery_candidates 上，评估包读写同一列，不另建状态机。
+	// 评估状态写在 discovery_candidates 上；discovery 只写 pending，其余由 assessment 包推进。
 	DiscoveryAssessmentReady    = "ready"
 	DiscoveryAssessmentReview   = "review"
 	DiscoveryAssessmentDegraded = "degraded"
-	RuleArticleAssessorName     = "deterministic_rules"
-	RuleArticleAssessorVersion  = "2.0.0"
 )
 
 type DiscoverySite struct {
@@ -154,29 +152,6 @@ type DiscoveryBackfillState struct {
 	CreatedAt        time.Time      `json:"createdAt"`
 	UpdatedAt        time.Time      `json:"updatedAt"`
 	Site             *DiscoverySite `json:"-" gorm:"foreignKey:SiteID;constraint:OnDelete:CASCADE"`
-}
-
-type DiscoveryArticleAssessment struct {
-	ID                 uint                `json:"id" gorm:"primaryKey"`
-	CandidateID        uint                `json:"candidateId" gorm:"uniqueIndex:idx_assessment_version;not null"`
-	ContentVersion     uint                `json:"contentVersion" gorm:"uniqueIndex:idx_assessment_version;not null"`
-	Assessor           string              `json:"assessor" gorm:"uniqueIndex:idx_assessment_version;not null;size:64"`
-	AssessorVersion    string              `json:"assessorVersion" gorm:"uniqueIndex:idx_assessment_version;not null;size:64"`
-	PolicyVersion      string              `json:"policyVersion" gorm:"uniqueIndex:idx_assessment_version;not null;size:64"`
-	InformationDensity float64             `json:"informationDensity"`
-	Originality        float64             `json:"originality"`
-	Completeness       float64             `json:"completeness"`
-	Evidence           float64             `json:"evidence"`
-	Readability        float64             `json:"readability"`
-	Depth              float64             `json:"depth"`
-	EvergreenValue     float64             `json:"evergreenValue"`
-	OverallQuality     float64             `json:"overallQuality" gorm:"index"`
-	Confidence         float64             `json:"confidence"`
-	Reasons            string              `json:"reasons" gorm:"type:text"`
-	Summary            string              `json:"summary" gorm:"type:text"`
-	Keywords           string              `json:"keywords" gorm:"type:text"`
-	CreatedAt          time.Time           `json:"createdAt"`
-	Candidate          *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
 }
 
 type DiscoveryArticleContentVersion struct {
@@ -312,7 +287,6 @@ func V3Models() []interface{} {
 		&DiscoveryDuplicateCluster{},
 		&DiscoveryCandidateIdentity{},
 		&DiscoveryDuplicateReviewSignal{},
-		&DiscoveryArticleAssessment{},
 		&UserCandidateState{},
 		&DiscoveryLegacyCandidateStateReview{},
 		&DiscoverySiteOperationalStats{},

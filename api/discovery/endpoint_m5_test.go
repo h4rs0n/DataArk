@@ -75,9 +75,6 @@ func TestEndpointDiscoveryCreatesHomepageAndFeedButLeavesSitemapDisabled(t *test
 
 func TestFeedPreservesMetadataAndDoesNotRepeatProcessing(t *testing.T) {
 	setupSQLiteDB(t)
-	if err := db.AutoMigrate(&DiscoveryArticleAssessment{}); err != nil {
-		t.Fatal(err)
-	}
 	clock := &advancingClock{now: time.Date(2026, 7, 13, 16, 0, 0, 0, time.UTC)}
 	oldClock := discoveryClock
 	oldFetcher := fetchDiscoveryRequest
@@ -154,9 +151,8 @@ func TestFeedPreservesMetadataAndDoesNotRepeatProcessing(t *testing.T) {
 	if len(provenance) != 1 || provenance[0].DiscoveryMethod != DiscoveryMethodFeed {
 		t.Fatalf("candidate provenance = %#v", provenance)
 	}
-	var assessments int64
-	if err := db.Model(&DiscoveryArticleAssessment{}).Count(&assessments).Error; err != nil || assessments != 0 {
-		t.Fatalf("assessment count = %d, %v", assessments, err)
+	if candidate.CurrentAssessmentID != nil || candidate.AssessmentState == DiscoveryAssessmentReady {
+		t.Fatalf("feed ingest must not assess: %#v", candidate)
 	}
 	var runs []DiscoveryFetchRun
 	if err := db.Order("id").Find(&runs).Error; err != nil {

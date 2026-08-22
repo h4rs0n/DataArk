@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/assessment"
 	"DataArk/discovery"
 	"fmt"
 	"testing"
@@ -40,14 +41,14 @@ func TestCandidateInventorySeparatesPoolsAndAppliesOnlyUserHardFilters(t *testin
 		t.Fatal(err)
 	}
 	for index := range candidates {
-		assessment := discovery.DiscoveryArticleAssessment{CandidateID: candidates[index].ID, ContentVersion: 1, Assessor: "rules", AssessorVersion: "1", PolicyVersion: "1", OverallQuality: 0.8, EvergreenValue: 0.3, CreatedAt: now}
+		row := assessment.ArticleAssessment{CandidateID: candidates[index].ID, ContentVersion: 1, Assessor: "rules", AssessorVersion: "1", PolicyVersion: "1", OverallQuality: 0.8, EvergreenValue: 0.3, CreatedAt: now}
 		if index == 1 || index == 2 {
-			assessment.EvergreenValue = 0.8
+			row.EvergreenValue = 0.8
 		}
-		if err := db.Create(&assessment).Error; err != nil {
+		if err := db.Create(&row).Error; err != nil {
 			t.Fatal(err)
 		}
-		if err := db.Model(&candidates[index]).Update("current_assessment_id", assessment.ID).Error; err != nil {
+		if err := db.Model(&candidates[index]).Update("current_assessment_id", row.ID).Error; err != nil {
 			t.Fatal(err)
 		}
 		siteID := seed.ID

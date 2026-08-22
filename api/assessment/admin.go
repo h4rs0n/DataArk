@@ -1,6 +1,8 @@
-package discovery
+package assessment
 
 import (
+	"DataArk/discovery"
+	"DataArk/jobqueue"
 	"context"
 	"errors"
 	"fmt"
@@ -27,10 +29,11 @@ type ArticleAssessmentBatchResult struct {
 	DryRun        bool   `json:"dryRun"`
 }
 
-func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAssessor, queue JobEnqueuer, options ArticleAssessmentBatchOptions) (ArticleAssessmentBatchResult, error) {
+// PrepareArticleAssessmentBackfill 为缺失的模型评估行入队，或在 active 模式下激活已有行。
+func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAssessor, queue jobqueue.JobEnqueuer, options ArticleAssessmentBatchOptions) (ArticleAssessmentBatchResult, error) {
 	result := ArticleAssessmentBatchResult{DryRun: options.DryRun}
 	if db == nil {
-		return result, errors.New("discovery database is unavailable")
+		return result, errors.New("assessment database is unavailable")
 	}
 	if assessor == nil {
 		return result, errors.New("article assessment provider is not configured")
@@ -42,8 +45,8 @@ func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAsses
 	}
 
 	limit := normalizeArticleAssessmentBatchLimit(options.Limit)
-	query := db.WithContext(ctx).Model(&DiscoveryCandidate{}).
-		Where("processing_state = ? AND dedupe_state = ? AND content_version > 0", DiscoveryProcessingReady, DiscoveryDedupeReady).
+	query := db.WithContext(ctx).Model(&discovery.DiscoveryCandidate{}).
+		Where("processing_state = ? AND dedupe_state = ? AND content_version > 0", discovery.DiscoveryProcessingReady, discovery.DiscoveryDedupeReady).
 		Where("representative_id IS NULL OR representative_id = id")
 	if activate {
 		query = query.Where(`NOT EXISTS (
@@ -68,7 +71,7 @@ WHERE stored.candidate_id = discovery_candidates.id
 	if !options.RetryFailures {
 		query = query.Where("assessment_error IS NULL OR assessment_error NOT LIKE ?", assessor.PolicyVersion()+":%")
 	}
-	var candidates []DiscoveryCandidate
+	var candidates []discovery.DiscoveryCandidate
 	if err := query.Order("id").Limit(limit).Find(&candidates).Error; err != nil {
 		return result, err
 	}
@@ -112,9 +115,9 @@ WHERE stored.candidate_id = discovery_candidates.id
 			continue
 		}
 		if err := db.WithContext(ctx).Model(&candidate).Updates(map[string]interface{}{
-			"assessment_state": DiscoveryAssessmentPending,
+			"assessment_state": discovery.DiscoveryAssessmentPending,
 			"assessment_error": "",
-			"updated_at":       discoveryClock.Now(),
+			"updated_at":       discovery.Timestamp(),
 		}).Error; err != nil {
 			enqueueErrors = append(enqueueErrors, fmt.Errorf("mark candidate %d assessment pending: %w", candidate.ID, err))
 			continue
@@ -128,17 +131,18 @@ WHERE stored.candidate_id = discovery_candidates.id
 	return result, errors.Join(enqueueErrors...)
 }
 
+// RollbackArticleAssessment 把当前模型评估指针退回到更早的规则行或其它策略版本。
 func RollbackArticleAssessment(ctx context.Context, assessor ArticleAssessor, options ArticleAssessmentBatchOptions) (ArticleAssessmentBatchResult, error) {
 	result := ArticleAssessmentBatchResult{DryRun: options.DryRun}
 	if db == nil {
-		return result, errors.New("discovery database is unavailable")
+		return result, errors.New("assessment database is unavailable")
 	}
 	if assessor == nil {
 		return result, errors.New("article assessment provider is not configured")
 	}
 	result.PolicyVersion = assessor.PolicyVersion()
 	limit := normalizeArticleAssessmentBatchLimit(options.Limit)
-	var candidates []DiscoveryCandidate
+	var candidates []discovery.DiscoveryCandidate
 	if err := db.WithContext(ctx).
 		Joins("JOIN discovery_article_assessments active ON active.id = discovery_candidates.current_assessment_id").
 		Where("active.assessor = ? AND active.assessor_version = ? AND active.policy_version = ?", assessor.Name(), assessor.Version(), assessor.PolicyVersion()).
@@ -147,7 +151,7 @@ func RollbackArticleAssessment(ctx context.Context, assessor ArticleAssessor, op
 	}
 	result.Selected = len(candidates)
 	for _, candidate := range candidates {
-		var target DiscoveryArticleAssessment
+		var target ArticleAssessment
 		err := db.WithContext(ctx).
 			Where("candidate_id = ? AND content_version = ? AND id <> ? AND (policy_version <> ? OR assessor = ?)", candidate.ID, candidate.ContentVersion, *candidate.CurrentAssessmentID, assessor.PolicyVersion(), RuleArticleAssessorName).
 			Order(clause.Expr{SQL: "CASE WHEN policy_version <> ? THEN 0 ELSE 1 END", Vars: []interface{}{assessor.PolicyVersion()}}).

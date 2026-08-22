@@ -17,7 +17,7 @@ func setupAssessmentDB(t *testing.T) {
 	if err := sqliteDB.AutoMigrate(
 		&discovery.DiscoverySource{},
 		&discovery.DiscoveryCandidate{},
-		&discovery.DiscoveryArticleAssessment{},
+		&ArticleAssessment{},
 		&discovery.DiscoveryDomainBlacklistEntry{},
 		&LLMCall{},
 	); err != nil {

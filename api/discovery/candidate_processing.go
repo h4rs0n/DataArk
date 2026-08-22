@@ -59,13 +59,12 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 	if expected != candidate.ContentVersion {
 		return nil
 	}
+	// 抽取完成但去重未完成：只补去重并交接评估，避免重复抓取。
+	// 已 pending 的评估不在这里短路，否则正文更新无法再进入抽取。
 	if candidate.ProcessingState == DiscoveryProcessingReady && candidate.DedupeState == DiscoveryDedupePending && candidate.ContentHash != "" {
 		if err := ResolveCandidateDuplicates(ctx, candidate.ID); err != nil {
 			return err
 		}
-		return enqueueCandidateForAssessment(ctx, candidate.ID)
-	}
-	if candidate.ProcessingState == DiscoveryProcessingReady && candidate.DedupeState == DiscoveryDedupeReady && candidate.AssessmentState == DiscoveryAssessmentPending {
 		return enqueueCandidateForAssessment(ctx, candidate.ID)
 	}
 	if reason, rejected := articlerules.RejectURL(candidate.URL, candidate.Title); rejected {
@@ -130,8 +129,8 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 	return enqueueCandidateForAssessment(ctx, candidate.ID)
 }
 
-// enqueueCandidateForAssessment 把已抽取的代表文章送进暂停的评估队列。
-// 测试环境没有作业队列时原地跑规则评估，避免与 LLM 调度耦合。
+// enqueueCandidateForAssessment 把已抽取的代表文章标为 pending 并交给评估队列。
+// 没有作业队列时停在 pending，由 assessment 包在有队列或测试中显式调用 AssessCandidate。
 func enqueueCandidateForAssessment(ctx context.Context, candidateID uint) error {
 	if db == nil || candidateID == 0 {
 		return gorm.ErrRecordNotFound
@@ -152,7 +151,7 @@ func enqueueCandidateForAssessment(ctx context.Context, candidateID uint) error 
 	if available && queue != nil {
 		return queue.EnqueueAssessArticle(ctx, candidate.ID, candidateContentVersion(candidate))
 	}
-	return AssessCandidate(ctx, candidate.ID, nil)
+	return nil
 }
 
 func parseExpectedContentVersion(value string) (uint, error) {

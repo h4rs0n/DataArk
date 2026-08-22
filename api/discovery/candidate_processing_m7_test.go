@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestProcessCandidateExtractsVersionsAndBecomesEligible(t *testing.T) {
+func TestProcessCandidateExtractsVersionsAndHandsOffAssessment(t *testing.T) {
 	setupSQLiteDB(t)
 	clock := &advancingClock{now: time.Date(2026, 7, 13, 16, 0, 0, 0, time.UTC)}
 	oldClock := discoveryClock
@@ -48,7 +48,7 @@ func TestProcessCandidateExtractsVersionsAndBecomesEligible(t *testing.T) {
 	if err := db.First(&candidate, write.Candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if candidate.ProcessingState != DiscoveryProcessingReady || candidate.EligibilityState != DiscoveryEligibilityEligible {
+	if candidate.ProcessingState != DiscoveryProcessingReady || candidate.EligibilityState != DiscoveryEligibilityUnknown {
 		t.Fatalf("states = %q/%q", candidate.ProcessingState, candidate.EligibilityState)
 	}
 	if candidate.ContentVersion != 1 || candidate.ContentHash == "" || !strings.Contains(candidate.BodyText, "independently verifiable") {
@@ -60,10 +60,10 @@ func TestProcessCandidateExtractsVersionsAndBecomesEligible(t *testing.T) {
 	if candidate.CanonicalURL != "https://example.com/posts/1" || candidate.PublishedAt == nil || candidate.PublishedConfidence != "article_metadata" {
 		t.Fatalf("canonical/published metadata = %#v", candidate)
 	}
-	if candidate.DedupeState != DiscoveryDedupeReady || candidate.AssessmentState != DiscoveryAssessmentReady || candidate.CurrentAssessmentID == nil {
+	if candidate.DedupeState != DiscoveryDedupeReady || candidate.AssessmentState != DiscoveryAssessmentPending || candidate.CurrentAssessmentID != nil {
 		t.Fatalf("downstream states = %q/%q", candidate.DedupeState, candidate.AssessmentState)
 	}
-	if candidate.EligibilityReasons != "article_quality_passed" {
+	if candidate.EligibilityReasons != "assessment_pending" {
 		t.Fatalf("eligibility reasons = %q", candidate.EligibilityReasons)
 	}
 	assertContentVersionCount(t, candidate.ID, 1)

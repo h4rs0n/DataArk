@@ -1,6 +1,7 @@
 package assessmenteval
 
 import (
+	"DataArk/assessment"
 	"DataArk/discovery"
 	"fmt"
 	"strings"
@@ -16,7 +17,7 @@ func TestLoadCandidateRecordsUsesImmutableCurrentContentVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.AutoMigrate(&discovery.DiscoveryCandidate{}, &discovery.DiscoveryArticleContentVersion{}, &discovery.DiscoveryArticleAssessment{}); err != nil {
+	if err := database.AutoMigrate(&discovery.DiscoveryCandidate{}, &discovery.DiscoveryArticleContentVersion{}, &assessment.ArticleAssessment{}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 10, 7, 0, 0, 0, time.UTC)
@@ -32,8 +33,8 @@ func TestLoadCandidateRecordsUsesImmutableCurrentContentVersion(t *testing.T) {
 	if err := database.Create(&currentVersion).Error; err != nil {
 		t.Fatal(err)
 	}
-	rules := discovery.DiscoveryArticleAssessment{CandidateID: candidate.ID, ContentVersion: 2, Assessor: discovery.RuleArticleAssessorName, AssessorVersion: "2", PolicyVersion: "fixture", OverallQuality: .4, Depth: .3, EvergreenValue: .2, Reasons: "[]", CreatedAt: now}
-	active := discovery.DiscoveryArticleAssessment{CandidateID: candidate.ID, ContentVersion: 2, Assessor: "model", AssessorVersion: "1", PolicyVersion: "fixture", OverallQuality: .8, Depth: .7, EvergreenValue: .6, Reasons: "[]", CreatedAt: now}
+	rules := assessment.ArticleAssessment{CandidateID: candidate.ID, ContentVersion: 2, Assessor: assessment.RuleArticleAssessorName, AssessorVersion: "2", PolicyVersion: "fixture", OverallQuality: .4, Depth: .3, EvergreenValue: .2, Reasons: "[]", CreatedAt: now}
+	active := assessment.ArticleAssessment{CandidateID: candidate.ID, ContentVersion: 2, Assessor: "model", AssessorVersion: "1", PolicyVersion: "fixture", OverallQuality: .8, Depth: .7, EvergreenValue: .6, Reasons: "[]", CreatedAt: now}
 	if err := database.Create(&rules).Error; err != nil {
 		t.Fatal(err)
 	}

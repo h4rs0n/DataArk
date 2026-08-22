@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/assessment"
 	"DataArk/config"
 	"DataArk/discovery"
 	"time"
@@ -80,8 +81,8 @@ func GetCandidateInventory(userID uint) (*CandidateInventory, error) {
 	for _, candidate := range candidates {
 		fresh := candidate.PublishedAt != nil && !candidate.PublishedAt.Before(freshCutoff)
 		evergreen := false
-		if assessment, ok := assessments[candidate.ID]; ok {
-			evergreen = assessment.EvergreenValue >= 0.6
+		if row, ok := assessments[candidate.ID]; ok {
+			evergreen = row.EvergreenValue >= 0.6
 		}
 		explore := exploration[candidate.ID]
 		result.EligibleCandidates++
@@ -147,8 +148,8 @@ func explorationCandidateIDs(candidates []DiscoveryCandidate) (map[uint]bool, er
 	return result, nil
 }
 
-func inventoryAssessments(candidates []DiscoveryCandidate) (map[uint]discovery.DiscoveryArticleAssessment, error) {
-	result := make(map[uint]discovery.DiscoveryArticleAssessment)
+func inventoryAssessments(candidates []DiscoveryCandidate) (map[uint]assessment.ArticleAssessment, error) {
+	result := make(map[uint]assessment.ArticleAssessment)
 	ids := make([]uint, 0)
 	for _, candidate := range candidates {
 		if candidate.CurrentAssessmentID != nil {
@@ -158,18 +159,18 @@ func inventoryAssessments(candidates []DiscoveryCandidate) (map[uint]discovery.D
 	if len(ids) == 0 {
 		return result, nil
 	}
-	var assessments []discovery.DiscoveryArticleAssessment
-	if err := db.Where("id IN ?", ids).Find(&assessments).Error; err != nil {
+	var rows []assessment.ArticleAssessment
+	if err := db.Where("id IN ?", ids).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	byID := make(map[uint]discovery.DiscoveryArticleAssessment, len(assessments))
-	for _, assessment := range assessments {
-		byID[assessment.ID] = assessment
+	byID := make(map[uint]assessment.ArticleAssessment, len(rows))
+	for _, row := range rows {
+		byID[row.ID] = row
 	}
 	for _, candidate := range candidates {
 		if candidate.CurrentAssessmentID != nil {
-			if assessment, ok := byID[*candidate.CurrentAssessmentID]; ok {
-				result[candidate.ID] = assessment
+			if row, ok := byID[*candidate.CurrentAssessmentID]; ok {
+				result[candidate.ID] = row
 			}
 		}
 	}

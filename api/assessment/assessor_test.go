@@ -1,7 +1,8 @@
-package discovery
+package assessment
 
 import (
 	"DataArk/config"
+	"DataArk/discovery"
 	"context"
 	"errors"
 	"fmt"
@@ -56,7 +57,7 @@ func TestArticleAssessmentInputExcludesSourceAggregates(t *testing.T) {
 }
 
 func TestLowHitSourceHighArticlesAreAssessedIndependently(t *testing.T) {
-	setupSQLiteDB(t)
+	setupAssessmentDB(t)
 	oldThreshold := config.DISCOVERYARTICLEQUALITYTHRESHOLD
 	config.DISCOVERYARTICLEQUALITYTHRESHOLD = 0.45
 	t.Cleanup(func() { config.DISCOVERYARTICLEQUALITYTHRESHOLD = oldThreshold })
@@ -65,7 +66,7 @@ func TestLowHitSourceHighArticlesAreAssessedIndependently(t *testing.T) {
 	ordinaryBody := strings.Repeat("routine status update. ", 18)
 	highBody := strings.Repeat("Evidence from measurement 42 supports this durable method because the experiment compares alternatives, records counterexamples, explains the mechanism, and reaches a reproducible conclusion. ", 12)
 
-	bCandidates := make([]DiscoveryCandidate, 0, 100)
+	bCandidates := make([]discovery.DiscoveryCandidate, 0, 100)
 	for index := 0; index < 100; index++ {
 		body := ordinaryBody
 		title := fmt.Sprintf("Routine note %03d", index)
@@ -81,20 +82,20 @@ func TestLowHitSourceHighArticlesAreAssessedIndependently(t *testing.T) {
 	}
 	aOrdinary := createAssessmentCandidate(t, "Seed A", "https://a.example/ordinary", "Ordinary seed note", ordinaryBody, now)
 	aHigh := createAssessmentCandidate(t, "Seed A", "https://a.example/high", "Independent investigation 097", highBody, now)
-	for _, candidate := range []DiscoveryCandidate{aOrdinary, aHigh} {
+	for _, candidate := range []discovery.DiscoveryCandidate{aOrdinary, aHigh} {
 		if err := AssessCandidate(context.Background(), candidate.ID, semantic); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	var eligibleB int64
-	if err := db.Model(&DiscoveryCandidate{}).Where("source_name = ? AND eligibility_state = ?", "Long-tail B", DiscoveryEligibilityEligible).Count(&eligibleB).Error; err != nil {
+	if err := db.Model(&discovery.DiscoveryCandidate{}).Where("source_name = ? AND eligibility_state = ?", "Long-tail B", discovery.DiscoveryEligibilityEligible).Count(&eligibleB).Error; err != nil {
 		t.Fatal(err)
 	}
 	if eligibleB != 3 {
 		t.Fatalf("eligible B articles = %d, want 3 independent high articles", eligibleB)
 	}
-	var bHigh, loadedAHigh, loadedAOrdinary DiscoveryCandidate
+	var bHigh, loadedAHigh, loadedAOrdinary discovery.DiscoveryCandidate
 	if err := db.First(&bHigh, bCandidates[97].ID).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -107,13 +108,13 @@ func TestLowHitSourceHighArticlesAreAssessedIndependently(t *testing.T) {
 	if bHigh.QualityScore != loadedAHigh.QualityScore || bHigh.DepthScore != loadedAHigh.DepthScore {
 		t.Fatalf("same article scores differ by source: B=%v/%v A=%v/%v", bHigh.QualityScore, bHigh.DepthScore, loadedAHigh.QualityScore, loadedAHigh.DepthScore)
 	}
-	if bHigh.QualityScore <= loadedAOrdinary.QualityScore || bHigh.EligibilityState != DiscoveryEligibilityEligible {
+	if bHigh.QualityScore <= loadedAOrdinary.QualityScore || bHigh.EligibilityState != discovery.DiscoveryEligibilityEligible {
 		t.Fatalf("long-tail high article did not beat seed ordinary: B=%#v A=%#v", bHigh, loadedAOrdinary)
 	}
 }
 
 func TestOptionalAssessorFailureFallsBackAndVersionsRemainImmutable(t *testing.T) {
-	setupSQLiteDB(t)
+	setupAssessmentDB(t)
 	now := time.Date(2026, 7, 14, 5, 0, 0, 0, time.UTC)
 	body := strings.Repeat("Evidence and measurement support this durable method because alternatives and counterexamples explain the mechanism and conclusion. ", 12)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/assessment", "Assessment fixture", body, now)
@@ -124,15 +125,15 @@ func TestOptionalAssessorFailureFallsBackAndVersionsRemainImmutable(t *testing.T
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if candidate.AssessmentState != DiscoveryAssessmentDegraded || candidate.CurrentAssessmentID == nil || candidate.AssessmentError != "article-quality-v1+fixture: fixture LLM unavailable" || candidate.EligibilityState != DiscoveryEligibilityEligible {
+	if candidate.AssessmentState != discovery.DiscoveryAssessmentDegraded || candidate.CurrentAssessmentID == nil || candidate.AssessmentError != "article-quality-v1+fixture: fixture LLM unavailable" || candidate.EligibilityState != discovery.DiscoveryEligibilityEligible {
 		t.Fatalf("fallback candidate = %#v", candidate)
 	}
-	var assessments []DiscoveryArticleAssessment
-	if err := db.Where("candidate_id = ?", candidate.ID).Find(&assessments).Error; err != nil {
+	var rows []ArticleAssessment
+	if err := db.Where("candidate_id = ?", candidate.ID).Find(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(assessments) != 1 || assessments[0].Assessor != RuleArticleAssessorName {
-		t.Fatalf("fallback assessments = %#v", assessments)
+	if len(rows) != 1 || rows[0].Assessor != RuleArticleAssessorName {
+		t.Fatalf("fallback assessments = %#v", rows)
 	}
 
 	if err := db.Exec(`CREATE TABLE recommendation_assessment_history_m9 (id INTEGER PRIMARY KEY, assessment_id INTEGER, snapshot_title TEXT)`).Error; err != nil {
@@ -144,20 +145,20 @@ func TestOptionalAssessorFailureFallsBackAndVersionsRemainImmutable(t *testing.T
 	}
 	updatedBody := body + strings.Repeat(" New observations add independent evidence and a revised conclusion.", 4)
 	if err := db.Model(&candidate).Updates(map[string]interface{}{
-		"body_text": updatedBody, "word_count": len(strings.Fields(updatedBody)), "content_hash": ContentHash(updatedBody),
-		"content_version": 2, "assessment_state": DiscoveryAssessmentPending, "current_assessment_id": nil,
-		"eligibility_state": DiscoveryEligibilityUnknown,
+		"body_text": updatedBody, "word_count": len(strings.Fields(updatedBody)), "content_hash": discovery.ContentHash(updatedBody),
+		"content_version": 2, "assessment_state": discovery.DiscoveryAssessmentPending, "current_assessment_id": nil,
+		"eligibility_state": discovery.DiscoveryEligibilityUnknown,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := AssessCandidate(context.Background(), candidate.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Where("candidate_id = ? AND assessor = ?", candidate.ID, RuleArticleAssessorName).Order("content_version").Find(&assessments).Error; err != nil {
+	if err := db.Where("candidate_id = ? AND assessor = ?", candidate.ID, RuleArticleAssessorName).Order("content_version").Find(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(assessments) != 2 || assessments[0].ContentVersion != 1 || assessments[1].ContentVersion != 2 || assessments[0].ID == assessments[1].ID {
-		t.Fatalf("versioned assessments = %#v", assessments)
+	if len(rows) != 2 || rows[0].ContentVersion != 1 || rows[1].ContentVersion != 2 || rows[0].ID == rows[1].ID {
+		t.Fatalf("versioned assessments = %#v", rows)
 	}
 	var historyAssessmentID uint
 	var snapshotTitle string
@@ -170,7 +171,7 @@ func TestOptionalAssessorFailureFallsBackAndVersionsRemainImmutable(t *testing.T
 }
 
 func TestSemanticQualityFloorIsTwentyAndConfidenceDoesNotGate(t *testing.T) {
-	setupSQLiteDB(t)
+	setupAssessmentDB(t)
 	oldThreshold := config.DISCOVERYARTICLEQUALITYTHRESHOLD
 	config.DISCOVERYARTICLEQUALITYTHRESHOLD = .20
 	t.Cleanup(func() { config.DISCOVERYARTICLEQUALITYTHRESHOLD = oldThreshold })
@@ -178,7 +179,7 @@ func TestSemanticQualityFloorIsTwentyAndConfidenceDoesNotGate(t *testing.T) {
 	below := createAssessmentCandidate(t, "Fixture", "https://example.com/below", "Below floor", strings.Repeat("substance ", 80), now)
 	atFloor := createAssessmentCandidate(t, "Fixture", "https://example.com/at-floor", "At floor", strings.Repeat("substance ", 80), now)
 	for _, fixture := range []struct {
-		candidate DiscoveryCandidate
+		candidate discovery.DiscoveryCandidate
 		quality   float64
 	}{
 		{below, .19},
@@ -195,20 +196,20 @@ func TestSemanticQualityFloorIsTwentyAndConfidenceDoesNotGate(t *testing.T) {
 	if err := db.First(&atFloor, atFloor.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if below.EligibilityState != DiscoveryEligibilityIneligible || atFloor.EligibilityState != DiscoveryEligibilityEligible {
+	if below.EligibilityState != discovery.DiscoveryEligibilityIneligible || atFloor.EligibilityState != discovery.DiscoveryEligibilityEligible {
 		t.Fatalf("quality floor results below=%#v atFloor=%#v", below, atFloor)
 	}
 }
 
-func createAssessmentCandidate(t *testing.T, sourceName string, rawURL string, title string, body string, now time.Time) DiscoveryCandidate {
+func createAssessmentCandidate(t *testing.T, sourceName string, rawURL string, title string, body string, now time.Time) discovery.DiscoveryCandidate {
 	t.Helper()
-	candidate := DiscoveryCandidate{
+	candidate := discovery.DiscoveryCandidate{
 		SourceID: 1, SourceName: sourceName, URL: rawURL, NormalizedURL: rawURL, CanonicalURL: rawURL,
 		FinalURL: rawURL, Title: title, BodyText: body, Language: "en", WordCount: len(strings.Fields(body)),
-		ContentHash: ContentHash(body), ContentVersion: 1, DedupeKey: ContentHash(rawURL),
-		Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingReady,
-		DedupeState: DiscoveryDedupeReady, AssessmentState: DiscoveryAssessmentPending,
-		EligibilityState: DiscoveryEligibilityUnknown, LastSeenAt: now, CreatedAt: now, UpdatedAt: now,
+		ContentHash: discovery.ContentHash(body), ContentVersion: 1, DedupeKey: discovery.ContentHash(rawURL),
+		Status: discovery.DiscoveryCandidateStatusNew, ProcessingState: discovery.DiscoveryProcessingReady,
+		DedupeState: discovery.DiscoveryDedupeReady, AssessmentState: discovery.DiscoveryAssessmentPending,
+		EligibilityState: discovery.DiscoveryEligibilityUnknown, LastSeenAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
@@ -217,7 +218,7 @@ func createAssessmentCandidate(t *testing.T, sourceName string, rawURL string, t
 }
 
 func TestObserveAssessmentWritesSummaryWithoutActivatingModelScores(t *testing.T) {
-	setupSQLiteDB(t)
+	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/observe-summary", "Observed summary", strings.Repeat("substance ", 80), now)
 	if err := db.Model(&candidate).Update("summary", "https://example.com/observe-summary").Error; err != nil {
@@ -235,7 +236,7 @@ func TestObserveAssessmentWritesSummaryWithoutActivatingModelScores(t *testing.T
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	var active DiscoveryArticleAssessment
+	var active ArticleAssessment
 	if err := db.First(&active, *candidate.CurrentAssessmentID).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +246,7 @@ func TestObserveAssessmentWritesSummaryWithoutActivatingModelScores(t *testing.T
 	if candidate.Summary != result.Summary || candidate.Topics != `["testing","evidence","methods"]` {
 		t.Fatalf("observe write-back = summary=%q topics=%s", candidate.Summary, candidate.Topics)
 	}
-	var modelRow DiscoveryArticleAssessment
+	var modelRow ArticleAssessment
 	if err := db.Where("candidate_id = ? AND assessor = ?", candidate.ID, "admin_fixture").First(&modelRow).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +256,7 @@ func TestObserveAssessmentWritesSummaryWithoutActivatingModelScores(t *testing.T
 }
 
 func TestRuleAssessmentDoesNotOverwriteExistingSummary(t *testing.T) {
-	setupSQLiteDB(t)
+	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 17, 12, 30, 0, 0, time.UTC)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/keep-summary", "Keep summary", strings.Repeat("substance ", 80), now)
 	if err := db.Model(&candidate).Updates(map[string]interface{}{"summary": "keep-original-summary", "topics": `["original"]`}).Error; err != nil {

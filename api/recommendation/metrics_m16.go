@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/assessment"
 	"DataArk/discovery"
 	"encoding/json"
 	"math"
@@ -146,18 +147,18 @@ func GetAdminProductMetrics(now time.Time) (*AdminProductMetrics, error) {
 			metrics.Candidates.Duplicate++
 		}
 	}
-	var assessments []discovery.DiscoveryArticleAssessment
-	if err := db.Find(&assessments).Error; err != nil {
+	var rows []assessment.ArticleAssessment
+	if err := db.Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	for _, assessment := range assessments {
-		if strings.Contains(strings.ToLower(assessment.Assessor), "rule") {
+	for _, row := range rows {
+		if strings.Contains(strings.ToLower(row.Assessor), "rule") {
 			metrics.Assessments.Rules++
 		} else {
 			metrics.Assessments.Model++
 		}
 	}
-	metrics.Assessments.ModelUsageRate = metricRate(metrics.Assessments.Model, int64(len(assessments)))
+	metrics.Assessments.ModelUsageRate = metricRate(metrics.Assessments.Model, int64(len(rows)))
 	var days []RecommendationDay
 	if err := db.Find(&days).Error; err != nil {
 		return nil, err

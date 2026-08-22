@@ -45,26 +45,26 @@ func TestOpenAICompatibleArticleAssessorPersistsEnhancedVersionWithoutSourceInpu
 	if provider.input.CandidateID != candidate.ID || provider.input.Title != candidate.Title || provider.input.BodyText != body {
 		t.Fatalf("enhanced assessor input = %#v", provider.input)
 	}
-	var assessments []discovery.DiscoveryArticleAssessment
-	if err := db.Where("candidate_id = ?", candidate.ID).Order("id").Find(&assessments).Error; err != nil {
+	var rows []assessment.ArticleAssessment
+	if err := db.Where("candidate_id = ?", candidate.ID).Order("id").Find(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(assessments) != 2 || assessments[0].Assessor != discovery.RuleArticleAssessorName || assessments[1].Assessor != "openai_compatible" || assessments[1].AssessorVersion != "fixture-llm" {
-		t.Fatalf("rule/enhanced assessments = %#v", assessments)
+	if len(rows) != 2 || rows[0].Assessor != assessment.RuleArticleAssessorName || rows[1].Assessor != "openai_compatible" || rows[1].AssessorVersion != "fixture-llm" {
+		t.Fatalf("rule/enhanced assessments = %#v", rows)
 	}
-	if assessments[1].Reasons != `["Strong evidence","Useful depth"]` {
-		t.Fatalf("enhanced assessment reasons = %s", assessments[1].Reasons)
+	if rows[1].Reasons != `["Strong evidence","Useful depth"]` {
+		t.Fatalf("enhanced assessment reasons = %s", rows[1].Reasons)
 	}
-	if assessments[1].Summary != "The fixture article explains a durable method with measurements." || assessments[1].Keywords != `["testing","evidence","methods"]` {
-		t.Fatalf("enhanced assessment metadata = summary=%q keywords=%s", assessments[1].Summary, assessments[1].Keywords)
+	if rows[1].Summary != "The fixture article explains a durable method with measurements." || rows[1].Keywords != `["testing","evidence","methods"]` {
+		t.Fatalf("enhanced assessment metadata = summary=%q keywords=%s", rows[1].Summary, rows[1].Keywords)
 	}
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if candidate.Summary != assessments[1].Summary || candidate.Topics != assessments[1].Keywords {
+	if candidate.Summary != rows[1].Summary || candidate.Topics != rows[1].Keywords {
 		t.Fatalf("candidate metadata write-back = summary=%q topics=%s", candidate.Summary, candidate.Topics)
 	}
-	if candidate.CurrentAssessmentID == nil || *candidate.CurrentAssessmentID != assessments[1].ID || candidate.QualityScore != 0.70 || candidate.DepthScore != 0.65 || candidate.AssessmentState != discovery.DiscoveryAssessmentReady {
+	if candidate.CurrentAssessmentID == nil || *candidate.CurrentAssessmentID != rows[1].ID || candidate.QualityScore != 0.70 || candidate.DepthScore != 0.65 || candidate.AssessmentState != discovery.DiscoveryAssessmentReady {
 		t.Fatalf("active enhanced assessment = %#v", candidate)
 	}
 	if err := db.Model(&candidate).Updates(map[string]interface{}{"enrichment_status": RecommendationEnrichmentStatusReady, "published_at": now}).Error; err != nil {
@@ -80,7 +80,7 @@ func TestOpenAICompatibleArticleAssessorPersistsEnhancedVersionWithoutSourceInpu
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Items) != 1 || snapshot.Items[0].AssessmentID == nil || *snapshot.Items[0].AssessmentID != assessments[1].ID {
+	if len(snapshot.Items) != 1 || snapshot.Items[0].AssessmentID == nil || *snapshot.Items[0].AssessmentID != rows[1].ID {
 		t.Fatalf("recommendation assessment snapshot = %#v", snapshot.Items)
 	}
 }

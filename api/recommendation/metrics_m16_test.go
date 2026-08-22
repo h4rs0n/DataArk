@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/assessment"
 	"DataArk/discovery"
 	"context"
 	"testing"
@@ -43,7 +44,7 @@ func TestObservabilityM16MetricsExplainOperationsAndLongTailGems(t *testing.T) {
 			gem = candidate
 		}
 	}
-	if err := db.Create(&[]discovery.DiscoveryArticleAssessment{
+	if err := db.Create(&[]assessment.ArticleAssessment{
 		{CandidateID: gem.ID, ContentVersion: 1, Assessor: "deterministic_rules", AssessorVersion: "1", PolicyVersion: "v1", OverallQuality: .9},
 		{CandidateID: gem.ID, ContentVersion: 1, Assessor: "model", AssessorVersion: "1", PolicyVersion: "v2", OverallQuality: .95},
 	}).Error; err != nil {

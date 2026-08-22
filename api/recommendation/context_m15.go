@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/assessment"
 	"DataArk/discovery"
 
 	"gorm.io/gorm"
@@ -14,11 +15,11 @@ type RecommendationProvenanceContext struct {
 }
 
 type RecommendationItemContext struct {
-	Item       RecommendationItem                    `json:"item"`
-	Feedback   *RecommendationFeedback               `json:"feedback,omitempty"`
-	UserState  *discovery.UserCandidateState         `json:"userState,omitempty"`
-	Assessment *discovery.DiscoveryArticleAssessment `json:"assessment,omitempty"`
-	Provenance []RecommendationProvenanceContext     `json:"provenance"`
+	Item       RecommendationItem                `json:"item"`
+	Feedback   *RecommendationFeedback           `json:"feedback,omitempty"`
+	UserState  *discovery.UserCandidateState     `json:"userState,omitempty"`
+	Assessment *assessment.ArticleAssessment     `json:"assessment,omitempty"`
+	Provenance []RecommendationProvenanceContext `json:"provenance"`
 }
 
 // GetRecommendationItemContext 返回推荐条目可追溯上下文。
@@ -39,11 +40,11 @@ func GetRecommendationItemContext(userID uint, itemID uint) (*RecommendationItem
 		result.UserState = &state
 	}
 	if item.AssessmentID != nil {
-		var assessment discovery.DiscoveryArticleAssessment
-		if query := db.Where("id = ?", *item.AssessmentID).Limit(1).Find(&assessment); query.Error != nil {
+		var row assessment.ArticleAssessment
+		if query := db.Where("id = ?", *item.AssessmentID).Limit(1).Find(&row); query.Error != nil {
 			return nil, query.Error
 		} else if query.RowsAffected > 0 {
-			result.Assessment = &assessment
+			result.Assessment = &row
 		}
 	}
 	var rows []discovery.DiscoveryCandidateProvenance

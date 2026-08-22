@@ -1,11 +1,14 @@
-package discovery
+package assessment
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
+
+	"DataArk/discovery"
 )
 
 type modeFixtureAssessor struct {
@@ -23,6 +26,41 @@ func (assessor modeFixtureAssessor) Assess(context.Context, ArticleAssessmentInp
 	return assessor.result, nil
 }
 
+type recordedJobs struct {
+	mu   sync.Mutex
+	keys map[string]struct{}
+}
+
+type recordingJobEnqueuer struct {
+	store *recordedJobs
+}
+
+func (queue recordingJobEnqueuer) enqueue(key string) error {
+	queue.store.mu.Lock()
+	defer queue.store.mu.Unlock()
+	queue.store.keys[key] = struct{}{}
+	return nil
+}
+
+func (queue recordingJobEnqueuer) EnqueueFetchSource(_ context.Context, sourceID uint) error {
+	return queue.enqueue(fmt.Sprintf("fetch:%d", sourceID))
+}
+func (queue recordingJobEnqueuer) EnqueueScanBlogroll(_ context.Context, siteID uint) error {
+	return queue.enqueue(fmt.Sprintf("blogroll:%d", siteID))
+}
+func (queue recordingJobEnqueuer) EnqueueBackfillSite(_ context.Context, siteID uint) error {
+	return queue.enqueue(fmt.Sprintf("backfill:%d", siteID))
+}
+func (queue recordingJobEnqueuer) EnqueueProcessCandidate(_ context.Context, candidateID uint, contentVersion string) error {
+	return queue.enqueue(fmt.Sprintf("candidate:%d:%s", candidateID, contentVersion))
+}
+func (queue recordingJobEnqueuer) EnqueueAssessArticle(_ context.Context, candidateID uint, contentVersion string) error {
+	return queue.enqueue(fmt.Sprintf("assess:%d:%s", candidateID, contentVersion))
+}
+func (queue recordingJobEnqueuer) EnqueueGenerateDaily(_ context.Context, userID uint, localDate string) error {
+	return queue.enqueue(fmt.Sprintf("daily:%d:%s", userID, localDate))
+}
+
 type failingAssessmentQueue struct {
 	recordingJobEnqueuer
 	failCandidate uint
@@ -36,7 +74,7 @@ func (queue failingAssessmentQueue) EnqueueAssessArticle(ctx context.Context, ca
 }
 
 func TestArticleAssessmentBackfillReactivatesObservedRowsWithoutCallingModel(t *testing.T) {
-	setupSQLiteDB(t)
+	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 10, 8, 0, 0, 0, time.UTC)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/observed", "Observed article", "A durable analysis with enough evidence to be assessed independently.", now)
 	result := ArticleAssessmentResult{Quality: .82, Depth: .74, Evergreen: .68, Confidence: .9, Reasons: []string{"clear evidence", "bounded limitation"}}
@@ -64,7 +102,7 @@ func TestArticleAssessmentBackfillReactivatesObservedRowsWithoutCallingModel(t *
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	var active DiscoveryArticleAssessment
+	var active ArticleAssessment
 	if err := db.First(&active, *candidate.CurrentAssessmentID).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -78,11 +116,11 @@ func TestArticleAssessmentBackfillReactivatesObservedRowsWithoutCallingModel(t *
 }
 
 func TestArticleAssessmentBackfillPreservesPointerAcrossPartialQueueFailure(t *testing.T) {
-	setupSQLiteDB(t)
+	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
 	first := createAssessmentCandidate(t, "Fixture", "https://example.com/first", "First", "First article body with enough deterministic evidence.", now)
 	second := createAssessmentCandidate(t, "Fixture", "https://example.com/second", "Second", "Second article body with enough deterministic evidence.", now)
-	for _, candidate := range []DiscoveryCandidate{first, second} {
+	for _, candidate := range []discovery.DiscoveryCandidate{first, second} {
 		if err := AssessCandidate(context.Background(), candidate.ID, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -100,7 +138,7 @@ func TestArticleAssessmentBackfillPreservesPointerAcrossPartialQueueFailure(t *t
 	if err := db.First(&first, first.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if first.CurrentAssessmentID == nil || *first.CurrentAssessmentID != originalFirstAssessmentID || first.AssessmentState != DiscoveryAssessmentPending {
+	if first.CurrentAssessmentID == nil || *first.CurrentAssessmentID != originalFirstAssessmentID || first.AssessmentState != discovery.DiscoveryAssessmentPending {
 		t.Fatalf("failed enqueue lost active pointer: %#v", first)
 	}
 	if _, ok := store.keys[fmt.Sprintf("assess:%d:1", second.ID)]; !ok {
@@ -109,7 +147,7 @@ func TestArticleAssessmentBackfillPreservesPointerAcrossPartialQueueFailure(t *t
 }
 
 func TestArticleAssessmentRollbackRestoresDeterministicRow(t *testing.T) {
-	setupSQLiteDB(t)
+	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/rollback", "Rollback", "A detailed article body that supports rollback testing.", now)
 	assessor := modeFixtureAssessor{active: true, result: ArticleAssessmentResult{Quality: .9, Depth: .8, Evergreen: .7, Confidence: .9, Reasons: []string{"one", "two"}}}
@@ -123,17 +161,17 @@ func TestArticleAssessmentRollbackRestoresDeterministicRow(t *testing.T) {
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	var active DiscoveryArticleAssessment
+	var active ArticleAssessment
 	if err := db.First(&active, *candidate.CurrentAssessmentID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if active.Assessor != RuleArticleAssessorName || candidate.AssessmentState != DiscoveryAssessmentDegraded {
+	if active.Assessor != RuleArticleAssessorName || candidate.AssessmentState != discovery.DiscoveryAssessmentDegraded {
 		t.Fatalf("rollback active=%#v candidate=%#v", active, candidate)
 	}
 }
 
 func TestArticleAssessmentBackfillObserveEnqueuesWithoutActivating(t *testing.T) {
-	setupSQLiteDB(t)
+	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 17, 13, 0, 0, 0, time.UTC)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/observe-backfill", "Observe backfill", "A durable analysis with enough evidence to be assessed independently.", now)
 	if err := AssessCandidate(context.Background(), candidate.ID, nil); err != nil {
@@ -161,7 +199,7 @@ func TestArticleAssessmentBackfillObserveEnqueuesWithoutActivating(t *testing.T)
 }
 
 func TestArticleAssessmentBackfillObserveSkipsPersistedModelRows(t *testing.T) {
-	setupSQLiteDB(t)
+	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 17, 13, 30, 0, 0, time.UTC)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/observe-skip", "Observe skip", "A durable analysis with enough evidence to be assessed independently.", now)
 	result := ArticleAssessmentResult{Quality: .82, Depth: .74, Evergreen: .68, Confidence: .9, Reasons: []string{"clear evidence", "bounded limitation"}, Summary: "Persisted summary", Keywords: []string{"testing", "evidence", "methods"}}
