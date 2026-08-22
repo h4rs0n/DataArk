@@ -10,6 +10,115 @@ END
 $$;
 -- +goose StatementEnd
 
+-- 核心基表：原先由 GORM AutoMigrate 创建。空库必须先有这些表，后面的 ALTER 才能执行。
+-- 发现表列集是 000001 ALTER 之前的形状；归档表 Goose 从未改过，按当前模型写全列。
+-- Down 不 DROP 这些表，避免回滚丢掉用户与归档数据。
+
+CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS archive_tasks (
+    id VARCHAR(36) PRIMARY KEY,
+    url TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    status TEXT NOT NULL,
+    file_name TEXT,
+    error TEXT,
+    external_task_id TEXT,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_archive_tasks_url ON archive_tasks(url);
+CREATE INDEX IF NOT EXISTS idx_archive_tasks_status ON archive_tasks(status);
+
+CREATE TABLE IF NOT EXISTS archive_stats (
+    source VARCHAR(255) PRIMARY KEY,
+    file_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS archive_documents (
+    id BIGSERIAL PRIMARY KEY,
+    domain VARCHAR(255) NOT NULL,
+    file_name VARCHAR(1024) NOT NULL,
+    source_url TEXT,
+    title VARCHAR(1024),
+    summary TEXT,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_archive_documents_identity ON archive_documents(domain, file_name);
+
+CREATE TABLE IF NOT EXISTS search_events (
+    id BIGSERIAL PRIMARY KEY,
+    keyword VARCHAR(255) NOT NULL,
+    result_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_search_events_keyword ON search_events(keyword);
+CREATE INDEX IF NOT EXISTS idx_search_events_created_at ON search_events(created_at);
+
+CREATE TABLE IF NOT EXISTS archive_click_events (
+    id BIGSERIAL PRIMARY KEY,
+    domain VARCHAR(255) NOT NULL,
+    file_name VARCHAR(1024) NOT NULL,
+    path VARCHAR(1400) NOT NULL,
+    keyword VARCHAR(255),
+    created_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_archive_click_events_domain ON archive_click_events(domain);
+CREATE INDEX IF NOT EXISTS idx_archive_click_events_file_name ON archive_click_events(file_name);
+CREATE INDEX IF NOT EXISTS idx_archive_click_events_path ON archive_click_events(path);
+CREATE INDEX IF NOT EXISTS idx_archive_click_events_created_at ON archive_click_events(created_at);
+
+CREATE TABLE IF NOT EXISTS discovery_sources (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    url VARCHAR(2048) NOT NULL UNIQUE,
+    type VARCHAR(32) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    last_fetched_at TIMESTAMPTZ,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS discovery_candidates (
+    id BIGSERIAL PRIMARY KEY,
+    source_id BIGINT NOT NULL,
+    source_name VARCHAR(255),
+    url VARCHAR(2048) NOT NULL UNIQUE,
+    title VARCHAR(1024),
+    summary TEXT,
+    status VARCHAR(32) NOT NULL,
+    score DOUBLE PRECISION NOT NULL DEFAULT 0,
+    published_at TIMESTAMPTZ,
+    last_seen_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_discovery_candidates_source_id ON discovery_candidates(source_id);
+CREATE INDEX IF NOT EXISTS idx_discovery_candidates_status ON discovery_candidates(status);
+CREATE INDEX IF NOT EXISTS idx_discovery_candidates_last_seen_at ON discovery_candidates(last_seen_at);
+
+CREATE TABLE IF NOT EXISTS discovery_candidate_feedbacks (
+    id BIGSERIAL PRIMARY KEY,
+    candidate_id BIGINT NOT NULL,
+    action VARCHAR(32) NOT NULL,
+    created_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_discovery_candidate_feedbacks_candidate_id ON discovery_candidate_feedbacks(candidate_id);
+CREATE INDEX IF NOT EXISTS idx_discovery_candidate_feedbacks_action ON discovery_candidate_feedbacks(action);
+CREATE INDEX IF NOT EXISTS idx_discovery_candidate_feedbacks_created_at ON discovery_candidate_feedbacks(created_at);
+
 ALTER TABLE discovery_sources
     ADD COLUMN IF NOT EXISTS etag VARCHAR(1024),
     ADD COLUMN IF NOT EXISTS last_modified VARCHAR(1024),

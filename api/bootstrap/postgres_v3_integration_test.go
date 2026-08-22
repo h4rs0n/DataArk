@@ -1,8 +1,6 @@
 package bootstrap
 
 import (
-	"DataArk/archive"
-	"DataArk/auth"
 	appdatabase "DataArk/database"
 	"DataArk/discovery"
 	"DataArk/jobqueue"
@@ -56,19 +54,6 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 		configureDomainDatabases(previousDatabase)
 	})
 
-	if err := appdatabase.AutoMigrate(
-		&auth.User{},
-		&archive.ArchiveTask{},
-		&archive.ArchiveStat{},
-		&archive.ArchiveDocument{},
-		&archive.SearchEvent{},
-		&archive.ArchiveClickEvent{},
-		&discovery.DiscoverySource{},
-		&discovery.DiscoveryCandidate{},
-		&discovery.DiscoveryCandidateFeedback{},
-	); err != nil {
-		t.Fatalf("auto-migrate legacy schema: %v", err)
-	}
 	goose.SetBaseFS(appmigrations.FS)
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatal(err)

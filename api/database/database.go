@@ -43,6 +43,7 @@ func SetDB(database *gorm.DB) *gorm.DB {
 	return oldDB
 }
 
+// AutoMigrate 只给 SQLite 测试用。生产 Postgres 禁止调用，schema 只走 Goose。
 func AutoMigrate(models ...interface{}) error {
 	if db == nil {
 		return nil

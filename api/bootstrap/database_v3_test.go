@@ -268,6 +268,39 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if len(migrations) != 29 || migrations[len(migrations)-1].Version != 29 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
+	coreSchema, err := appmigrations.FS.ReadFile("000001_recommendation_v2.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS users",
+		"CREATE TABLE IF NOT EXISTS archive_tasks",
+		"CREATE TABLE IF NOT EXISTS archive_stats",
+		"CREATE TABLE IF NOT EXISTS archive_documents",
+		"CREATE TABLE IF NOT EXISTS search_events",
+		"CREATE TABLE IF NOT EXISTS archive_click_events",
+		"CREATE TABLE IF NOT EXISTS discovery_sources",
+		"CREATE TABLE IF NOT EXISTS discovery_candidates",
+		"CREATE TABLE IF NOT EXISTS discovery_candidate_feedbacks",
+	} {
+		if !strings.Contains(string(coreSchema), required) {
+			t.Fatalf("core schema migration missing %q", required)
+		}
+	}
+	coreDown := strings.Split(string(coreSchema), "-- +goose Down")
+	if len(coreDown) != 2 {
+		t.Fatal("core schema migration missing Down section")
+	}
+	for _, forbidden := range []string{
+		"DROP TABLE IF EXISTS users",
+		"DROP TABLE IF EXISTS archive_tasks",
+		"DROP TABLE IF EXISTS discovery_sources",
+		"DROP TABLE IF EXISTS discovery_candidates",
+	} {
+		if strings.Contains(coreDown[1], forbidden) {
+			t.Fatalf("core schema Down must preserve %q", forbidden)
+		}
+	}
 	body, err := appmigrations.FS.ReadFile("000003_blog_discovery_v3.sql")
 	if err != nil {
 		t.Fatal(err)

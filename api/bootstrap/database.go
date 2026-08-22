@@ -18,19 +18,7 @@ import (
 func InitDB() {
 	database.InitDB()
 	configureDomainDatabases(database.DB())
-	if err := database.AutoMigrate(
-		&auth.User{},
-		&archive.ArchiveTask{},
-		&archive.ArchiveStat{},
-		&archive.ArchiveDocument{},
-		&archive.SearchEvent{},
-		&archive.ArchiveClickEvent{},
-		&discovery.DiscoverySource{},
-		&discovery.DiscoveryCandidate{},
-		&discovery.DiscoveryCandidateFeedback{},
-	); err != nil {
-		log.Fatal("failed to migrate database", err)
-	}
+	// 生产 schema 只走 Goose + River，不再用 AutoMigrate 建表或改列。
 	if err := database.RunDatabaseMigrations(database.DB()); err != nil {
 		log.Fatal("failed to run database migrations", err)
 	}
@@ -48,6 +36,7 @@ func migrateV3Compatibility(database *gorm.DB) error {
 		return nil
 	}
 	if database.Dialector.Name() != "postgres" {
+		// SQLite 测试无法跑 Postgres Goose；用 AutoMigrate 作为方言替身，不定义生产 schema。
 		models := append(discovery.V3Models(), recommendation.V3Models()...)
 		models = append(models, assessmenteval.WorkflowModels()...)
 		models = append(models, assessment.V3Models()...)

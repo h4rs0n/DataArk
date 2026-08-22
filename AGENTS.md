@@ -39,7 +39,7 @@ There is **no** `make build` target. README that says otherwise is wrong.
 | `make web` | `npm i` and production Vite build. **Side effect:** sets the user-global npm registry to `https://registry.npmmirror.com`. Prefer `cd web && npm ci && npm run build` in sandboxes. |
 | `make web2api` | `mv web/dist/*` into `api/assets/web/` |
 | `make api` | `go mod tidy` and compile `bin/EchoArkServer` (makefile name). GitHub release workflow names the binary `DataArkServer`. README's `./api/bin/DataArk.exe` is wrong. |
-| `cd api && go test ./...` | Default backend suite (SQLite + GORM AutoMigrate) |
+| `cd api && go test ./...` | Default backend suite (SQLite + GORM AutoMigrate as a **test-only** dialect stand-in) |
 | `cd web && npm test` | Node test runner on `web/tests/*.test.mjs` (mostly source-string contracts, not DOM) |
 | `cd web && npm run build` | `vue-tsc` + Vite production build |
 | `cd web && npm run dev` | Vite only. **No proxy** to the API is configured. |
@@ -54,7 +54,7 @@ Discovery/search tests that call `httptest.NewServer` need a local listen. Isola
 
 ## Coding style
 
-Format Go with `gofmt`. Package names are lower-case; imports use the `DataArk/...` path. New schema goes in a numbered Goose migration, not only GORM `AutoMigrate`. Vue 3 Composition API with `<script setup lang="ts">` where practical. Route pages are `*View.vue`; CSS classes are kebab-case. Check `docs/references/frontend-pitfalls.md` before assuming Arco props match Ant Design Vue.
+Format Go with `gofmt`. Package names are lower-case; imports use the `DataArk/...` path. Production schema changes go **only** in a numbered Goose migration. SQLite tests may `AutoMigrate` models as a dialect stand-in; that does not define production schema. Vue 3 Composition API with `<script setup lang="ts">` where practical. Route pages are `*View.vue`; CSS classes are kebab-case. Check `docs/references/frontend-pitfalls.md` before assuming Arco props match Ant Design Vue.
 
 ## Verification (match the change radius)
 
