@@ -16,7 +16,7 @@ Backend (`api/`, Go module `DataArk`, Go 1.26):
 - `api/assessment/` — LLM article assessment adapter, immutable assessment rows, state machine, manual queue, backfill/rollback, metrics
 - `api/assessmenteval/` — owner gold-label workflow
 - `api/articlevalue/` — shared scoring/evidence helpers
-- `api/recommendation/` — daily digest (`digest.go`, `day.go`, `selection_v3.go`), settings, feedback, profile, enrichment, rerank, discovery feed, inventory
+- `api/recommendation/` — daily digest (`digest.go`, `day.go`, `selection_v3.go`), settings, feedback, profile, rerank, discovery feed, inventory. Candidate topics/summary come from assessment write-back, not a separate enrichment hop.
 - `api/jobqueue/` — River (Postgres) and in-memory queue
 - `api/search/` — Meilisearch index
 - `api/backup/` — backup/restore
@@ -78,7 +78,7 @@ PRs: exactly one squashed commit, rebase onto the target branch, no merge commit
 
 ## Configuration and secrets
 
-CLI flags: `api/flag/flag.go`. Runtime vars: `api/config/config.go`. New required flags must be documented in `README.md`, `README_en.md`, `docker/docker-compose.yml`, and release workflows. LLM flags are optional; without them, enrichment/assessment stays rule-based.
+CLI flags: `api/flag/flag.go`. Runtime vars: `api/config/config.go`. New required flags must be documented in `README.md`, `README_en.md`, `docker/docker-compose.yml`, and release workflows. LLM flags are optional; without them, assessment/rerank/digest summary stay rule-based.
 
 Do not commit real credentials. `passwd.txt` at the repo root is a local admin-password note and must stay untracked.
 

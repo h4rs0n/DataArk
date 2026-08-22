@@ -25,7 +25,6 @@ const (
 
 	// 各调用阶段名写入 llm_call 日志，供评估面板按 stage 聚合。
 	StageArticleAssessment    = "article_assessment"
-	StageCandidateEnrichment  = "candidate_enrichment"
 	StageRecommendationRerank = "recommendation_rerank"
 	StageDigestSummary        = "digest_summary"
 	CallEventName             = "llm_call"

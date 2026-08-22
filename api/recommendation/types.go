@@ -33,6 +33,8 @@ const (
 	UserBlockRuleSource = "source"
 	UserBlockRuleStyle  = "style"
 
+	// 兼容列 discovery_candidates.enrichment_status 的历史取值。
+	// 生产路径不再写 ready/failed；新候选仍以 pending 入库，主题由评估回写。
 	RecommendationEnrichmentStatusPending = "pending"
 	RecommendationEnrichmentStatusReady   = "ready"
 	RecommendationEnrichmentStatusFailed  = "failed"

@@ -10,12 +10,6 @@ import (
 	"time"
 )
 
-type failingEnrichmentProvider struct{}
-
-func (failingEnrichmentProvider) Enrich(context.Context, EnrichmentInput) (EnrichmentResult, error) {
-	return EnrichmentResult{}, errors.New("llm unavailable")
-}
-
 type fakeReranker struct {
 	result RerankResult
 	err    error
@@ -147,74 +141,6 @@ func TestRecommendationFeedbackAndBlockRules(t *testing.T) {
 	}
 	if err := RevertRecommendationFeedback(5, item.ID); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestEnrichDiscoveryCandidateUpdatesStructuredFields(t *testing.T) {
-	setupSQLiteDB(t)
-	candidate := DiscoveryCandidate{
-		SourceID:         1,
-		SourceName:       "Feed",
-		URL:              "https://example.com/post?utm_source=newsletter",
-		Title:            "PostgreSQL pgvector Guide",
-		Summary:          "A tutorial about PostgreSQL vector search",
-		BodyText:         strings.Repeat("This PostgreSQL pgvector tutorial explains embedding search. ", 40),
-		Status:           DiscoveryCandidateStatusNew,
-		EnrichmentStatus: RecommendationEnrichmentStatusPending,
-		ProcessingState:  discovery.DiscoveryProcessingReady,
-		EligibilityState: discovery.DiscoveryEligibilityEligible,
-		DedupeState:      discovery.DiscoveryDedupeReady,
-		QualityScore:     0.61,
-		DepthScore:       0.62,
-	}
-	if err := db.Create(&candidate).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	enriched, err := EnrichDiscoveryCandidate(context.Background(), candidate.ID, RuleBasedEnrichmentProvider{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if enriched.EnrichmentStatus != RecommendationEnrichmentStatusReady || enriched.ContentHash == "" || enriched.DedupeKey != enriched.ContentHash {
-		t.Fatalf("enriched identity fields = %#v", enriched)
-	}
-	if enriched.NormalizedURL != "https://example.com/post" || enriched.CanonicalURL != "https://example.com/post" {
-		t.Fatalf("normalized urls = %#v", enriched)
-	}
-	if !strings.Contains(enriched.Topics, "PostgreSQL") || !strings.Contains(enriched.Entities, "pgvector") {
-		t.Fatalf("topics/entities not updated: topics=%q entities=%q", enriched.Topics, enriched.Entities)
-	}
-	if enriched.QualityScore != 0.61 || enriched.DepthScore != 0.62 || enriched.LLMModel != RuleBasedProviderModel {
-		t.Fatalf("scores/model not updated: %#v", enriched)
-	}
-}
-
-func TestEnrichDiscoveryCandidateRecordsFailure(t *testing.T) {
-	setupSQLiteDB(t)
-	candidate := DiscoveryCandidate{
-		SourceID:         1,
-		SourceName:       "Feed",
-		URL:              "https://example.com/post",
-		Title:            "Post",
-		Status:           DiscoveryCandidateStatusNew,
-		EnrichmentStatus: RecommendationEnrichmentStatusPending,
-		ProcessingState:  discovery.DiscoveryProcessingReady,
-		EligibilityState: discovery.DiscoveryEligibilityEligible,
-		DedupeState:      discovery.DiscoveryDedupeReady,
-	}
-	if err := db.Create(&candidate).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := EnrichDiscoveryCandidate(context.Background(), candidate.ID, failingEnrichmentProvider{}); err == nil {
-		t.Fatal("expected enrichment error")
-	}
-	var got DiscoveryCandidate
-	if err := db.First(&got, candidate.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if got.EnrichmentStatus != RecommendationEnrichmentStatusFailed || got.EnrichmentError != "llm unavailable" {
-		t.Fatalf("failure fields = %#v", got)
 	}
 }
 
@@ -357,7 +283,7 @@ func TestGenerateDailyRecommendationsUsesFeedbackProfile(t *testing.T) {
 	}
 }
 
-func TestGenerateDailyRecommendationsDoesNotEnrichOnPublishPath(t *testing.T) {
+func TestGenerateDailyRecommendationsDoesNotMutateCandidateOnPublishPath(t *testing.T) {
 	setupSQLiteDB(t)
 	settings := DefaultRecommendationSettings(13)
 	settings.DailyLimit = 1
@@ -405,14 +331,14 @@ func TestGenerateDailyRecommendationsDoesNotEnrichOnPublishPath(t *testing.T) {
 	if err := db.First(&enriched, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if enriched.EnrichmentStatus != RecommendationEnrichmentStatusPending || enriched.DedupeKey != "" {
-		t.Fatalf("publish path changed candidate enrichment = %#v", enriched)
+	if enriched.Topics != "" || enriched.Entities != "" || enriched.DedupeKey != "" {
+		t.Fatalf("publish path mutated candidate metadata = %#v", enriched)
 	}
 	if err := db.First(&summaryOnly, summaryOnly.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if summaryOnly.EnrichmentStatus != RecommendationEnrichmentStatusPending {
-		t.Fatalf("summary-only candidate was enriched: %#v", summaryOnly)
+	if summaryOnly.Topics != "" || summaryOnly.Summary != "A feed summary without an extracted body" {
+		t.Fatalf("summary-only candidate was mutated: %#v", summaryOnly)
 	}
 }
 
@@ -525,6 +451,54 @@ func TestEmbedDiscoveryCandidateStoresModelWithoutPostgresVector(t *testing.T) {
 	}
 	if got.EmbeddingModel != "embedding-model" {
 		t.Fatalf("embedding model = %q", got.EmbeddingModel)
+	}
+}
+
+func TestEmbedReadyDiscoveryCandidatesIgnoresLegacyEnrichmentStatus(t *testing.T) {
+	setupSQLiteDB(t)
+	now := time.Now()
+	pending := DiscoveryCandidate{
+		SourceID: 1, SourceName: "pending.example", URL: "https://pending.example/post",
+		Title: "Eligible pending enrichment", Status: DiscoveryCandidateStatusNew,
+		EnrichmentStatus: RecommendationEnrichmentStatusPending,
+		ProcessingState:  discovery.DiscoveryProcessingReady,
+		EligibilityState: discovery.DiscoveryEligibilityEligible,
+		DedupeState:      discovery.DiscoveryDedupeReady,
+		LastSeenAt:       now, PublishedAt: &now,
+	}
+	if err := db.Create(&pending).Error; err != nil {
+		t.Fatal(err)
+	}
+	ineligible := DiscoveryCandidate{
+		SourceID: 2, SourceName: "skip.example", URL: "https://skip.example/post",
+		Title: "Not eligible", Status: DiscoveryCandidateStatusNew,
+		EnrichmentStatus: RecommendationEnrichmentStatusReady,
+		ProcessingState:  discovery.DiscoveryProcessingFetchPending,
+		EligibilityState: discovery.DiscoveryEligibilityUnknown,
+		LastSeenAt:       now, PublishedAt: &now,
+	}
+	if err := db.Create(&ineligible).Error; err != nil {
+		t.Fatal(err)
+	}
+	count, err := EmbedReadyDiscoveryCandidates(context.Background(), 10, fakeEmbeddingProvider{vectors: [][]float32{{0.1, 0.2}}}, "embedding-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("embedded count = %d", count)
+	}
+	var got DiscoveryCandidate
+	if err := db.First(&got, pending.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.EmbeddingModel != "embedding-model" {
+		t.Fatalf("pending candidate embedding model = %q", got.EmbeddingModel)
+	}
+	if err := db.First(&ineligible, ineligible.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ineligible.EmbeddingModel != "" {
+		t.Fatalf("ineligible candidate was embedded: %#v", ineligible)
 	}
 }
 

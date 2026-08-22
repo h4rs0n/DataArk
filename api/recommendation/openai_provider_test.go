@@ -144,22 +144,14 @@ func TestOpenAICompatibleProviderEmbed(t *testing.T) {
 	}
 }
 
-func TestOpenAICompatibleProviderEnrichAndRerank(t *testing.T) {
+func TestOpenAICompatibleProviderRerank(t *testing.T) {
 	client := &fakeOpenAIDoer{responses: []string{
-		`{"choices":[{"message":{"content":"{\"summary\":\"Short\",\"topics\":[\"Go\"],\"entities\":[\"DataArk\"],\"contentType\":\"article\",\"contentStyle\":\"technical\",\"language\":\"en\",\"qualityScore\":0.8,\"depthScore\":0.7}"}}]}`,
 		`{"choices":[{"message":{"content":"{\"items\":[{\"candidateId\":2,\"rank\":1,\"reason\":\"Better fit\",\"confidence\":0.9}]}"}}]}`,
 	}}
 	provider := OpenAICompatibleProvider{
 		BaseURL:    "https://llm.example",
 		ChatModel:  "MiMo-V2.5-Pro",
 		HTTPClient: client,
-	}
-	enriched, err := provider.Enrich(context.Background(), EnrichmentInput{CandidateID: 3, Title: "Go article"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if enriched.Summary != "Short" || enriched.Topics[0] != "Go" || enriched.Model != "MiMo-V2.5-Pro" {
-		t.Fatalf("enriched = %#v", enriched)
 	}
 	reranked, err := provider.Rerank(context.Background(), RerankInput{
 		UserID:         1,
@@ -174,15 +166,13 @@ func TestOpenAICompatibleProviderEnrichAndRerank(t *testing.T) {
 	if len(reranked.Items) != 1 || reranked.Items[0].CandidateID != 2 || reranked.Model != "MiMo-V2.5-Pro" {
 		t.Fatalf("reranked = %#v", reranked)
 	}
-	if len(client.paths) != 2 || client.paths[0] != "/v1/chat/completions" || client.paths[1] != "/v1/chat/completions" {
+	if len(client.paths) != 1 || client.paths[0] != "/v1/chat/completions" {
 		t.Fatalf("paths = %#v", client.paths)
 	}
-	for index, payload := range client.payloads {
-		assertChatSampling(t, payload)
-		thinking, ok := payload["thinking"].(map[string]interface{})
-		if !ok || thinking["type"] != "disabled" {
-			t.Fatalf("payload %d thinking = %#v", index, payload["thinking"])
-		}
+	assertChatSampling(t, client.payloads[0])
+	thinking, ok := client.payloads[0]["thinking"].(map[string]interface{})
+	if !ok || thinking["type"] != "disabled" {
+		t.Fatalf("thinking = %#v", client.payloads[0]["thinking"])
 	}
 }
 

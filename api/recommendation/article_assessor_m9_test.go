@@ -67,7 +67,7 @@ func TestOpenAICompatibleArticleAssessorPersistsEnhancedVersionWithoutSourceInpu
 	if candidate.CurrentAssessmentID == nil || *candidate.CurrentAssessmentID != rows[1].ID || candidate.QualityScore != 0.70 || candidate.DepthScore != 0.65 || candidate.AssessmentState != discovery.DiscoveryAssessmentReady {
 		t.Fatalf("active enhanced assessment = %#v", candidate)
 	}
-	if err := db.Model(&candidate).Updates(map[string]interface{}{"enrichment_status": RecommendationEnrichmentStatusReady, "published_at": now}).Error; err != nil {
+	if err := db.Model(&candidate).Updates(map[string]interface{}{"published_at": now}).Error; err != nil {
 		t.Fatal(err)
 	}
 	settings := DefaultRecommendationSettings(20)

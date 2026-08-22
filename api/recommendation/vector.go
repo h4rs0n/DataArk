@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/discovery"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"time"
 )
 
+// EmbedDiscoveryCandidate 为单篇候选写入 embedding；SQLite 只记录模型名。
 func EmbedDiscoveryCandidate(ctx context.Context, candidateID uint, provider EmbeddingProvider, model string) error {
 	if provider == nil {
 		return errors.New("missing embedding provider")
@@ -36,6 +38,7 @@ func EmbedDiscoveryCandidate(ctx context.Context, candidateID uint, provider Emb
 	return StoreCandidateEmbedding(ctx, candidateID, model, vectors[0])
 }
 
+// EmbedReadyDiscoveryCandidates 给尚未写入向量的硬合格代表补 embedding。
 func EmbedReadyDiscoveryCandidates(ctx context.Context, limit int, provider EmbeddingProvider, model string) (int, error) {
 	if db == nil || provider == nil {
 		return 0, nil
@@ -43,10 +46,13 @@ func EmbedReadyDiscoveryCandidates(ctx context.Context, limit int, provider Embe
 	if limit <= 0 {
 		limit = 50
 	}
+	// 只给 v3 硬合格代表补向量，不再依赖已停用的 enrichment_status=ready。
 	var candidates []DiscoveryCandidate
-	if err := db.Where("enrichment_status = ?", RecommendationEnrichmentStatusReady).
+	if err := db.Where("processing_state = ? AND eligibility_state = ? AND dedupe_state = ?",
+		discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady).
+		Where("representative_id IS NULL OR representative_id = id").
 		Where("embedding_model = '' OR embedding_model IS NULL").
-		Order("enriched_at desc, last_seen_at desc").
+		Order("last_seen_at desc, id desc").
 		Limit(limit).
 		Find(&candidates).Error; err != nil {
 		return 0, err
@@ -102,11 +108,16 @@ func loadPGVectorCandidateIDs(ctx context.Context, profile *UserRecommendationPr
 	var rows []struct {
 		ID uint `gorm:"column:id"`
 	}
+	// 向量召回与选文共用硬合格门禁，避免已停用的 enrichment_status 把召回永远滤空。
 	if err := db.WithContext(ctx).
 		Raw(`SELECT id FROM discovery_candidates
-			WHERE enrichment_status = ? AND embedding IS NOT NULL
+			WHERE processing_state = ? AND eligibility_state = ? AND dedupe_state = ?
+			  AND (representative_id IS NULL OR representative_id = id)
+			  AND embedding IS NOT NULL
 			ORDER BY embedding <=> ?::vector
-			LIMIT ?`, RecommendationEnrichmentStatusReady, vectorLiteral, limit).
+			LIMIT ?`,
+			discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady,
+			vectorLiteral, limit).
 		Scan(&rows).Error; err != nil {
 		return nil, err
 	}

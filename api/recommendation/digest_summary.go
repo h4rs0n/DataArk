@@ -11,7 +11,11 @@ import (
 	"time"
 )
 
-const digestSummaryItemSummaryRunes = 160
+const (
+	digestSummaryItemSummaryRunes = 160
+	// RuleBasedProviderModel 标识无 LLM 时的规则摘要实现。
+	RuleBasedProviderModel = "rule-based"
+)
 
 // RecommendationDaySummary is the user-facing digest summary for a single
 // recommendation day. Available is false when the day has no published items
@@ -28,9 +32,7 @@ type RecommendationDaySummary struct {
 	Reason        string     `json:"reason,omitempty"`
 }
 
-// ConfiguredDigestSummaryGenerator mirrors ConfiguredEnrichmentProvider: the
-// LLM provider when a chat model is configured, otherwise the rule-based
-// generator.
+// ConfiguredDigestSummaryGenerator 在配置了 chat 模型时用 LLM，否则用规则摘要。
 func ConfiguredDigestSummaryGenerator() DigestSummaryGenerator {
 	if strings.TrimSpace(config.LLMCHATMODEL) == "" {
 		return RuleBasedDigestSummaryGenerator{}

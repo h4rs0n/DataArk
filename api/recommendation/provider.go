@@ -2,47 +2,25 @@ package recommendation
 
 import (
 	"DataArk/assessment"
+	"DataArk/config"
 	"context"
+	"strings"
 	"time"
 )
 
+// EmbeddingProvider 为候选正文生成向量。
 type EmbeddingProvider interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
-type EnrichmentProvider interface {
-	Enrich(ctx context.Context, input EnrichmentInput) (EnrichmentResult, error)
-}
-
+// ArticleAssessmentProvider 调用 chat 评估文章阅读价值。
 type ArticleAssessmentProvider interface {
 	AssessArticle(ctx context.Context, input ArticleAssessmentInput) (ArticleAssessmentResult, error)
 }
 
+// RerankProvider 对已选出的日报候选做 LLM 重排。
 type RerankProvider interface {
 	Rerank(ctx context.Context, input RerankInput) (RerankResult, error)
-}
-
-type EnrichmentInput struct {
-	CandidateID uint
-	URL         string
-	Title       string
-	Summary     string
-	BodyText    string
-	PublishedAt *time.Time
-}
-
-type EnrichmentResult struct {
-	Summary         string
-	Topics          []string
-	Entities        []string
-	ContentType     string
-	ContentStyle    string
-	Language        string
-	QualityScore    float64
-	DepthScore      float64
-	SpamProbability float64
-	Model           string
-	PromptVersion   string
 }
 
 type ArticleAssessmentInput = assessment.ChatAssessmentInput
@@ -79,6 +57,7 @@ type RerankItem struct {
 	Confidence  float64
 }
 
+// DigestSummaryGenerator 为已发布日报生成用户可见摘要。
 type DigestSummaryGenerator interface {
 	GenerateDigestSummary(ctx context.Context, input DigestSummaryInput) (DigestSummaryOutput, error)
 }
@@ -103,4 +82,31 @@ type DigestSummaryOutput struct {
 	Topics        []string `json:"topics"`
 	Model         string   `json:"-"`
 	PromptVersion string   `json:"-"`
+}
+
+// ConfiguredRecommendationReranker 返回生产 reranker；未配置 LLM 时返回 nil。
+func ConfiguredRecommendationReranker() RerankProvider {
+	if strings.TrimSpace(config.LLMCHATMODEL) == "" {
+		return nil
+	}
+	return configuredOpenAICompatibleProvider()
+}
+
+// ConfiguredOpenAICompatibleProvider 返回生产评估用的 OpenAI 兼容提供者，不通过 HTTP 暴露凭证。
+func ConfiguredOpenAICompatibleProvider() OpenAICompatibleProvider {
+	return configuredOpenAICompatibleProvider()
+}
+
+func configuredOpenAICompatibleProvider() OpenAICompatibleProvider {
+	timeout, err := time.ParseDuration(strings.TrimSpace(config.LLMTIMEOUT))
+	if err != nil || timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	return OpenAICompatibleProvider{
+		BaseURL:        config.LLMBASEURL,
+		APIKey:         config.LLMAPIKEY,
+		ChatModel:      config.LLMCHATMODEL,
+		EmbeddingModel: config.LLMEMBEDDINGMODEL,
+		Timeout:        timeout,
+	}
 }

@@ -170,3 +170,13 @@ func truncateError(value string, limit int) string {
 	}
 	return value[:limit]
 }
+
+// firstNonEmpty 返回第一个去掉空白后非空的字符串。
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
