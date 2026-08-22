@@ -1,0 +1,112 @@
+/* 推荐中心各面板共用的区块与卡片布局。 */
+
+.panel {
+  padding: 20px 0;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.section-title h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.section-title span,
+.item-meta,
+.compact-card span,
+.source-row span,
+.source-row small {
+  color: #86909c;
+  font-size: 13px;
+}
+
+.recommendation-list,
+.item-list,
+.source-list {
+  display: grid;
+  gap: 12px;
+}
+
+.compact-card,
+.source-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 18px;
+  min-height: 126px;
+  padding: 16px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.item-main {
+  min-width: 0;
+}
+
+.item-main h3,
+.source-row h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.item-main p,
+.source-row p {
+  min-height: 44px;
+  display: -webkit-box;
+  margin: 0 0 8px;
+  overflow: hidden;
+  color: #4e5969;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.source-field,
+.inline-field {
+  display: grid;
+  gap: 6px;
+  color: #4e5969;
+  font-size: 13px;
+}
+
+.source-field input,
+.source-field select,
+.inline-field input,
+.inline-field select {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #c9cdd4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1d2129;
+}
+
+.source-field input:focus,
+.source-field select:focus,
+.inline-field input:focus,
+.inline-field select:focus {
+  border-color: #165dff;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(22, 93, 255, 0.12);
+}
+
+@media (max-width: 820px) {
+  .compact-card,
+  .source-row {
+    grid-template-columns: 1fr;
+  }
+
+  .section-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

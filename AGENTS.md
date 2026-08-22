@@ -25,7 +25,7 @@ Backend (`api/`, Go module `DataArk`, Go 1.26):
 - `api/llm/`, `api/logging/`, `api/observability/`, `api/assets/`
 - `api/flag/`, `api/config/`
 
-Frontend (`web/src/`): `views/` (`*View.vue`), `components/`, `router/`, `assets/`. Node `>=24.15 <25`. The npm package name is still `web2`.
+Frontend (`web/src/`): `views/` (`*View.vue`), `components/` (recommendation center panels live in `components/recommendations/`), `router/`, `assets/`. Node `>=24.15 <25`. The npm package name is still `web2`.
 
 Ops: `docker/` (Compose + Dockerfile). Docs: `docs/operations/` runbooks, `docs/references/frontend-pitfalls.md` (Arco API traps), `docs/exec-plans/` (historical living plans; many are finished). `docs/design-docs/dbDesign.md` is stale (still names `api/common/db.go`).
 
