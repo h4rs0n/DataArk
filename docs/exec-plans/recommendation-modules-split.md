@@ -28,7 +28,7 @@ An operator can observe: listing and login URLs never appear in the assessment q
 ## Surprises & Discoveries
 
 - Observation: `ProcessCandidateWithAssessor` is only called from the API composition root. Tests call `ProcessCandidate` then assert `assessment_state=ready`, so a missing job queue must still run rule assessment in-process or those tests will fail for a reason unrelated to article rules.
-  Evidence: `api/api/controller.go` and `api/discovery/candidate_processing_m7_test.go`.
+  Evidence: `api/api/controller.go` and `api/discovery/candidate_processing_test.go`.
 - Observation: Goose now collects 29 migrations ending at `000029_assessment_llm_calls.sql`. `000028` must update already-paused sitemap cursors, because `000020` paused them with `sitemap_requires_owner_request` and a `status NOT IN ('paused')` filter would leave the old reason in place.
   Evidence: `TestV3GooseMigrationIsAdditiveAndParseable` and `api/migrations/000028_remove_sitemap_capability.sql`.
 - Observation: `package discovery` tests cannot import `assessment` if `assessment` imports `discovery`. That would be a test import cycle. Assessment persistence therefore stays in `discovery.AssessCandidate`; `api/assessment` wraps the public entry points and owns the LLM client, auto queue, and metrics.

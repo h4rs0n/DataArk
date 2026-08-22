@@ -1532,25 +1532,25 @@ Go 基线：
 
 M1 迁移证据：`api/migrations/000003_blog_discovery_v3.sql` 只增加结构并移除跨日报永久唯一约束，Down 保留数据；`api/bootstrap/database_v3_test.go` 在 SQLite 旧式表和数据上执行两次迁移，期望 2 个旧来源合并为 1 个逻辑站点、2 个候选得到 2 条溯源、1 个旧日报／项目／反馈计数不变，并验证同一候选可出现在不同日报但不能在同一日报重复。
 
-M3 抓取证据：`api/discovery/fetch_m3_test.go` 在本地服务器和固定时钟上验证条件请求、robots、重定向复验、类型限制、退避恢复、有限低命中调度和域名限制；`api/migrations/000004_discovery_fetch_observability.sql` 以结构化列保留每次抓取的最终 URL、响应类型、验证器和 robots 状态。
+M3 抓取证据：`api/discovery/fetch_test.go` 在本地服务器和固定时钟上验证条件请求、robots、重定向复验、类型限制、退避恢复、有限低命中调度和域名限制；`api/migrations/000004_discovery_fetch_observability.sql` 以结构化列保留每次抓取的最终 URL、响应类型、验证器和 robots 状态。
 
-M4 图谱证据：`api/discovery/blogroll_m4_test.go` 验证显式／上下文／稳定列表规则、否定语境、A→B→C→A 幂等循环、质量独立、自动 observing／端点任务、最短路径和三类 pending 恢复；`api/migrations/000005_blogroll_graph_evidence.sql` 增加检测规则、上下文摘要和持久激活时间。
+M4 图谱证据：`api/discovery/blogroll_test.go` 验证显式／上下文／稳定列表规则、否定语境、A→B→C→A 幂等循环、质量独立、自动 observing／端点任务、最短路径和三类 pending 恢复；`api/migrations/000005_blogroll_graph_evidence.sql` 增加检测规则、上下文摘要和持久激活时间。
 
-M5 入池证据：`api/discovery/endpoint_m5_test.go` 验证主页／Feed／Sitemap 端点共存和立即调度、Sitemap index 子端点、Feed+Sitemap 单候选双溯源、可信元数据合并、标题-only `fetch_pending` 以及重复 200／304 零重复处理；`api/migrations/000006_recent_ingestion_metadata.sql` 只增加与质量评分分离的元数据可信度。
+M5 入池证据：`api/discovery/endpoint_discovery_test.go` 验证主页／Feed／Sitemap 端点共存和立即调度、Sitemap index 子端点、Feed+Sitemap 单候选双溯源、可信元数据合并、标题-only `fetch_pending` 以及重复 200／304 零重复处理；`api/migrations/000006_recent_ingestion_metadata.sql` 只增加与质量评分分离的元数据可信度。
 
-M6 回填证据：`api/discovery/backfill_m6_test.go` 验证旧 Sitemap 精品、archive-only 精品、策略优先级、失败游标恢复、批次重放幂等、未知日期置信度、7 天有限下限和只基于游标耗尽的完成原因；`api/api/controller_test.go` 固定覆盖 API 的游标与停止原因；`api/migrations/000007_historical_backfill_observability.sql` 只增加发布日期置信度和最近批次时间且 Down 保留采集数据。
+M6 回填证据：`api/discovery/backfill_test.go` 验证旧 Sitemap 精品、archive-only 精品、策略优先级、失败游标恢复、批次重放幂等、未知日期置信度、7 天有限下限和只基于游标耗尽的完成原因；`api/api/controller_test.go` 固定覆盖 API 的游标与停止原因；`api/migrations/000007_historical_backfill_observability.sql` 只增加发布日期置信度和最近批次时间且 Down 保留采集数据。
 
-M7 正文证据：`api/discovery/candidate_processing_m7_test.go` 验证 Feed 全部候选到终态、正文抽取元数据、相同／变化 HTML 版本语义、陈旧作业、标签／登录／短文硬排除、瞬时失败上限和 robots 停止；`api/recommendation/service_test.go` 证明摘要-only 候选不能被旧富化／推荐旁路选中；`api/migrations/000008_article_processing_pipeline.sql` 增加处理审计和不可变正文版本且 Down 保留数据。
+M7 正文证据：`api/discovery/candidate_processing_test.go` 验证 Feed 全部候选到终态、正文抽取元数据、相同／变化 HTML 版本语义、陈旧作业、标签／登录／短文硬排除、瞬时失败上限和 robots 停止；`api/recommendation/service_test.go` 证明摘要-only 候选不能被旧富化／推荐旁路选中；`api/migrations/000008_article_processing_pipeline.sql` 增加处理审计和不可变正文版本且 Down 保留数据。
 
-M8 身份证据：`api/discovery/dedupe_m8_test.go` 验证 tracking URL 合并、多 URL／redirect／canonical／exact body 三成员单代表、三条代表 provenance、近似聚类、独立正文隔离、代表变化与历史快照隔离；`api/recommendation/dedupe_m8_test.go` 验证成员无法旁路推荐及 duplicate feedback 零来源惩罚；`api/migrations/000009_article_identity_clusters.sql` 增加身份、cluster、代表解释和复核信号且 Down 保留数据。
+M8 身份证据：`api/discovery/dedupe_test.go` 验证 tracking URL 合并、多 URL／redirect／canonical／exact body 三成员单代表、三条代表 provenance、近似聚类、独立正文隔离、代表变化与历史快照隔离；`api/recommendation/dedupe_test.go` 验证成员无法旁路推荐及 duplicate feedback 零来源惩罚；`api/migrations/000009_article_identity_clusters.sql` 增加身份、cluster、代表解释和复核信号且 Down 保留数据。
 
-M9 评估证据：`api/discovery/assessor_m9_test.go` 验证 assessor 静态输入边界、B 的 97 普通／3 精品、同正文跨来源同分、规则降级、正文版本重评和历史 assessment 不变；`api/recommendation/article_assessor_m9_test.go` 验证 OpenAI-compatible adapter 不传 URL／来源身份、规则与增强并存以及推荐项冻结 active assessment；`api/migrations/000010_article_assessment_activation.sql` 增加当前引用和降级错误且 Down 保留所有评估。
+M9 评估证据：`api/discovery/assessor_m9_test.go` 验证 assessor 静态输入边界、B 的 97 普通／3 精品、同正文跨来源同分、规则降级、正文版本重评和历史 assessment 不变；`api/recommendation/article_assessor_test.go` 验证 OpenAI-compatible adapter 不传 URL／来源身份、规则与增强并存以及推荐项冻结 active assessment；`api/migrations/000010_article_assessment_activation.sql` 增加当前引用和降级错误且 Down 保留所有评估。
 
-M10 隔离与权限证据：`api/discovery/user_state_m10_test.go` 与 `api/recommendation/user_state_m10_test.go` 验证双用户状态、曝光、反馈和来源屏蔽隔离；`api/discovery/site_admin_m10_test.go` 验证 owner 暂停／安全屏蔽保留候选、停止三类工作并可恢复；`api/api/permissions_m10_test.go` 验证 member 对来源、站点、回溯和破坏性日报操作得到 403。`api/migrations/000011_user_candidate_state_and_permissions.sql` 只增加旧状态复核审计，保留旧字段和逐用户状态以支持回滚读路径。
+M10 隔离与权限证据：`api/discovery/user_state_test.go` 与 `api/recommendation/user_state_test.go` 验证双用户状态、曝光、反馈和来源屏蔽隔离；`api/discovery/site_admin_test.go` 验证 owner 暂停／安全屏蔽保留候选、停止三类工作并可恢复；`api/api/permissions_test.go` 验证 member 对来源、站点、回溯和破坏性日报操作得到 403。`api/migrations/000011_user_candidate_state_and_permissions.sql` 只增加旧状态复核审计，保留旧字段和逐用户状态以支持回滚读路径。
 
-M11 公平与库存证据：`api/discovery/operations_m11_test.go` 验证四个月低命中最大空闲下限、高产出额外预算、每轮每来源单任务、分项运营计数和调度解释；`api/recommendation/inventory_m11_test.go` 验证 fresh／evergreen／exploration、逐用户硬过滤、库存天数和来源产出统计不影响 eligible。`api/migrations/000012_fair_crawl_budget_and_inventory.sql` 只增加分项统计及最新调度解释表，并明确不存在来源质量总分。
+M11 公平与库存证据：`api/discovery/operations_test.go` 验证四个月低命中最大空闲下限、高产出额外预算、每轮每来源单任务、分项运营计数和调度解释；`api/recommendation/inventory_test.go` 验证 fresh／evergreen／exploration、逐用户硬过滤、库存天数和来源产出统计不影响 eligible。`api/migrations/000012_fair_crawl_budget_and_inventory.sql` 只增加分项统计及最新调度解释表，并明确不存在来源质量总分。
 
-M12 选择证据：`api/recommendation/selection_m12_test.go` 验证评分静态边界、长尾精品胜出、10/10 与 7/10、探索配额、来源／主题软上限、固定放宽审计、同簇硬去重、正文更新和 75 天冷却再现及明确反馈排除；既有 reranker 测试验证远程失败回退。`api/migrations/000013_recommendation_v3_selection.sql` 保存项目正文版本、更新和冷却证据，不恢复任何跨日报永久唯一约束。
+M12 选择证据：`api/recommendation/selection_test.go` 验证评分静态边界、长尾精品胜出、10/10 与 7/10、探索配额、来源／主题软上限、固定放宽审计、同簇硬去重、正文更新和 75 天冷却再现及明确反馈排除；既有 reranker 测试验证远程失败回退。`api/migrations/000013_recommendation_v3_selection.sql` 保存项目正文版本、更新和冷却证据，不恢复任何跨日报永久唯一约束。
 
 M2 恢复证据：`TestMemoryQueueConcurrentDuplicateExecutesOnce` 对同一候选版本并发入队 100 次只执行 1 次；`TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures` 证明失败来源和模拟进程中断可恢复且不阻塞其他来源；`TestStartSQLiteDuplicateRecoveryRunsOnce` 证明两个运行时恢复同一端点只执行一次；`TestRecoverDueJobsContinuesAfterIndependentSourceFailure` 与 `TestRecoverDueJobsEnqueuesOnlyMissingLocalDay` 固定发现和日报启动补偿边界。
 
@@ -1564,7 +1564,7 @@ M19 域名证据：`api/discovery/domain_identity_test.go` 固定可注册域名
 
 M20 博客门禁证据：`api/discovery/blog_verification_test.go` 的分类表覆盖五类正证据和企业导航负例；`TestBlogVerificationPrecedesAutomaticExpansion` 固定两个图谱边、验证前只有 homepage 作业、博客继续扩展、企业站单请求后 non_blog、订阅源隐藏、重复扫描零请求和 owner 可逆恢复；`TestRecoveryDoesNotScanUnverifiedObservingSites` 固定重启门禁。A/B/C 图谱夹具中的 C 以 Hugo generator 明确证明博客身份，不再依赖默认放行。
 
-M21 长 URL 证据：`api/discovery/candidate_processing_m7_test.go` 用运行日志同形的超过 128 字符 URL 固定候选初始身份、重复入池和完整 URL 保留；`api/bootstrap/postgres_v3_integration_test.go` 在真实 `VARCHAR(128)` 上写入同类摘要键，并继续验证全部 Goose、River 和 pgvector。
+M21 长 URL 证据：`api/discovery/candidate_processing_test.go` 用运行日志同形的超过 128 字符 URL 固定候选初始身份、重复入池和完整 URL 保留；`api/bootstrap/postgres_v3_integration_test.go` 在真实 `VARCHAR(128)` 上写入同类摘要键，并继续验证全部 Goose、River 和 pgvector。
 
 M22–M23 分层与 Sitemap 证据：`api/discovery/domain_identity_test.go` 固定人工订阅投影和内部端点保留，`api/discovery/recovery_test.go` 固定层级排序及无 owner Sitemap 不恢复，`api/discovery/sitemap_policy_test.go` 固定默认零 Sitemap 请求／端点／游标、直接来源失败关闭、同域人工 seed 显式补漏、自动博客拒绝和普通文章门禁。`api/migrations/000019_discovery_subscription_tiers.sql` 与 `000020_sitemap_owner_gap_fill.sql` 分别保存人工意图／层级和旧 Sitemap 停用证据；PostgreSQL opt-in 门槛先停在 19 插入旧数据，再应用 20 断言端点 disabled、游标 paused 和 owner 请求为空。
 

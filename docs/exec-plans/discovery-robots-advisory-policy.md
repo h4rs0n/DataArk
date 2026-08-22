@@ -56,7 +56,7 @@ Revise the robots fetch test so a `Disallow: /private` document is fetched once,
 
 From `api/`, format and run focused tests:
 
-    gofmt -w config/config.go flag/flag.go discovery/boundaries.go discovery/robots.go discovery/fetch_m3_test.go flag/flag_test.go
+    gofmt -w config/config.go flag/flag.go discovery/boundaries.go discovery/robots.go discovery/fetch_test.go flag/flag_test.go
     env GOCACHE=/tmp/dataark-go-cache go test ./discovery ./flag -count=1
 
 From the repository root, validate all Go packages and Compose interpolation:

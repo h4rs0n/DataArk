@@ -67,7 +67,7 @@ Update provider and assessor tests to inspect outbound payloads, prove model-spe
 From the repository root, edit files with `apply_patch`, then run:
 
     cd api
-    gofmt -w observability/event.go observability/event_test.go recommendation/provider.go recommendation/article_assessor.go recommendation/article_assessor_m9_test.go recommendation/openai_provider.go recommendation/openai_provider_test.go
+    gofmt -w observability/event.go observability/event_test.go recommendation/provider.go recommendation/article_assessor.go recommendation/article_assessor_test.go recommendation/openai_provider.go recommendation/openai_provider_test.go
     go test ./observability ./recommendation -count=1
     go test ./... -count=1
     go test -race ./observability ./recommendation -count=1
