@@ -117,6 +117,7 @@ func topCountedValues(counts map[string]int, limit int) []string {
 	return top
 }
 
+// GetRecommendationDaySummary 返回指定日期日报摘要。
 func GetRecommendationDaySummary(ctx context.Context, userID uint, date string) (*RecommendationDaySummary, error) {
 	return GetRecommendationDaySummaryWithGenerator(ctx, userID, date, nil)
 }

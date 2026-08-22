@@ -2,13 +2,13 @@
 
 DataArk is a Go API plus Vue 3 UI monorepo. This file is the current source of truth for agents. If another document disagrees (especially anything under `docs/exec-plans/` that still mentions `api/common/`), follow this file and the live tree.
 
-There is **no** `api/common/` package. Flags live in `api/flag/flag.go` and write package-level vars in `api/config/config.go`. Startup wiring is `api/bootstrap`. HTTP lives in `api/api/` (today mostly `controller.go`).
+There is **no** `api/common/` package. Flags live in `api/flag/flag.go` and write package-level vars in `api/config/config.go`. Startup wiring is `api/bootstrap`. HTTP lives in `api/api/` as same-package files: `starter.go` (`WebStarter`), `routes.go`, `deps.go`, `jobs.go`, `helpers.go`, `middleware.go`, plus domain handlers `auth.go`, `search.go`, `archive.go`, `discovery.go`, `assessment.go`, `recommendation.go`, `backup.go`.
 
 ## Project Structure
 
 Backend (`api/`, Go module `DataArk`, Go 1.26):
 
-- `api/api/` — Gin routes, middleware, `WebStarter` (listens on `0.0.0.0:7845`)
+- `api/api/` — Gin HTTP surface: `starter.go` (`WebStarter`, listens on `0.0.0.0:7845`), `routes.go` (`/api/*`), `deps.go` (test seams), `jobs.go`, `helpers.go`, `middleware.go`, and domain handlers (`auth.go`, `search.go`, `archive.go`, `discovery.go`, `assessment.go`, `recommendation.go`, `backup.go`)
 - `api/archive/` — archived HTML metadata, stats, engagement
 - `api/auth/` — users, JWT
 - `api/discovery/` — crawl, feeds, blogroll graph, candidate pipeline, rule assessment persistence
@@ -16,7 +16,7 @@ Backend (`api/`, Go module `DataArk`, Go 1.26):
 - `api/assessment/` — LLM article assessment adapter, manual queue, metrics (state machine still forwards into `discovery`)
 - `api/assessmenteval/` — owner gold-label workflow
 - `api/articlevalue/` — shared scoring/evidence helpers
-- `api/recommendation/` — daily digest, discovery feed, feedback, inventory
+- `api/recommendation/` — daily digest (`digest.go`, `day.go`, `selection_v3.go`), settings, feedback, profile, enrichment, rerank, discovery feed, inventory
 - `api/jobqueue/` — River (Postgres) and in-memory queue
 - `api/search/` — Meilisearch index
 - `api/backup/` — backup/restore

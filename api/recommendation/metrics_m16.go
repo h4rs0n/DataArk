@@ -76,6 +76,7 @@ type AdminProductMetrics struct {
 	} `json:"longTail"`
 }
 
+// GetAdminProductMetrics 返回产品运营指标（owner）。
 func GetAdminProductMetrics(now time.Time) (*AdminProductMetrics, error) {
 	metrics := &AdminProductMetrics{GeneratedAt: now}
 	metrics.Sites.ByStatus, metrics.Digests.ShortageReasons, metrics.Feedback.ByAction = map[string]int64{}, map[string]int64{}, map[string]int64{}

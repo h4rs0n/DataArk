@@ -21,6 +21,7 @@ type RecommendationItemContext struct {
 	Provenance []RecommendationProvenanceContext     `json:"provenance"`
 }
 
+// GetRecommendationItemContext 返回推荐条目可追溯上下文。
 func GetRecommendationItemContext(userID uint, itemID uint) (*RecommendationItemContext, error) {
 	if db == nil || userID == 0 || itemID == 0 {
 		return nil, gorm.ErrRecordNotFound
