@@ -3,7 +3,8 @@ import { ref } from 'vue';
 import { Message } from '@arco-design/web-vue';
 // 如果你的项目未全局注册组件/图标，请手动引入
 import { IconUser, IconLock } from '@arco-design/web-vue/es/icon';
-import axios from 'axios';
+import { login } from '@/api/auth';
+import { useAuthStore } from '@/stores/auth';
 import { useRouter } from 'vue-router';
 
 const formRef = ref();
@@ -19,33 +20,18 @@ const rules = {
 };
 
 const router = useRouter();
+const auth = useAuthStore();
 
 function handleSubmit() {
   formRef.value.validate(async (errors: any) => {
     if (!errors) {
       try {
-        const response = await fetch('/api/login', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            username: form.value.username,
-            password: form.value.password,
-          }),
-        });
-
-        const res = await response.json();
-
-        if (res.Status === '1') {
-          Message.success('登录成功');
-          localStorage.setItem('token', res.Data.token);
-          router.push('/');
-        } else {
-          Message.error(res.Message || '登录失败');
-        }
+        const data = await login(form.value.username, form.value.password);
+        Message.success('登录成功');
+        auth.setToken(data.token, form.value.remember ? 'local' : 'session');
+        router.push('/');
       } catch (e) {
-        Message.error('网络错误或服务器异常');
+        Message.error(e instanceof Error ? e.message : '网络错误或服务器异常');
       }
     }
   });
@@ -82,12 +68,9 @@ function handleSubmit() {
           </a-input-password>
         </a-form-item>
 
-        <!-- 记住我 & 忘记密码 -->
+        <!-- 记住我：勾选写入 localStorage，不勾选只保留当前标签页 -->
         <div class="actions">
-          <!--
           <a-checkbox v-model="form.remember">记住我</a-checkbox>
-          <a-link href="#" class="forgot">忘记密码?</a-link>
-          -->
         </div>
 
         <!-- 登录按钮 -->

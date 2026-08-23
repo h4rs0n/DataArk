@@ -211,29 +211,15 @@
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { Notification } from '@arco-design/web-vue'
 import { useRouter } from 'vue-router'
-
-type ArchiveTaskStatus = 'pending' | 'running' | 'success' | 'failed' | string
-
-interface ArchiveTask {
-  id: string
-  url: string
-  domain: string
-  status: ArchiveTaskStatus
-  fileName: string
-  error: string
-  externalTaskId: string
-  createdAt: string
-  updatedAt: string
-  startedAt: string | null
-  finishedAt: string | null
-}
-
-interface ArchiveTaskResponse {
-  Status: string
-  Message: string
-  Data?: ArchiveTask
-  Error?: string
-}
+import { authHeaders } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
+import {
+  archiveByURL,
+  getArchiveTask,
+  submitArchiveUpload,
+  type ArchiveTask,
+  type ArchiveTaskStatus,
+} from '@/api/archive'
 
 interface UploadArchiveForm {
   domain: string
@@ -241,20 +227,9 @@ interface UploadArchiveForm {
   fileList: any[]
 }
 
-class ApiResponseError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode: number,
-  ) {
-    super(message)
-  }
-}
-
 const router = useRouter()
-const archiveByUrlEndpoint = '/api/archiveByURL'
-const archiveTaskEndpoint = '/api/archiveTask'
+const auth = useAuthStore()
 const uploadFileEndpoint = '/api/uploadHtmlFile'
-const uploadArchiveEndpoint = '/api/upload'
 const pollInterval = 2000
 
 const activeArchiveMode = ref<'url' | 'file'>('url')
@@ -273,15 +248,6 @@ const uploadSubmitting = ref(false)
 const uploading = ref(false)
 const polling = ref(false)
 let pollingTimer: ReturnType<typeof window.setTimeout> | null = null
-
-const getAuthToken = () => {
-  return localStorage.getItem('token') || sessionStorage.getItem('token')
-}
-
-const authHeaders = (): Record<string, string> => {
-  const token = getAuthToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
 
 const uploadHeaders = computed<Record<string, string>>(() => authHeaders())
 
@@ -346,48 +312,6 @@ const goBack = () => {
   router.push('/')
 }
 
-const parseResponse = async (response: Response): Promise<ArchiveTaskResponse> => {
-  let payload: ArchiveTaskResponse | null = null
-
-  try {
-    payload = await response.json()
-  } catch {
-    payload = null
-  }
-
-  if (!response.ok || payload?.Status === '0') {
-    throw new ApiResponseError(payload?.Message || '请求失败', response.status)
-  }
-
-  if (!payload?.Data) {
-    throw new ApiResponseError(payload?.Message || '任务信息缺失', response.status)
-  }
-
-  return payload
-}
-
-const requestArchiveByURL = async (url: string) => {
-  const response = await fetch(archiveByUrlEndpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-    },
-    body: JSON.stringify({ url }),
-  })
-
-  return parseResponse(response)
-}
-
-const requestTaskStatus = async (taskId: string) => {
-  const response = await fetch(`${archiveTaskEndpoint}/${encodeURIComponent(taskId)}`, {
-    method: 'GET',
-    headers: authHeaders(),
-  })
-
-  return parseResponse(response)
-}
-
 const notifyTaskResult = (task: ArchiveTask) => {
   if (task.status === 'success') {
     Notification.success({
@@ -438,8 +362,7 @@ const updateTask = (task: ArchiveTask) => {
 }
 
 const redirectToLogin = () => {
-  localStorage.removeItem('token')
-  sessionStorage.removeItem('token')
+  auth.clearAuth()
   Notification.warning({
     title: '登录状态已过期',
     content: '请重新登录后再存档网页',
@@ -450,11 +373,6 @@ const redirectToLogin = () => {
 }
 
 const handleRequestError = (error: unknown) => {
-  if (error instanceof ApiResponseError && error.statusCode === 401) {
-    redirectToLogin()
-    return
-  }
-
   Notification.error({
     title: '请求失败',
     content: error instanceof Error ? error.message : '请求过程中发生错误，请稍后重试',
@@ -496,7 +414,7 @@ const handleUrlSubmit = async () => {
     polling.value = false
     currentTask.value = null
 
-    const payload = await requestArchiveByURL(archiveURL)
+    const payload = await archiveByURL(archiveURL)
     if (payload.Message) {
       Notification.info({
         title: '任务已提交',
@@ -505,7 +423,10 @@ const handleUrlSubmit = async () => {
         duration: 3000,
       })
     }
-    updateTask(payload.Data!)
+    if (!payload.Data) {
+      throw new Error(payload.Message || '任务信息缺失')
+    }
+    updateTask(payload.Data)
   } catch (error) {
     handleRequestError(error)
   } finally {
@@ -599,27 +520,11 @@ const handleUploadSubmit = async () => {
 
   try {
     uploadSubmitting.value = true
-    const response = await fetch(uploadArchiveEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders(),
-      },
-      body: JSON.stringify({
-        domain: uploadForm.domain.trim(),
-        sourceUrl: uploadForm.sourceUrl.trim(),
-        files: uploadForm.fileList,
-      }),
+    await submitArchiveUpload({
+      domain: uploadForm.domain.trim(),
+      sourceUrl: uploadForm.sourceUrl.trim(),
+      files: uploadForm.fileList,
     })
-
-    if (response.status === 401) {
-      redirectToLogin()
-      return
-    }
-
-    if (!response.ok) {
-      throw new Error('Upload failed')
-    }
 
     Notification.success({
       title: '提交成功',
@@ -631,10 +536,10 @@ const handleUploadSubmit = async () => {
     uploadForm.domain = ''
     uploadForm.sourceUrl = ''
     uploadForm.fileList = []
-  } catch {
+  } catch (error) {
     Notification.error({
       title: '提交失败',
-      content: '提交过程中发生错误，请检查网络连接后重试',
+      content: error instanceof Error ? error.message : '提交过程中发生错误，请检查网络连接后重试',
       position: 'topRight',
       duration: 5000,
     })
@@ -650,8 +555,11 @@ const refreshTaskStatus = async () => {
 
   try {
     polling.value = true
-    const payload = await requestTaskStatus(currentTask.value.id)
-    updateTask(payload.Data!)
+    const payload = await getArchiveTask(currentTask.value.id)
+    if (!payload.Data) {
+      throw new Error(payload.Message || '任务信息缺失')
+    }
+    updateTask(payload.Data)
   } catch (error) {
     polling.value = false
     clearPollingTimer()

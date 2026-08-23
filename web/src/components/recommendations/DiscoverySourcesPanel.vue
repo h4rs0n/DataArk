@@ -67,7 +67,7 @@
 <script setup lang="ts">
 // 订阅源列表、添加与站点图谱。
 import SiteInsightPanel from '@/components/recommendations/SiteInsightPanel.vue'
-import { authHeaders, requestJSON } from '@/components/recommendations/http'
+import { requestJSON } from '@/api/client'
 import type { DiscoverySource } from '@/components/recommendations/types'
 import { IconDelete, IconPlus, IconSync } from '@arco-design/web-vue/es/icon'
 import { Message } from '@arco-design/web-vue'
@@ -98,7 +98,7 @@ watch(() => sources.value.length, (total) => {
 })
 
 async function loadSources() {
-  sources.value = (await requestJSON<DiscoverySource[]>('/api/discovery/sources', { headers: authHeaders() })) ?? []
+  sources.value = (await requestJSON<DiscoverySource[]>('/api/discovery/sources')) ?? []
 }
 
 async function saveSource() {
@@ -110,7 +110,6 @@ async function saveSource() {
     savingSource.value = true
     await requestJSON<DiscoverySource>('/api/discovery/sources', {
       method: 'POST',
-      headers: authHeaders(true),
       body: JSON.stringify({ ...sourceForm, enabled: true }),
     })
     sourceForm.name = ''
@@ -128,7 +127,7 @@ async function saveSource() {
 async function fetchSource(sourceId: number) {
   try {
     fetchingSourceId.value = sourceId
-    await requestJSON(`/api/discovery/sources/${sourceId}/fetch`, { method: 'POST', headers: authHeaders() })
+    await requestJSON(`/api/discovery/sources/${sourceId}/fetch`, { method: 'POST' })
     await loadSources()
     emit('inventory-changed')
     Message.success('内容源刷新完成')
@@ -141,7 +140,7 @@ async function fetchSource(sourceId: number) {
 
 async function deleteSource(sourceId: number) {
   try {
-    await requestJSON(`/api/discovery/sources/${sourceId}`, { method: 'DELETE', headers: authHeaders() })
+    await requestJSON(`/api/discovery/sources/${sourceId}`, { method: 'DELETE' })
     await loadSources()
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '删除内容源失败')
@@ -156,10 +155,10 @@ async function loadSiteInsight(source: DiscoverySource) {
 async function reloadSiteInsight(siteId: number) {
   if (!siteId) return
   const requests: Promise<void>[] = [
-    requestJSON<any>(`/api/discovery/sites/${siteId}/graph`, { headers: authHeaders() }).then((value) => { siteGraph.value = value }),
-    requestJSON<any[]>(`/api/discovery/sites/${siteId}/backfill`, { headers: authHeaders() }).then((value) => { siteBackfills.value = value || [] }),
+    requestJSON<any>(`/api/discovery/sites/${siteId}/graph`).then((value) => { siteGraph.value = value }),
+    requestJSON<any[]>(`/api/discovery/sites/${siteId}/backfill`).then((value) => { siteBackfills.value = value || [] }),
   ]
-  if (props.isOwner) requests.push(requestJSON<any>(`/api/discovery/sites/${siteId}/operations`, { headers: authHeaders() }).then((value) => { siteOperations.value = value }))
+  if (props.isOwner) requests.push(requestJSON<any>(`/api/discovery/sites/${siteId}/operations`).then((value) => { siteOperations.value = value }))
   try {
     await Promise.all(requests)
   } catch (error) {
@@ -169,7 +168,7 @@ async function reloadSiteInsight(siteId: number) {
 
 async function requestBackfill(siteId: number) {
   try {
-    await requestJSON(`/api/discovery/sites/${siteId}/backfill`, { method: 'POST', headers: authHeaders() })
+    await requestJSON(`/api/discovery/sites/${siteId}/backfill`, { method: 'POST' })
     await reloadSiteInsight(siteId)
     Message.success('历史回溯已排队')
   } catch (error) {

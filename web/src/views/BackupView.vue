@@ -93,25 +93,9 @@
 import { computed, ref } from 'vue'
 import { Modal, Notification } from '@arco-design/web-vue'
 import { useRouter } from 'vue-router'
-
-interface ApiResponse<T = unknown> {
-  Status: string
-  Message: string
-  Data?: T
-  Error?: string
-}
-
-interface RestoreResult {
-  meiliDumpFile: string
-  databaseRestored: boolean
-  archiveRestored: boolean
-  indexedDocuments: number
-  refreshedStatRows: number
-}
+import { downloadBackup as requestBackupDownload, restoreBackup as requestBackupRestore } from '@/api/backup'
 
 const router = useRouter()
-const backupEndpoint = '/api/backup'
-const restoreEndpoint = '/api/backup/restore'
 
 const backingUp = ref(false)
 const restoring = ref(false)
@@ -130,46 +114,8 @@ const backupProgress = computed(() => {
   return backingUp.value ? 0.72 : 0
 })
 
-const getAuthToken = () => {
-  return localStorage.getItem('token') || sessionStorage.getItem('token')
-}
-
-const authHeaders = (): Record<string, string> => {
-  const token = getAuthToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
-
 const goBack = () => {
   router.push('/')
-}
-
-const redirectToLogin = () => {
-  localStorage.removeItem('token')
-  sessionStorage.removeItem('token')
-  router.push('/login')
-}
-
-const readJsonResponse = async <T>(response: Response): Promise<ApiResponse<T>> => {
-  try {
-    return await response.json()
-  } catch {
-    return { Status: response.ok ? '1' : '0', Message: response.ok ? '' : '请求失败' }
-  }
-}
-
-const getErrorMessage = async (response: Response, fallback: string) => {
-  const payload = await readJsonResponse(response)
-  return payload.Error || payload.Message || fallback
-}
-
-const parseDownloadFileName = (disposition: string | null) => {
-  const fallback = `dataark-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.zip`
-  if (!disposition) {
-    return fallback
-  }
-
-  const match = disposition.match(/filename="?([^"]+)"?/i)
-  return match?.[1] || fallback
 }
 
 const triggerBlobDownload = (blob: Blob, fileName: string) => {
@@ -186,21 +132,8 @@ const triggerBlobDownload = (blob: Blob, fileName: string) => {
 const downloadBackup = async () => {
   try {
     backingUp.value = true
-    const response = await fetch(backupEndpoint, {
-      method: 'POST',
-      headers: authHeaders(),
-    })
-
-    if (response.status === 401) {
-      redirectToLogin()
-      return
-    }
-    if (!response.ok) {
-      throw new Error(await getErrorMessage(response, '创建备份失败'))
-    }
-
-    const blob = await response.blob()
-    triggerBlobDownload(blob, parseDownloadFileName(response.headers.get('Content-Disposition')))
+    const { blob, fileName } = await requestBackupDownload()
+    triggerBlobDownload(blob, fileName)
 
     Notification.success({
       title: '备份完成',
@@ -256,28 +189,11 @@ const handleRestoreFileChange = (fileList: any[], fileItem?: any) => {
 const restoreBackup = async (file: File) => {
   try {
     restoring.value = true
-    const formData = new FormData()
-    formData.append('file', file)
-
-    const response = await fetch(restoreEndpoint, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: formData,
-    })
-
-    if (response.status === 401) {
-      redirectToLogin()
-      return
-    }
-
-    const payload = await readJsonResponse<RestoreResult>(response)
-    if (!response.ok || payload.Status === '0') {
-      throw new Error(payload.Error || payload.Message || '恢复备份失败')
-    }
+    const result = await requestBackupRestore(file)
 
     Notification.success({
       title: '恢复完成',
-      content: `已重建 ${payload.Data?.indexedDocuments ?? 0} 条搜索记录`,
+      content: `已重建 ${result?.indexedDocuments ?? 0} 条搜索记录`,
       position: 'topRight',
       duration: 4500,
     })

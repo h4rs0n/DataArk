@@ -124,15 +124,7 @@
 <script lang="ts" setup>
 import { useRoute, useRouter } from 'vue-router';
 import { onMounted, reactive, watch, ref } from 'vue';
-
-// 使用接口声明类型
-interface ResultItem {
-  title: string
-  filename: string
-  link: string
-  content: string
-  domain: string
-}
+import { searchByKeyword, type SearchHit } from '@/api/search'
 
 let errorMessage = ref("搜索请求出现错误")
 let errorStatus = ref(false)
@@ -150,7 +142,7 @@ const isMobile = ref(false)
 let pageData = reactive({
   searchKey: "",
   jsonResult: {
-    result: [] as ResultItem[],
+    result: [] as SearchHit[],
     totalHits: 0
   },
 });
@@ -179,35 +171,18 @@ async function queryData(keyword: string, pages : string = "1") {
   isLoading.value = true
   hasSearched.value = true
   errorStatus.value = false
-  // let queryURL = `http://127.0.0.1:7845/api/search?q=${encodeURIComponent(keyword)}&p=${pages}`
-  let queryURL = `/api/search?q=${encodeURIComponent(normalizedKeyword)}&p=${pages || "1"}`
-  const token = localStorage.getItem('token');
 
   try {
-    const response = await fetch(queryURL, {
-      method: 'GET',
-      headers: (token ? { Authorization: `Bearer ${token}` } : {})
-    })
-    if (!response.ok) {
-      throw new Error('Network response was not ok');
-    }
-    const data = await response.json();
+    const page = await searchByKeyword(normalizedKeyword, pages || "1")
     if (requestId !== latestRequestId) {
       return
     }
 
-    TotalHits.value = String(data.TotalHits ?? 0)
-
-    if (data.Status == "0") {
-      errorStatus.value = true
-      errorMessage.value = data.Message || "搜索请求出现错误"
-    }
-    else {
-      errorStatus.value = false
-      pageData.jsonResult = {
-        result: JSON.parse(data.Result || '[]'),
-        totalHits: Number(data.TotalHits ?? 0)
-      }
+    TotalHits.value = String(page.totalHits)
+    errorStatus.value = false
+    pageData.jsonResult = {
+      result: page.result,
+      totalHits: page.totalHits
     }
   }
   catch (error) {
@@ -215,7 +190,7 @@ async function queryData(keyword: string, pages : string = "1") {
       return
     }
     errorStatus.value = true
-    errorMessage.value = "搜索请求出现错误"
+    errorMessage.value = error instanceof Error ? error.message : "搜索请求出现错误"
     console.error('There was an error:', error);
   }
   finally {

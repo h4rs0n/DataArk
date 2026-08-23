@@ -94,7 +94,7 @@
 import DigestSummary from '@/components/recommendations/DigestSummary.vue'
 import RecommendationArticleCard from '@/components/recommendations/RecommendationArticleCard.vue'
 import { addCalendarDays, formatDateTime, formatLocalDate } from '@/components/recommendations/format'
-import { authHeaders, requestJSON } from '@/components/recommendations/http'
+import { requestJSON } from '@/api/client'
 import {
   emptySnapshot,
   type BlockRuleType,
@@ -165,7 +165,7 @@ function normalizeSnapshot(snapshot: RecommendationSnapshot | null | undefined):
 
 // loadTodayAnchor 用服务器时区下的“今天”校正可翻阅上限，避免浏览器时区与用户设置不一致。
 async function loadTodayAnchor() {
-  const snapshot = normalizeSnapshot(await requestJSON<RecommendationSnapshot>('/api/recommendations/today', { headers: authHeaders() }))
+  const snapshot = normalizeSnapshot(await requestJSON<RecommendationSnapshot>('/api/recommendations/today'))
   todayDate.value = snapshot.day.date || formatLocalDate(new Date())
   if (!digestDate.value || digestDate.value >= todayDate.value) {
     digestDate.value = todayDate.value
@@ -197,9 +197,9 @@ async function loadSelectedDigest(refreshToday = false) {
       if (token !== digestLoadToken) return
       snapshot = digestDate.value === todayDate.value
         ? todaySnapshot
-        : normalizeSnapshot(await requestJSON<RecommendationSnapshot>(digestSnapshotURL(digestDate.value), { headers: authHeaders() }))
+        : normalizeSnapshot(await requestJSON<RecommendationSnapshot>(digestSnapshotURL(digestDate.value)))
     } else {
-      snapshot = normalizeSnapshot(await requestJSON<RecommendationSnapshot>(digestSnapshotURL(selected), { headers: authHeaders() }))
+      snapshot = normalizeSnapshot(await requestJSON<RecommendationSnapshot>(digestSnapshotURL(selected)))
     }
     if (token !== digestLoadToken) return
     digestSummary.value = null
@@ -219,7 +219,7 @@ async function loadDigestSummary(date = digestDate.value, token = digestLoadToke
   digestSummaryLoading.value = true
   digestSummaryError.value = ''
   try {
-    const summary = await requestJSON<TodayDigestSummary>(digestSummaryURL(date), { headers: authHeaders() })
+    const summary = await requestJSON<TodayDigestSummary>(digestSummaryURL(date))
     if (token !== digestLoadToken) return
     digestSummary.value = summary
   } catch (error) {
@@ -236,7 +236,7 @@ async function loadDigestCalendarDates() {
   try {
     const dates = new Set<string>()
     for (let page = 1; page <= 12; page++) {
-      const days = (await requestJSON<RecommendationDay[]>(`/api/recommendations/history?page=${page}&pageSize=100`, { headers: authHeaders() })) ?? []
+      const days = (await requestJSON<RecommendationDay[]>(`/api/recommendations/history?page=${page}&pageSize=100`)) ?? []
       for (const day of days) {
         if (day.status === 'published' || day.status === 'supplemented') dates.add(day.date)
       }
@@ -282,7 +282,7 @@ async function supplementDaily(date: string) {
   try {
     generating.value = true
     const query = date ? `?date=${encodeURIComponent(date)}` : ''
-    digestSnapshot.value = normalizeSnapshot(await requestJSON<RecommendationSnapshot>(`/api/admin/recommendations/supplement${query}`, { method: 'POST', headers: authHeaders() }))
+    digestSnapshot.value = normalizeSnapshot(await requestJSON<RecommendationSnapshot>(`/api/admin/recommendations/supplement${query}`, { method: 'POST' }))
     void loadDigestSummary()
     void loadDigestCalendarDates()
     Message.success('日报已按缺口追加')

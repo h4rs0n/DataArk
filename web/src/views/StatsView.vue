@@ -109,53 +109,14 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Notification } from '@arco-design/web-vue'
 import { useRouter } from 'vue-router'
-
-interface ArchiveStatItem {
-  source: string
-  fileCount: number
-}
-
-interface ArchiveStats {
-  totalFiles: number
-  sources: ArchiveStatItem[]
-}
-
-interface StatsResponse {
-  Status: string
-  Message: string
-  Data?: ArchiveStats
-  Error?: string
-}
-
-class ApiResponseError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode: number,
-  ) {
-    super(message)
-  }
-}
+import { emptyArchiveStats, getArchiveStats, refreshArchiveStats, type ArchiveStats } from '@/api/archive'
 
 const router = useRouter()
-const statsEndpoint = '/api/archiveStats'
-const refreshStatsEndpoint = '/api/archiveStats/refresh'
 
-const stats = reactive<ArchiveStats>({
-  totalFiles: 0,
-  sources: [],
-})
+const stats = reactive<ArchiveStats>(emptyArchiveStats())
 const loading = ref(false)
 const refreshing = ref(false)
 const errorMessage = ref('')
-
-const getAuthToken = () => {
-  return localStorage.getItem('token') || sessionStorage.getItem('token')
-}
-
-const authHeaders = (): Record<string, string> => {
-  const token = getAuthToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
 
 const sortedSources = computed(() => {
   return [...stats.sources].sort((left, right) => {
@@ -175,35 +136,12 @@ const goBack = () => {
   router.push('/')
 }
 
-const parseStatsResponse = async (response: Response): Promise<StatsResponse> => {
-  let payload: StatsResponse | null = null
-
-  try {
-    payload = await response.json()
-  } catch {
-    payload = null
-  }
-
-  if (!response.ok || payload?.Status === '0') {
-    throw new ApiResponseError(payload?.Message || '请求统计信息失败', response.status)
-  }
-
-  return payload || { Status: '1', Message: '', Data: { totalFiles: 0, sources: [] } }
-}
-
 const applyStats = (nextStats?: ArchiveStats) => {
   stats.totalFiles = nextStats?.totalFiles ?? 0
   stats.sources = nextStats?.sources ?? []
 }
 
 const handleRequestError = (error: unknown) => {
-  if (error instanceof ApiResponseError && error.statusCode === 401) {
-    localStorage.removeItem('token')
-    sessionStorage.removeItem('token')
-    router.push('/login')
-    return
-  }
-
   errorMessage.value = error instanceof Error ? error.message : '统计信息请求失败'
   Notification.error({
     title: '请求失败',
@@ -213,20 +151,11 @@ const handleRequestError = (error: unknown) => {
   })
 }
 
-const requestStats = async (method: 'GET' | 'POST', url: string) => {
-  const response = await fetch(url, {
-    method,
-    headers: authHeaders(),
-  })
-  return parseStatsResponse(response)
-}
-
 const loadStats = async () => {
   try {
     loading.value = true
     errorMessage.value = ''
-    const payload = await requestStats('GET', statsEndpoint)
-    applyStats(payload.Data)
+    applyStats(await getArchiveStats())
   } catch (error) {
     handleRequestError(error)
   } finally {
@@ -239,8 +168,7 @@ const refreshStats = async () => {
     refreshing.value = true
     errorMessage.value = ''
     // 刷新统计会触发后端扫描归档目录，所以只在用户主动点击时执行。
-    const payload = await requestStats('POST', refreshStatsEndpoint)
-    applyStats(payload.Data)
+    applyStats(await refreshArchiveStats())
     Notification.success({
       title: '刷新完成',
       content: '统计信息已根据归档目录重新生成',

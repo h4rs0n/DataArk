@@ -1,4 +1,7 @@
 import { createRouter, createWebHashHistory, type RouteLocationNormalized } from 'vue-router'
+import { ApiResponseError } from '@/api/client'
+import { checkAuth } from '@/api/auth'
+import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
@@ -64,26 +67,19 @@ router.beforeEach(async (to: RouteLocationNormalized) => {
     return true
   }
 
-  const token = localStorage.getItem('token')
-  if (!token) {
+  const auth = useAuthStore()
+  if (!auth.token) {
     return '/login'
   }
 
   try {
-    const response = await fetch('/api/authChecker', {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    })
-
-    if (response.status === 401) {
-      localStorage.removeItem('token')
-      sessionStorage.removeItem('token')
+    await checkAuth()
+  } catch (error) {
+    if (error instanceof ApiResponseError && error.statusCode === 401) {
+      auth.clearAuth()
       return '/login'
     }
-  } catch {
-    // Keep current route behavior on transient network errors.
+    // 瞬时网络错误不踢出当前路由。
   }
 
   return true

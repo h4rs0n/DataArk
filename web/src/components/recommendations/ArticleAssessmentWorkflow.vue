@@ -136,6 +136,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
+import { requestJSON } from '@/api/client'
 import { hasArticleAssessmentInput } from '@/utils/articleAssessmentForm.mjs'
 
 type WorkflowStatus = 'pass_one' | 'waiting_pass_two' | 'pass_two' | 'adjudication' | 'human_complete' | 'evaluating' | 'complete' | 'evaluation_failed'
@@ -182,17 +183,6 @@ let openedAt = Date.now()
 let pollTimer: ReturnType<typeof window.setTimeout> | null = null
 let clockTimer: ReturnType<typeof window.setInterval> | null = null
 
-const authHeaders = (json = false): Record<string, string> => {
-  const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-  return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(json ? { 'Content-Type': 'application/json' } : {}) }
-}
-const requestJSON = async <T>(url: string, options: RequestInit = {}): Promise<T> => {
-  const response = await fetch(url, options)
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok || payload.Status === '0') throw new Error(payload.Error || payload.Message || `HTTP ${response.status}`)
-  return payload.Data as T
-}
-
 const labelPassByStatus: Partial<Record<WorkflowStatus, number>> = { pass_one: 1, pass_two: 2, adjudication: 3 }
 const statusLabels: Record<WorkflowStatus, string> = {
   pass_one: '第一轮盲标', waiting_pass_two: '等待第二轮', pass_two: '第二轮盲标', adjudication: '冲突复核',
@@ -235,7 +225,7 @@ async function loadSummary() {
   try {
     loading.value = true
     errorMessage.value = ''
-    summary.value = await requestJSON<WorkflowSummary>('/api/admin/recommendations/article-assessment-workflow', { headers: authHeaders() })
+    summary.value = await requestJSON<WorkflowSummary>('/api/admin/recommendations/article-assessment-workflow')
     await syncCurrentItem()
     schedulePoll()
   } catch (error) {
@@ -250,7 +240,7 @@ async function createWorkflow() {
     onOk: async () => {
       try {
         creating.value = true
-        summary.value = await requestJSON<WorkflowSummary>('/api/admin/recommendations/article-assessment-workflow/runs', { method: 'POST', headers: authHeaders(true), body: '{}' })
+        summary.value = await requestJSON<WorkflowSummary>('/api/admin/recommendations/article-assessment-workflow/runs', { method: 'POST', body: '{}' })
         currentPosition.value = 0
         await loadItem(0)
         Message.success('人工标注批次已创建')
@@ -273,7 +263,7 @@ async function loadItem(position: number) {
   if (!summary.value.runId || !labelPass.value) return
   try {
     itemLoading.value = true
-    item.value = await requestJSON<WorkflowItem>(`/api/admin/recommendations/article-assessment-workflow/runs/${summary.value.runId}/items/${labelPass.value}/${position}`, { headers: authHeaders() })
+    item.value = await requestJSON<WorkflowItem>(`/api/admin/recommendations/article-assessment-workflow/runs/${summary.value.runId}/items/${labelPass.value}/${position}`)
     currentPosition.value = position
     hydrateForm(item.value.label)
   } catch (error) { errorMessage.value = error instanceof Error ? error.message : '加载文章失败' }
@@ -309,7 +299,7 @@ async function saveCurrent(): Promise<boolean> {
     saving.value = true
     const durationSeconds = form.durationSeconds + Math.max(0, Math.round((Date.now() - openedAt) / 1000))
     summary.value = await requestJSON<WorkflowSummary>(`/api/admin/recommendations/article-assessment-workflow/runs/${summary.value.runId}/labels/${labelPass.value}/${item.value.sampleId}`, {
-      method: 'PUT', headers: authHeaders(true), body: JSON.stringify({ ...form, durationSeconds }),
+      method: 'PUT', body: JSON.stringify({ ...form, durationSeconds }),
     })
     form.durationSeconds = durationSeconds
     item.value.skipped = false
@@ -339,7 +329,7 @@ async function performSkip() {
   try {
     skipping.value = true
     summary.value = await requestJSON<WorkflowSummary>(`/api/admin/recommendations/article-assessment-workflow/runs/${summary.value.runId}/skips/1/${item.value.sampleId}`, {
-      method: 'PUT', headers: authHeaders(true), body: '{}',
+      method: 'PUT', body: '{}',
     })
     Message.success('已跳过当前文章')
     const target = item.value.position + 1
@@ -375,7 +365,7 @@ async function advanceWorkflow() {
 async function performAdvance() {
   try {
     advancing.value = true
-    summary.value = await requestJSON<WorkflowSummary>(`/api/admin/recommendations/article-assessment-workflow/runs/${summary.value.runId}/advance`, { method: 'POST', headers: authHeaders(true), body: '{}' })
+    summary.value = await requestJSON<WorkflowSummary>(`/api/admin/recommendations/article-assessment-workflow/runs/${summary.value.runId}/advance`, { method: 'POST', body: '{}' })
     currentPosition.value = 0
     await syncCurrentItem()
     Message.success('已进入下一阶段')
@@ -390,7 +380,7 @@ async function startEvaluation() {
     onOk: async () => {
       try {
         evaluating.value = true
-        summary.value = await requestJSON<WorkflowSummary>(`/api/admin/recommendations/article-assessment-workflow/runs/${summary.value.runId}/evaluate`, { method: 'POST', headers: authHeaders(true), body: '{}' })
+        summary.value = await requestJSON<WorkflowSummary>(`/api/admin/recommendations/article-assessment-workflow/runs/${summary.value.runId}/evaluate`, { method: 'POST', body: '{}' })
         schedulePoll()
         Message.success('模型验收已启动')
       } catch (error) { errorMessage.value = error instanceof Error ? error.message : '启动模型验收失败' }

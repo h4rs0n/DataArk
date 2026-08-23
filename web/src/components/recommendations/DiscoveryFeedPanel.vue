@@ -45,7 +45,7 @@
 <script setup lang="ts">
 // 猜你喜欢：个性化发现流与换一批。
 import RecommendationArticleCard from '@/components/recommendations/RecommendationArticleCard.vue'
-import { authHeaders, requestJSON } from '@/components/recommendations/http'
+import { requestJSON } from '@/api/client'
 import type {
   BlockRuleType,
   DiscoveryCandidate,
@@ -82,9 +82,9 @@ const discoveryFeed = ref<RecommendationFeedSnapshot>({ batch: null, items: [] }
 async function loadDiscoveryFeed() {
   try {
     discoveryFeedLoading.value = true
-    let snapshot = await requestJSON<RecommendationFeedSnapshot>('/api/recommendations/discovery-feed', { headers: authHeaders() })
+    let snapshot = await requestJSON<RecommendationFeedSnapshot>('/api/recommendations/discovery-feed')
     if (!snapshot?.batch) {
-      snapshot = await requestJSON<RecommendationFeedSnapshot>('/api/recommendations/discovery-feed/refresh', { method: 'POST', headers: authHeaders() })
+      snapshot = await requestJSON<RecommendationFeedSnapshot>('/api/recommendations/discovery-feed/refresh', { method: 'POST' })
     }
     discoveryFeed.value = { batch: snapshot?.batch ?? null, items: snapshot?.items ?? [] }
     await Promise.all(discoveryFeed.value.items.map((item) => props.loadItemFeedback(item)))
@@ -96,7 +96,7 @@ async function loadDiscoveryFeed() {
 async function refreshDiscoveryFeedBatch() {
   try {
     refreshingDiscoveryFeed.value = true
-    const snapshot = await requestJSON<RecommendationFeedSnapshot>('/api/recommendations/discovery-feed/refresh', { method: 'POST', headers: authHeaders() })
+    const snapshot = await requestJSON<RecommendationFeedSnapshot>('/api/recommendations/discovery-feed/refresh', { method: 'POST' })
     discoveryFeed.value = { batch: snapshot?.batch ?? null, items: snapshot?.items ?? [] }
     await Promise.all(discoveryFeed.value.items.map((item) => props.loadItemFeedback(item)))
     Message.success('已换一批猜你喜欢')

@@ -62,6 +62,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
+import { requestJSON } from '@/api/client'
 
 const props = defineProps<{ active: boolean }>()
 
@@ -151,29 +152,12 @@ function formatRemaining(ms: number): string {
   return `${seconds} 秒`
 }
 
-function authHeaders(json = false): HeadersInit {
-  const token = localStorage.getItem('token')
-  return {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(json ? { 'Content-Type': 'application/json' } : {}),
-  }
-}
-
-async function requestJSON<T>(url: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, options)
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok || payload.Status === '0') {
-    throw new Error(payload.Message || `HTTP ${response.status}`)
-  }
-  return payload.Data as T
-}
-
 // 加载 owner 评估面板的安全 token/耗时聚合。
 const loadMetrics = async () => {
   try {
     loading.value = true
     errorMessage.value = ''
-    const data = await requestJSON<AssessmentMetrics>('/api/admin/assessment/metrics', { headers: authHeaders() })
+    const data = await requestJSON<AssessmentMetrics>('/api/admin/assessment/metrics')
     Object.assign(metrics, emptyMetrics(), data, {
       last24h: { ...emptyMetrics().last24h, ...(data?.last24h || {}) },
       tokenTotals: { ...emptyMetrics().tokenTotals, ...(data?.tokenTotals || {}) },
@@ -203,7 +187,7 @@ const scheduleQueueRefresh = () => {
 // 加载暂停中的 LLM 评估作业快照。
 const loadQueue = async (silent = false) => {
   try {
-    const data = await requestJSON<AssessmentQueueSnapshot>('/api/admin/assessment/queue?limit=50', { headers: authHeaders() })
+    const data = await requestJSON<AssessmentQueueSnapshot>('/api/admin/assessment/queue?limit=50')
     Object.assign(queue, emptyQueue(), data, {
       counts: { ...emptyQueue().counts, ...(data?.counts || {}) },
     })
@@ -223,7 +207,7 @@ const refreshPanel = async () => {
 const runQueue = async () => {
   try {
     runningQueue.value = true
-    const data = await requestJSON<AssessmentQueueSnapshot>('/api/admin/assessment/queue/run', { method: 'POST', headers: authHeaders() })
+    const data = await requestJSON<AssessmentQueueSnapshot>('/api/admin/assessment/queue/run', { method: 'POST' })
     Object.assign(queue, emptyQueue(), data, {
       counts: { ...emptyQueue().counts, ...(data?.counts || {}) },
     })
@@ -245,7 +229,6 @@ const runBackfill = async (dryRun: boolean) => {
     running.value = true
     const result = await requestJSON<any>('/api/admin/discovery/article-assessments/backfill', {
       method: 'POST',
-      headers: authHeaders(true),
       body: JSON.stringify({ limit: limit.value, dryRun, retryFailures: retryFailures.value }),
     })
     batchMessage.value = describeBatch('回填', result || {})
@@ -263,7 +246,6 @@ const runRollback = async (dryRun: boolean) => {
     running.value = true
     const result = await requestJSON<any>('/api/admin/discovery/article-assessments/rollback', {
       method: 'POST',
-      headers: authHeaders(true),
       body: JSON.stringify({ limit: limit.value, dryRun }),
     })
     batchMessage.value = describeBatch('回滚', result || {})

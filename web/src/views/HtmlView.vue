@@ -2,7 +2,7 @@
   <div class="authenticated-html-viewer">
     <!-- 加载状态 -->
     <div v-if="loading" class="loading-container">
-      <a-spin size="large" :style="{ color: '#1890ff' }">
+      <a-spin :style="{ color: '#1890ff' }">
         <template #element>
           <div class="custom-loading">
             <div class="loading-spinner"></div>
@@ -79,47 +79,34 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import {useRoute, useRouter} from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Message, Modal } from '@arco-design/web-vue'
-import {IconArrowLeft, IconDelete, IconRefresh} from '@arco-design/web-vue/es/icon'
+import { IconArrowLeft, IconDelete, IconRefresh } from '@arco-design/web-vue/es/icon'
+import { requestText } from '@/api/client'
+import { deleteArchiveDocument, recordArchiveClick } from '@/api/archive'
+import { useAuthStore } from '@/stores/auth'
 
-const router = useRouter();
-// 响应式数据
+const router = useRouter()
+const auth = useAuthStore()
 const loading = ref(false)
 const deleting = ref(false)
 const htmlContent = ref('')
-const error = ref(null)
+const error = ref<{ title: string; message: string } | null>(null)
 const route = useRoute()
 
-// 从路由参数获取路径
-const currentPath = computed(() => {
-  return route.query.loc || ''
-})
+const currentPath = computed(() => String(route.query.loc || ''))
 
-// 从localStorage或其他地方获取token
-const getAuthToken = () => {
-  // 这里可以根据您的实际情况获取token
-  // 例如从localStorage、vuex、pinia等
-  return localStorage.getItem('token') ||
-      sessionStorage.getItem('token') ||
-      process.env.VUE_APP_AUTH_TOKEN
-}
-
-// 返回功能
 const goBack = () => {
-  // 优先使用浏览器历史记录返回
   if (window.history.length > 1) {
     router.go(-1)
   } else {
-    // 如果没有历史记录，返回到默认页面
     router.push('/')
   }
 }
 
-// 加载HTML资源
-const loadHtmlResource = async (path) => {
+const loadHtmlResource = async (path: string) => {
   if (!path) {
     error.value = {
       title: '参数错误',
@@ -128,8 +115,7 @@ const loadHtmlResource = async (path) => {
     return
   }
 
-  const token = getAuthToken()
-  if (!token) {
+  if (!auth.token) {
     error.value = {
       title: '认证失败',
       message: '未找到有效的认证token，请先登录'
@@ -141,64 +127,30 @@ const loadHtmlResource = async (path) => {
   error.value = null
 
   try {
-    const response = await fetch(path, {
-      method: 'GET',
+    htmlContent.value = await requestText(path, {
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'text/html',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
-      credentials: 'include' // 如果需要发送cookie
     })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    try {
+      await recordArchiveClick(path, String(route.query.q || ''))
+    } catch (err) {
+      console.warn('记录归档点击失败:', err)
     }
-
-    const html = await response.text()
-    htmlContent.value = html
-    await recordArchiveClick(path)
-
     Message.success('HTML资源加载成功')
-
-  } catch (err) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : '无法加载HTML资源'
     console.error('加载HTML资源失败:', err)
-
     error.value = {
       title: '加载失败',
-      message: `无法加载HTML资源: ${err.message}`
+      message: `无法加载HTML资源: ${message}`
     }
-
-    Message.error(`加载失败: ${err.message}`)
+    Message.error(`加载失败: ${message}`)
   } finally {
     loading.value = false
   }
 }
 
-const recordArchiveClick = async (path) => {
-  const token = getAuthToken()
-  if (!token) {
-    return
-  }
-  try {
-    await fetch('/api/archive/clicks', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        path,
-        keyword: route.query.q || ''
-      })
-    })
-  } catch (err) {
-    console.warn('记录归档点击失败:', err)
-  }
-}
-
-// 重新加载
 const retryLoad = () => {
   loadHtmlResource(currentPath.value)
 }
@@ -209,8 +161,7 @@ const deleteHtmlResource = async () => {
     return
   }
 
-  const token = getAuthToken()
-  if (!token) {
+  if (!auth.token) {
     Message.error('未找到有效的认证token，请先登录')
     router.push('/login')
     return
@@ -218,25 +169,13 @@ const deleteHtmlResource = async () => {
 
   deleting.value = true
   try {
-    const response = await fetch(`/api/archive?path=${encodeURIComponent(currentPath.value)}`, {
-      method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/json'
-      },
-      credentials: 'include'
-    })
-
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok || data.Status !== '1') {
-      throw new Error(data.Message || `HTTP ${response.status}: ${response.statusText}`)
-    }
-
-    Message.success(data.Message || '文档删除成功')
+    const payload = await deleteArchiveDocument(currentPath.value)
+    Message.success(payload.Message || '文档删除成功')
     goBack()
-  } catch (err) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : '删除失败'
     console.error('删除HTML资源失败:', err)
-    Message.error(`删除失败: ${err.message}`)
+    Message.error(`删除失败: ${message}`)
   } finally {
     deleting.value = false
   }

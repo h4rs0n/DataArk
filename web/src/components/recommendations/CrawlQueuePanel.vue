@@ -89,7 +89,7 @@
 <script setup lang="ts">
 // Owner 爬取队列观察与域名黑名单。
 import { formatDateTime } from '@/components/recommendations/format'
-import { authHeaders, requestJSON } from '@/components/recommendations/http'
+import { requestJSON } from '@/api/client'
 import {
   emptyCrawlQueue,
   type CrawlQueueSnapshot,
@@ -142,7 +142,7 @@ async function loadCrawlQueue(silent = false) {
   const wasRunning = crawlQueue.value.state === 'running'
   try {
     if (!silent) crawlQueueLoading.value = true
-    crawlQueue.value = await requestJSON<CrawlQueueSnapshot>('/api/admin/discovery/crawl-queue?limit=50', { headers: authHeaders() })
+    crawlQueue.value = await requestJSON<CrawlQueueSnapshot>('/api/admin/discovery/crawl-queue?limit=50')
     if (wasRunning && crawlQueue.value.state !== 'running') emit('inventory-changed')
   } catch (error) {
     if (!silent) Message.error(error instanceof Error ? error.message : '加载爬取任务队列失败')
@@ -156,7 +156,7 @@ async function loadDomainBlacklist(silent = false) {
   if (!props.isOwner) return
   try {
     if (!silent) blacklistLoading.value = true
-    domainBlacklist.value = (await requestJSON<DomainBlacklistEntry[]>('/api/admin/discovery/domain-blacklist', { headers: authHeaders() })) ?? []
+    domainBlacklist.value = (await requestJSON<DomainBlacklistEntry[]>('/api/admin/discovery/domain-blacklist')) ?? []
   } catch (error) {
     if (!silent) Message.error(error instanceof Error ? error.message : '加载域名黑名单失败')
   } finally {
@@ -177,7 +177,7 @@ async function addDomainBlacklist() {
   try {
     addingBlacklist.value = true
     const mutation = await requestJSON<DomainBlacklistMutation>('/api/admin/discovery/domain-blacklist', {
-      method: 'POST', headers: authHeaders(true), body: JSON.stringify({ domain, reason: blacklistForm.reason.trim() }),
+      method: 'POST', body: JSON.stringify({ domain, reason: blacklistForm.reason.trim() }),
     })
     blacklistForm.domain = ''
     blacklistForm.reason = ''
@@ -194,7 +194,7 @@ async function addDomainBlacklist() {
 async function deleteDomainBlacklist(id: number) {
   try {
     deletingBlacklistId.value = id
-    const mutation = await requestJSON<DomainBlacklistMutation>(`/api/admin/discovery/domain-blacklist/${id}`, { method: 'DELETE', headers: authHeaders() })
+    const mutation = await requestJSON<DomainBlacklistMutation>(`/api/admin/discovery/domain-blacklist/${id}`, { method: 'DELETE' })
     await Promise.all([loadDomainBlacklist(true), loadCrawlQueue(true)])
     emit('inventory-changed')
     Message.success(`域名黑名单已删除，恢复 ${mutation.affectedCandidates || 0} 篇候选文章`)

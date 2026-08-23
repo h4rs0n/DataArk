@@ -158,50 +158,14 @@
 import { computed, ref } from 'vue'
 import { Notification } from '@arco-design/web-vue'
 import { useRouter } from 'vue-router'
-
-interface ApiResponse<T = unknown> {
-  Status: string
-  Message: string
-  Data?: T
-  Error?: string
-}
-
-interface ConsistencyIssue {
-  severity: string
-  store: string
-  domain: string
-  filename: string
-  path: string
-  documentIds: string[]
-  message: string
-  recoverable: boolean
-}
-
-interface ConsistencyReport {
-  checkedAt: string
-  consistent: boolean
-  htmlFiles: number
-  meiliDocuments: number
-  databaseStatTotal: number
-  recoverableIssues: ConsistencyIssue[] | null
-  unrecoverableIssues: ConsistencyIssue[] | null
-  actions: string[] | null
-  indexedDocuments: number
-  refreshedStatSources: number
-}
-
-class ApiResponseError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode: number,
-  ) {
-    super(message)
-  }
-}
+import {
+  getConsistencyReport,
+  repairConsistency as requestConsistencyRepair,
+  type ConsistencyIssue,
+  type ConsistencyReport,
+} from '@/api/archive'
 
 const router = useRouter()
-const checkEndpoint = '/api/archiveConsistency'
-const repairEndpoint = '/api/archiveConsistency/repair'
 
 const report = ref<ConsistencyReport | null>(null)
 const loading = ref(false)
@@ -226,57 +190,11 @@ const reportActions = computed(() => report.value?.actions ?? [])
 const recoverableIssues = computed(() => report.value?.recoverableIssues ?? [])
 const unrecoverableIssues = computed(() => report.value?.unrecoverableIssues ?? [])
 
-const getAuthToken = () => {
-  return localStorage.getItem('token') || sessionStorage.getItem('token')
-}
-
-const authHeaders = (): Record<string, string> => {
-  const token = getAuthToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
-
 const goBack = () => {
   router.push('/')
 }
 
-const redirectToLogin = () => {
-  localStorage.removeItem('token')
-  sessionStorage.removeItem('token')
-  router.push('/login')
-}
-
-const parseResponse = async (response: Response): Promise<ApiResponse<ConsistencyReport>> => {
-  let payload: ApiResponse<ConsistencyReport> | null = null
-  try {
-    payload = await response.json()
-  } catch {
-    payload = null
-  }
-
-  if (!response.ok || payload?.Status === '0') {
-    throw new ApiResponseError(payload?.Error || payload?.Message || '一致性请求失败', response.status)
-  }
-  if (!payload?.Data) {
-    throw new ApiResponseError(payload?.Message || '一致性响应缺少数据', response.status)
-  }
-  return payload
-}
-
-const requestReport = async (method: 'GET' | 'POST', url: string) => {
-  const response = await fetch(url, {
-    method,
-    headers: authHeaders(),
-  })
-  const payload = await parseResponse(response)
-  report.value = payload.Data ?? null
-}
-
 const handleRequestError = (error: unknown) => {
-  if (error instanceof ApiResponseError && error.statusCode === 401) {
-    redirectToLogin()
-    return
-  }
-
   errorMessage.value = error instanceof Error ? error.message : '一致性请求失败'
   Notification.error({
     title: '请求失败',
@@ -290,7 +208,7 @@ const loadReport = async () => {
   try {
     loading.value = true
     errorMessage.value = ''
-    await requestReport('GET', checkEndpoint)
+    report.value = await getConsistencyReport()
   } catch (error) {
     handleRequestError(error)
   } finally {
@@ -302,7 +220,7 @@ const repairConsistency = async () => {
   try {
     repairing.value = true
     errorMessage.value = ''
-    await requestReport('POST', repairEndpoint)
+    report.value = await requestConsistencyRepair()
     Notification.success({
       title: '修复完成',
       content: '一致性修复已执行',

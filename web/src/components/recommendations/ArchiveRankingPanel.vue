@@ -26,7 +26,7 @@
 
 <script setup lang="ts">
 // 归档点击排行。
-import { authHeaders, requestJSON } from '@/components/recommendations/http'
+import { requestJSON } from '@/api/client'
 import type { ArchiveRankingItem } from '@/components/recommendations/types'
 import { IconEye } from '@arco-design/web-vue/es/icon'
 import { ref } from 'vue'
@@ -37,7 +37,7 @@ const rankingWindow = ref<'7d' | 'all'>('7d')
 const rankings = ref<ArchiveRankingItem[]>([])
 
 async function loadRankings() {
-  rankings.value = (await requestJSON<ArchiveRankingItem[]>(`/api/archive/rankings?window=${rankingWindow.value}&limit=20`, { headers: authHeaders() })) ?? []
+  rankings.value = (await requestJSON<ArchiveRankingItem[]>(`/api/archive/rankings?window=${rankingWindow.value}&limit=20`)) ?? []
 }
 
 defineExpose({ reload: loadRankings })

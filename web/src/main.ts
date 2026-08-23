@@ -6,6 +6,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import searchInput from '@/components/SearchInput/index.vue'
+import { useAuthStore } from '@/stores/auth'
 
 
 import '@arco-design/web-vue/dist/arco.css';
@@ -23,12 +24,20 @@ const isProtectedRequest = (input: RequestInfo | URL): boolean => {
 	return requestUrl.includes('/api/') || requestUrl.includes('/archive')
 }
 
+function clearAuthOnUnauthorized() {
+	try {
+		useAuthStore().clearAuth()
+	} catch {
+		localStorage.removeItem('token')
+		sessionStorage.removeItem('token')
+	}
+}
+
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 	const response = await rawFetch(input, init)
 
 	if (response.status === 401 && isProtectedRequest(input) && router.currentRoute.value.path !== '/login') {
-		localStorage.removeItem('token')
-		sessionStorage.removeItem('token')
+		clearAuthOnUnauthorized()
 		void router.push('/login')
 	}
 

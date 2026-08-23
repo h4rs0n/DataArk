@@ -51,7 +51,7 @@
 <script setup lang="ts">
 // 推荐设置与屏蔽规则。
 import { blockRuleTypeLabel, parseList, splitPreference } from '@/components/recommendations/format'
-import { authHeaders, requestJSON } from '@/components/recommendations/http'
+import { requestJSON } from '@/api/client'
 import type { BlockRule, RecommendationSettings } from '@/components/recommendations/types'
 import { IconDelete, IconSettings } from '@arco-design/web-vue/es/icon'
 import { Message } from '@arco-design/web-vue'
@@ -77,7 +77,7 @@ const preferredLanguagesText = ref('')
 const favoriteSourcesText = ref('')
 
 async function loadSettings() {
-  const settings = await requestJSON<RecommendationSettings>('/api/recommendations/settings', { headers: authHeaders() })
+  const settings = await requestJSON<RecommendationSettings>('/api/recommendations/settings')
   Object.assign(settingsForm, settings)
   preferredTopicsText.value = parseList(settings.preferredTopics).join(', ')
   preferredLanguagesText.value = parseList(settings.preferredLanguages).join(', ')
@@ -85,7 +85,7 @@ async function loadSettings() {
 }
 
 async function loadBlocks() {
-  blockRules.value = (await requestJSON<BlockRule[]>('/api/recommendations/blocks', { headers: authHeaders() })) ?? []
+  blockRules.value = (await requestJSON<BlockRule[]>('/api/recommendations/blocks')) ?? []
 }
 
 async function saveSettings() {
@@ -93,7 +93,6 @@ async function saveSettings() {
     savingSettings.value = true
     const saved = await requestJSON<RecommendationSettings>('/api/recommendations/settings', {
       method: 'PUT',
-      headers: authHeaders(true),
       body: JSON.stringify({
         ...settingsForm,
         preferredTopics: splitPreference(preferredTopicsText.value),
@@ -113,7 +112,7 @@ async function saveSettings() {
 async function resetPreferences() {
   try {
     savingSettings.value = true
-    await requestJSON('/api/recommendations/preferences/reset', { method: 'POST', headers: authHeaders() })
+    await requestJSON('/api/recommendations/preferences/reset', { method: 'POST' })
     await Promise.all([loadSettings(), loadBlocks()])
     Message.success('个人推荐偏好已重置，历史日报和反馈事件保留')
   } catch (error) {
@@ -125,7 +124,7 @@ async function resetPreferences() {
 
 async function deleteBlockRule(ruleId: number) {
   try {
-    await requestJSON(`/api/recommendations/blocks/${ruleId}`, { method: 'DELETE', headers: authHeaders() })
+    await requestJSON(`/api/recommendations/blocks/${ruleId}`, { method: 'DELETE' })
     await loadBlocks()
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '删除屏蔽规则失败')

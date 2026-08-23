@@ -33,6 +33,7 @@
 import { Message } from '@arco-design/web-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { onMounted, reactive, ref } from 'vue'
+import { suggestKeywords } from '@/api/search'
 
 const pageData = reactive({ searchKey: '' })
 const suggestions = ref<Array<{ keyword: string; count: number }>>([])
@@ -58,14 +59,8 @@ const loadSuggestions = () => {
     return
   }
   suggestionTimer = window.setTimeout(async () => {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    if (!token) return
     try {
-      const response = await fetch(`/api/search/keywords?prefix=${encodeURIComponent(prefix)}&limit=6`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      const payload = await response.json()
-      suggestions.value = payload.Status === '1' ? (payload.Data || []) : []
+      suggestions.value = await suggestKeywords(prefix, 6)
     } catch {
       suggestions.value = []
     }

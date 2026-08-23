@@ -23,7 +23,7 @@
 
 <script setup lang="ts">
 // 基于点击与搜索词的归档推荐。
-import { authHeaders, requestJSON } from '@/components/recommendations/http'
+import { requestJSON } from '@/api/client'
 import type { ArchiveRecommendationItem } from '@/components/recommendations/types'
 import { IconEye } from '@arco-design/web-vue/es/icon'
 import { ref } from 'vue'
@@ -33,7 +33,7 @@ defineEmits<{ 'open-archive': [path: string] }>()
 const archiveRecommendations = ref<ArchiveRecommendationItem[]>([])
 
 async function loadArchiveRecommendations() {
-  archiveRecommendations.value = (await requestJSON<ArchiveRecommendationItem[]>('/api/recommendations/archives?window=7d&limit=20', { headers: authHeaders() })) ?? []
+  archiveRecommendations.value = (await requestJSON<ArchiveRecommendationItem[]>('/api/recommendations/archives?window=7d&limit=20')) ?? []
 }
 
 defineExpose({ reload: loadArchiveRecommendations })

@@ -134,7 +134,8 @@ import ImpactFeedbackModal from '@/components/recommendations/ImpactFeedbackModa
 import RecommendationContextDrawer from '@/components/recommendations/RecommendationContextDrawer.vue'
 import SearchKeywordsPanel from '@/components/recommendations/SearchKeywordsPanel.vue'
 import SettingsPanel from '@/components/recommendations/SettingsPanel.vue'
-import { authHeaders, requestJSON } from '@/components/recommendations/http'
+import { checkAuth } from '@/api/auth'
+import { requestJSON } from '@/api/client'
 import type {
   BlockRuleType,
   DiscoveryCandidate,
@@ -171,12 +172,12 @@ const sourcesPanel = ref<{ reload: () => Promise<void> }>()
 const queuePanel = ref<{ reload: () => Promise<void> }>()
 
 async function loadIdentity() {
-  const user = await requestJSON<{ role?: string }>('/api/authChecker', { headers: authHeaders() })
+  const user = await checkAuth()
   isOwner.value = user?.role === 'owner'
 }
 
 async function loadItemFeedback(item: RecommendationItem) {
-  const data = await requestJSON<{ current?: { action: string } }>(`/api/recommendations/items/${item.id}/feedback`, { headers: authHeaders() })
+  const data = await requestJSON<{ current?: { action: string } }>(`/api/recommendations/items/${item.id}/feedback`)
   feedbackByItem[item.id] = data?.current ? { action: data.current.action === 'duplicate' ? 'too_repetitive' : data.current.action } : undefined
 }
 
@@ -216,7 +217,6 @@ async function sendFeedback(item: RecommendationItem, action: FeedbackAction, bl
     feedbackLoadingId.value = item.id
     await requestJSON(`/api/recommendations/items/${item.id}/feedback`, {
       method: 'POST',
-      headers: authHeaders(true),
       body: JSON.stringify({ action, blockTargets }),
     })
     await Promise.all([settingsPanel.value?.loadBlocks() ?? Promise.resolve(), loadItemFeedback(item)])
@@ -231,7 +231,7 @@ async function sendFeedback(item: RecommendationItem, action: FeedbackAction, bl
 async function revertFeedback(item: RecommendationItem) {
   try {
     feedbackLoadingId.value = item.id
-    await requestJSON(`/api/recommendations/items/${item.id}/feedback`, { method: 'DELETE', headers: authHeaders() })
+    await requestJSON(`/api/recommendations/items/${item.id}/feedback`, { method: 'DELETE' })
     feedbackByItem[item.id] = undefined
     await settingsPanel.value?.loadBlocks()
     Message.success('当前反馈已撤销，历史事件仍保留')
@@ -264,7 +264,7 @@ async function openItemContext(item: RecommendationItem) {
   contextLoading.value = true
   itemContext.value = undefined
   try {
-    itemContext.value = await requestJSON<any>(`/api/recommendations/items/${item.id}/context`, { headers: authHeaders() })
+    itemContext.value = await requestJSON<any>(`/api/recommendations/items/${item.id}/context`)
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '加载追溯信息失败')
   } finally {
@@ -283,7 +283,7 @@ function searchKeyword(keyword: string) {
 async function markCandidateRead(candidate: DiscoveryCandidate) {
   if (!candidate?.url) return
   try {
-    await requestJSON(`/api/discovery/candidates/${candidate.id}/read`, { method: 'POST', headers: authHeaders() })
+    await requestJSON(`/api/discovery/candidates/${candidate.id}/read`, { method: 'POST' })
   } catch { /* Opening the article should not depend on recording read state. */ }
 }
 
@@ -296,7 +296,7 @@ function openCandidate(candidate: DiscoveryCandidate) {
 async function archiveCandidate(candidateId: number) {
   try {
     archivingCandidateId.value = candidateId
-    await requestJSON(`/api/discovery/candidates/${candidateId}/archive`, { method: 'POST', headers: authHeaders() })
+    await requestJSON(`/api/discovery/candidates/${candidateId}/archive`, { method: 'POST' })
     await feedPanel.value?.reload()
     Message.success('已加入归档队列')
   } catch (error) {

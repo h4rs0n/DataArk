@@ -19,7 +19,7 @@
 
 <script setup lang="ts">
 // 搜索热词。
-import { authHeaders, requestJSON } from '@/components/recommendations/http'
+import { requestJSON } from '@/api/client'
 import type { KeywordItem } from '@/components/recommendations/types'
 import { ref } from 'vue'
 
@@ -29,7 +29,7 @@ const keywordWindow = ref<'7d' | 'all'>('7d')
 const keywords = ref<KeywordItem[]>([])
 
 async function loadKeywords() {
-  keywords.value = (await requestJSON<KeywordItem[]>(`/api/search/keywords?window=${keywordWindow.value}&limit=30`, { headers: authHeaders() })) ?? []
+  keywords.value = (await requestJSON<KeywordItem[]>(`/api/search/keywords?window=${keywordWindow.value}&limit=30`)) ?? []
 }
 
 defineExpose({ reload: loadKeywords })
