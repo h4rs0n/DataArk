@@ -1,7 +1,6 @@
 package recommendation
 
 import (
-	"DataArk/assessment"
 	"DataArk/config"
 	"context"
 	"strings"
@@ -13,18 +12,10 @@ type EmbeddingProvider interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
-// ArticleAssessmentProvider 调用 chat 评估文章阅读价值。
-type ArticleAssessmentProvider interface {
-	AssessArticle(ctx context.Context, input ArticleAssessmentInput) (ArticleAssessmentResult, error)
-}
-
 // RerankProvider 对已选出的日报候选做 LLM 重排。
 type RerankProvider interface {
 	Rerank(ctx context.Context, input RerankInput) (RerankResult, error)
 }
-
-type ArticleAssessmentInput = assessment.ChatAssessmentInput
-type ArticleAssessmentResult = assessment.ChatAssessmentResult
 
 type RerankInput struct {
 	UserID          uint

@@ -25,7 +25,7 @@ func RunScanBlogrollJob(ctx context.Context, siteID uint) error {
 	return err
 }
 
-func ScanBlogroll(ctx context.Context, siteID uint, queue JobEnqueuer) (BlogrollScanResult, error) {
+func ScanBlogroll(ctx context.Context, siteID uint, queue DiscoveryJobEnqueuer) (BlogrollScanResult, error) {
 	result := BlogrollScanResult{SiteID: siteID}
 	if db == nil {
 		return result, nil

@@ -8,12 +8,11 @@ import (
 )
 
 type recoveryRecordingQueue struct {
-	fetches     []uint
-	scans       []uint
-	backfills   []uint
-	candidates  []uint
-	assessments []uint
-	failSource  uint
+	fetches    []uint
+	scans      []uint
+	backfills  []uint
+	candidates []uint
+	failSource uint
 }
 
 func (queue *recoveryRecordingQueue) EnqueueFetchSource(_ context.Context, sourceID uint) error {
@@ -36,15 +35,6 @@ func (queue *recoveryRecordingQueue) EnqueueBackfillSite(_ context.Context, site
 
 func (queue *recoveryRecordingQueue) EnqueueProcessCandidate(_ context.Context, candidateID uint, _ string) error {
 	queue.candidates = append(queue.candidates, candidateID)
-	return nil
-}
-
-func (queue *recoveryRecordingQueue) EnqueueAssessArticle(_ context.Context, candidateID uint, _ string) error {
-	queue.assessments = append(queue.assessments, candidateID)
-	return nil
-}
-
-func (*recoveryRecordingQueue) EnqueueGenerateDaily(context.Context, uint, string) error {
 	return nil
 }
 
@@ -120,9 +110,6 @@ func TestRecoverDueJobsEnqueuesPendingAssessmentsSeparately(t *testing.T) {
 	}
 	if len(queue.candidates) != 1 || queue.candidates[0] != pendingBody.ID {
 		t.Fatalf("body recoveries = %#v", queue.candidates)
-	}
-	if len(queue.assessments) != 0 {
-		t.Fatalf("discovery recovery must not enqueue assessments = %#v", queue.assessments)
 	}
 }
 

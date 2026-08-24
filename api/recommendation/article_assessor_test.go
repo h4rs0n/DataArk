@@ -10,12 +10,12 @@ import (
 )
 
 type capturingAssessmentProvider struct {
-	input ArticleAssessmentInput
+	input assessment.ChatAssessmentInput
 }
 
-func (provider *capturingAssessmentProvider) AssessArticle(_ context.Context, input ArticleAssessmentInput) (ArticleAssessmentResult, error) {
+func (provider *capturingAssessmentProvider) AssessArticle(_ context.Context, input assessment.ChatAssessmentInput) (assessment.ChatAssessmentResult, error) {
 	provider.input = input
-	return ArticleAssessmentResult{
+	return assessment.ChatAssessmentResult{
 		QualityScore: 91, DepthScore: 84, EvergreenScore: 79, Reasons: []string{"Strong evidence", "Useful depth"},
 		Summary: "The fixture article explains a durable method with measurements.", Keywords: []string{"testing", "evidence", "methods"},
 		Model: "fixture-llm", PromptVersion: "assessment-v2",

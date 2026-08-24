@@ -2,6 +2,7 @@ package assessmenteval
 
 import (
 	"DataArk/articlevalue"
+	"DataArk/assessment"
 	"DataArk/discovery"
 	"DataArk/observability"
 	"DataArk/recommendation"
@@ -915,7 +916,7 @@ func runWorkflowEvaluation(database *gorm.DB, runID uint, generation int, provid
 			defer wait.Done()
 			for job := range jobs {
 				started := time.Now()
-				result, callErr := provider.AssessArticle(context.Background(), recommendation.ArticleAssessmentInput{
+				result, callErr := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{
 					CandidateID: job.item.CandidateID, Title: job.item.Title, BodyText: job.item.BodyText,
 				})
 				score := ArticleAssessmentWorkflowScore{

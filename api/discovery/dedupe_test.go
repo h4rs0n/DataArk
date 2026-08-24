@@ -25,10 +25,10 @@ func TestResolveCandidateDuplicatesKeepsOneRepresentativeAndAllProvenance(t *tes
 	if err := db.Where("id IN ? AND representative_id = id", []uint{mirror.ID, redirect.ID}).First(&interim).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Exec(`CREATE TABLE recommendation_items_m8 (id INTEGER PRIMARY KEY, candidate_id INTEGER NOT NULL, snapshot_title TEXT NOT NULL)`).Error; err != nil {
+	if err := db.Exec(`CREATE TABLE recommendation_items_snapshot_fixture (id INTEGER PRIMARY KEY, candidate_id INTEGER NOT NULL, snapshot_title TEXT NOT NULL)`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Exec(`INSERT INTO recommendation_items_m8(id, candidate_id, snapshot_title) VALUES(1, ?, ?)`, interim.ID, "Published snapshot").Error; err != nil {
+	if err := db.Exec(`INSERT INTO recommendation_items_snapshot_fixture(id, candidate_id, snapshot_title) VALUES(1, ?, ?)`, interim.ID, "Published snapshot").Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,7 +76,7 @@ func TestResolveCandidateDuplicatesKeepsOneRepresentativeAndAllProvenance(t *tes
 	}
 	var historyCandidateID uint
 	var snapshotTitle string
-	if err := db.Raw(`SELECT candidate_id, snapshot_title FROM recommendation_items_m8 WHERE id = 1`).Row().Scan(&historyCandidateID, &snapshotTitle); err != nil {
+	if err := db.Raw(`SELECT candidate_id, snapshot_title FROM recommendation_items_snapshot_fixture WHERE id = 1`).Row().Scan(&historyCandidateID, &snapshotTitle); err != nil {
 		t.Fatal(err)
 	}
 	if historyCandidateID != interim.ID || snapshotTitle != "Published snapshot" {

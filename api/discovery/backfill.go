@@ -47,7 +47,7 @@ func RunBackfillSiteJob(ctx context.Context, siteID uint) error {
 	return err
 }
 
-func RunBackfillSite(ctx context.Context, siteID uint, queue JobEnqueuer) (*DiscoveryBackfillState, error) {
+func RunBackfillSite(ctx context.Context, siteID uint, queue DiscoveryJobEnqueuer) (*DiscoveryBackfillState, error) {
 	if db == nil {
 		return nil, nil
 	}

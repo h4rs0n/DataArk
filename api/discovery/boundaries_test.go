@@ -65,14 +65,6 @@ func (queue recordingJobEnqueuer) EnqueueProcessCandidate(_ context.Context, can
 	return queue.enqueue(fmt.Sprintf("candidate:%d:%s", candidateID, contentVersion))
 }
 
-func (queue recordingJobEnqueuer) EnqueueAssessArticle(_ context.Context, candidateID uint, contentVersion string) error {
-	return queue.enqueue(fmt.Sprintf("assess:%d:%s", candidateID, contentVersion))
-}
-
-func (queue recordingJobEnqueuer) EnqueueGenerateDaily(_ context.Context, userID uint, localDate string) error {
-	return queue.enqueue(fmt.Sprintf("daily:%d:%s", userID, localDate))
-}
-
 func TestDeterministicBoundariesAdvanceTimeAndSurviveQueueRestart(t *testing.T) {
 	clock := &advancingClock{now: time.Date(2026, 7, 13, 8, 0, 0, 0, time.UTC)}
 	clock.Advance(90 * time.Minute)

@@ -279,13 +279,11 @@ func looksLikeFeed(body []byte) bool {
 	return strings.Contains(value, "<rss") || strings.Contains(value, "<feed") || strings.Contains(value, "<rdf:rdf")
 }
 
-// JobEnqueuer accepts only stable identifiers. Implementations must make each
-// operation idempotent; large page or article bodies remain in storage.
-type JobEnqueuer interface {
+// DiscoveryJobEnqueuer 只投递发现流水线作业：抓取、blogroll、回填、候选处理。
+// 评估与日报走 jobqueue.JobEnqueuer，避免与全量队列同名，也不把日报方法暴露给发现包。
+type DiscoveryJobEnqueuer interface {
 	EnqueueFetchSource(context.Context, uint) error
 	EnqueueScanBlogroll(context.Context, uint) error
 	EnqueueBackfillSite(context.Context, uint) error
 	EnqueueProcessCandidate(context.Context, uint, string) error
-	EnqueueAssessArticle(context.Context, uint, string) error
-	EnqueueGenerateDaily(context.Context, uint, string) error
 }

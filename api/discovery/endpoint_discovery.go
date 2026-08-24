@@ -24,7 +24,7 @@ const (
 
 type EndpointDiscoveryService struct {
 	Clock Clock
-	Queue JobEnqueuer
+	Queue DiscoveryJobEnqueuer
 }
 
 type EndpointDiscoveryResult struct {

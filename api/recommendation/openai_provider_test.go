@@ -64,7 +64,7 @@ func TestArticleAssessmentUnsupportedSchemaCachesJSONObjectForLaterCalls(t *test
 		statuses:  []int{http.StatusBadRequest, http.StatusOK, http.StatusOK, http.StatusOK, http.StatusOK, http.StatusOK, http.StatusOK},
 	}
 	provider := OpenAICompatibleProvider{BaseURL: "https://fallback.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
-	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{CandidateID: 1, Title: "Title", BodyText: "Body"}); err != nil {
+	if _, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{CandidateID: 1, Title: "Title", BodyText: "Body"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.payloads) != 2 {
@@ -83,7 +83,7 @@ func TestArticleAssessmentUnsupportedSchemaCachesJSONObjectForLaterCalls(t *test
 		group.Add(1)
 		go func(candidateID uint) {
 			defer group.Done()
-			_, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{CandidateID: candidateID, Title: "Title", BodyText: "Body"})
+			_, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{CandidateID: candidateID, Title: "Title", BodyText: "Body"})
 			errorsByCall <- err
 		}(uint(index + 2))
 	}
@@ -116,7 +116,7 @@ func TestArticleAssessmentDoesNotTreatRateLimitAsFormatFailure(t *testing.T) {
 		statuses:  []int{http.StatusTooManyRequests},
 	}
 	provider := OpenAICompatibleProvider{BaseURL: "https://rate.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
-	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err == nil {
+	if _, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{Title: "Title", BodyText: "Body"}); err == nil {
 		t.Fatal("expected rate-limit error")
 	}
 	if len(client.payloads) != 1 {
@@ -229,7 +229,7 @@ func TestOpenAICompatibleProviderArticleAssessmentUsesCompactSchemaAndQwenSwitch
 		chatCompletionWithContent(articleAssessmentJSON(82, 71, 64, "Evidence is specific", "Analysis is concise")),
 	}}
 	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "qwen3.5-plus", HTTPClient: client}
-	result, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Article body"})
+	result, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{Title: "Title", BodyText: "Article body"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestOpenAICompatibleProviderLogsUsageWithoutPayloadText(t *testing.T) {
 		`{"choices":[{"message":{"content":` + mustJSONString(articleAssessmentJSON(80, 70, 60, "completion-text-sentinel", "No major limitation")) + `,"reasoning_content":"reasoning-text-sentinel"}}],"usage":{"prompt_tokens":101,"completion_tokens":20,"total_tokens":121,"prompt_tokens_details":{"cached_tokens":11},"completion_tokens_details":{"reasoning_tokens":0}}}`,
 	}}
 	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "deepseek-v4", HTTPClient: client}
-	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "prompt-text-sentinel"}); err != nil {
+	if _, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{Title: "Title", BodyText: "prompt-text-sentinel"}); err != nil {
 		t.Fatal(err)
 	}
 	event := decodeSingleLLMEvent(t, logOutput.String())
@@ -344,7 +344,7 @@ func TestOpenAICompatibleProviderLogsUsageWhenStrictAssessmentOutputIsInvalid(t 
 	}
 	client := &fakeOpenAIDoer{responses: responses}
 	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
-	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err == nil || !strings.Contains(err.Error(), "unknown field") {
+	if _, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{Title: "Title", BodyText: "Body"}); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("error = %v", err)
 	}
 	events := decodeLLMEvents(t, logOutput.String())
@@ -387,7 +387,7 @@ func TestArticleAssessmentRetriesSchemaWithConcreteValidatorError(t *testing.T) 
 		chatCompletionWithContent(articleAssessmentJSON(80, 70, 60, "ok", "limit")),
 	}}
 	provider := OpenAICompatibleProvider{BaseURL: "https://retry.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
-	result, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"})
+	result, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{Title: "Title", BodyText: "Body"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +428,7 @@ func TestArticleAssessmentFallsBackToJSONObjectAfterFiveSchemaRetriesWithoutCach
 	responses[articleAssessmentSchemaMaxAttempts+1] = valid
 	client := &fakeOpenAIDoer{responses: responses}
 	provider := OpenAICompatibleProvider{BaseURL: "https://uncached.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
-	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{CandidateID: 1, Title: "Title", BodyText: "Body"}); err != nil {
+	if _, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{CandidateID: 1, Title: "Title", BodyText: "Body"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.payloads) != articleAssessmentSchemaMaxAttempts+1 {
@@ -456,7 +456,7 @@ func TestArticleAssessmentFallsBackToJSONObjectAfterFiveSchemaRetriesWithoutCach
 		assertNoAssistantReplay(t, client.payloads[index], invalidJSON)
 	}
 
-	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{CandidateID: 2, Title: "Title", BodyText: "Body"}); err != nil {
+	if _, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{CandidateID: 2, Title: "Title", BodyText: "Body"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.payloads) != articleAssessmentSchemaMaxAttempts+2 {
@@ -476,7 +476,7 @@ func TestArticleAssessmentFallsBackToJSONObjectAfterRetryableThenNonRetryableErr
 		statuses:  []int{http.StatusOK, http.StatusTooManyRequests, http.StatusOK},
 	}
 	provider := OpenAICompatibleProvider{BaseURL: "https://rate-after-retry.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
-	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err != nil {
+	if _, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{Title: "Title", BodyText: "Body"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.payloads) != 3 {
@@ -507,7 +507,7 @@ func TestArticleAssessmentFallsBackToJSONObjectAfterRetryableThenContextLimit(t 
 		statuses:  []int{http.StatusOK, http.StatusBadRequest, http.StatusOK},
 	}
 	provider := OpenAICompatibleProvider{BaseURL: "https://context-after-retry.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
-	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err != nil {
+	if _, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{Title: "Title", BodyText: "Body"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.payloads) != 3 {
@@ -531,7 +531,7 @@ func TestArticleAssessmentRetryCauseUsesMissingFieldNames(t *testing.T) {
 		chatCompletionWithContent(articleAssessmentJSON(50, 50, 50, "one", "two")),
 	}}
 	provider := OpenAICompatibleProvider{BaseURL: "https://missing.example", ChatModel: "MiMo-V2.5-Pro", HTTPClient: client}
-	if _, err := provider.AssessArticle(context.Background(), ArticleAssessmentInput{Title: "Title", BodyText: "Body"}); err != nil {
+	if _, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{Title: "Title", BodyText: "Body"}); err != nil {
 		t.Fatal(err)
 	}
 	content := lastUserMessage(t, client.payloads[1])

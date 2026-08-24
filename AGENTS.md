@@ -13,11 +13,11 @@ Backend (`api/`, Go module `DataArk`, Go 1.26):
 - `api/auth/` — users, JWT
 - `api/discovery/` — crawl, feeds, blogroll graph, candidate pipeline; hands off extracted articles as `assessment_state=pending`
 - `api/discovery/articlerules/` — URL/body hard gates
-- `api/assessment/` — LLM article assessment adapter, immutable assessment rows, state machine, manual queue, backfill/rollback, metrics
+- `api/assessment/` — LLM article assessment adapter, immutable assessment rows, state machine, manual queue, backfill/rollback, metrics. Chat LLM I/O is `ChatAssessmentInput`/`ChatAssessmentResult`; the domain assessor uses `ArticleAssessmentInput`/`ArticleAssessmentResult`. Do not alias those names in other packages.
 - `api/assessmenteval/` — owner gold-label workflow
 - `api/articlevalue/` — shared scoring/evidence helpers
 - `api/recommendation/` — daily digest (`digest.go`, `day.go`, `selection_v3.go`), settings, feedback, profile, rerank, discovery feed, inventory (`inventory.go`), item context (`item_context.go`), metrics (`metrics.go`). Candidate topics/summary come from assessment write-back, not a separate enrichment hop. Do not revive `_m3`–`_m17` filename suffixes.
-- `api/jobqueue/` — River (Postgres) and in-memory queue
+- `api/jobqueue/` — River (Postgres) and in-memory queue. The full `JobEnqueuer` lives here; discovery uses `DiscoveryJobEnqueuer` (fetch/blogroll/backfill/process only, no daily digest).
 - `api/search/` — Meilisearch index
 - `api/backup/` — backup/restore
 - `api/database/` — GORM connection; Goose runner

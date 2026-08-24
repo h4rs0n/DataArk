@@ -9,7 +9,7 @@ import (
 
 // RecoverDueJobs restores work that should not wait for the next scheduler
 // interval after a process restart.
-func RecoverDueJobs(ctx context.Context, queue JobEnqueuer, now time.Time) error {
+func RecoverDueJobs(ctx context.Context, queue DiscoveryJobEnqueuer, now time.Time) error {
 	if db == nil || queue == nil {
 		return nil
 	}

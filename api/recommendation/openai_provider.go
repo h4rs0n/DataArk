@@ -28,8 +28,6 @@ const (
 	llmCallEventName                    = llm.CallEventName
 )
 
-type HTTPDoer = llm.HTTPDoer
-
 type OpenAICompatibleProvider llm.Client
 
 func (provider OpenAICompatibleProvider) client() llm.Client {
@@ -44,7 +42,7 @@ func (provider OpenAICompatibleProvider) Embed(ctx context.Context, texts []stri
 	return provider.client().Embed(ctx, texts)
 }
 
-func (provider OpenAICompatibleProvider) AssessArticle(ctx context.Context, input ArticleAssessmentInput) (ArticleAssessmentResult, error) {
+func (provider OpenAICompatibleProvider) AssessArticle(ctx context.Context, input assessment.ChatAssessmentInput) (assessment.ChatAssessmentResult, error) {
 	return assessment.ChatProvider{Client: provider.client()}.AssessArticle(ctx, input)
 }
 

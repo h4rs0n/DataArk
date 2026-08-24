@@ -51,7 +51,7 @@ func (SiteClassifier) Classify(rawURL string) string {
 
 type SiteGraphService struct {
 	Clock      Clock
-	Queue      JobEnqueuer
+	Queue      DiscoveryJobEnqueuer
 	Classifier SiteClassifier
 }
 

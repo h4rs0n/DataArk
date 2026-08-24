@@ -136,11 +136,11 @@ func TestOptionalAssessorFailureFallsBackAndVersionsRemainImmutable(t *testing.T
 		t.Fatalf("fallback assessments = %#v", rows)
 	}
 
-	if err := db.Exec(`CREATE TABLE recommendation_assessment_history_m9 (id INTEGER PRIMARY KEY, assessment_id INTEGER, snapshot_title TEXT)`).Error; err != nil {
+	if err := db.Exec(`CREATE TABLE recommendation_assessment_history_fixture (id INTEGER PRIMARY KEY, assessment_id INTEGER, snapshot_title TEXT)`).Error; err != nil {
 		t.Fatal(err)
 	}
 	oldAssessmentID := *candidate.CurrentAssessmentID
-	if err := db.Exec(`INSERT INTO recommendation_assessment_history_m9(id, assessment_id, snapshot_title) VALUES(1, ?, 'Published assessment')`, oldAssessmentID).Error; err != nil {
+	if err := db.Exec(`INSERT INTO recommendation_assessment_history_fixture(id, assessment_id, snapshot_title) VALUES(1, ?, 'Published assessment')`, oldAssessmentID).Error; err != nil {
 		t.Fatal(err)
 	}
 	updatedBody := body + strings.Repeat(" New observations add independent evidence and a revised conclusion.", 4)
@@ -162,7 +162,7 @@ func TestOptionalAssessorFailureFallsBackAndVersionsRemainImmutable(t *testing.T
 	}
 	var historyAssessmentID uint
 	var snapshotTitle string
-	if err := db.Raw(`SELECT assessment_id, snapshot_title FROM recommendation_assessment_history_m9 WHERE id = 1`).Row().Scan(&historyAssessmentID, &snapshotTitle); err != nil {
+	if err := db.Raw(`SELECT assessment_id, snapshot_title FROM recommendation_assessment_history_fixture WHERE id = 1`).Row().Scan(&historyAssessmentID, &snapshotTitle); err != nil {
 		t.Fatal(err)
 	}
 	if historyAssessmentID != oldAssessmentID || snapshotTitle != "Published assessment" {
