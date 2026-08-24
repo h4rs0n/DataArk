@@ -11,13 +11,13 @@ Backend (`api/`, Go module `DataArk`, Go 1.26):
 - `api/api/` — Gin HTTP surface: `starter.go` (`WebStarter`, listens on `0.0.0.0:7845`), `routes.go` (`/api/*`), `deps.go` (test seams), `jobs.go`, `helpers.go`, `middleware.go`, and domain handlers (`auth.go`, `search.go`, `archive.go`, `discovery.go`, `assessment.go`, `recommendation.go`, `backup.go`)
 - `api/archive/` — archived HTML metadata, stats, engagement
 - `api/auth/` — users, JWT
-- `api/discovery/` — crawl, feeds, blogroll graph, candidate pipeline; hands off extracted articles as `assessment_state=pending`
+- `api/discovery/` — crawl, feeds, blogroll graph, candidate pipeline; hands off extracted articles as `assessment_state=pending`. Uses `DiscoveryJobEnqueuer` (fetch/blogroll/backfill/process only). Assessment enqueue happens in `api/api/jobs.go` after process succeeds.
 - `api/discovery/articlerules/` — URL/body hard gates
-- `api/assessment/` — LLM article assessment adapter, immutable assessment rows, state machine, manual queue, backfill/rollback, metrics. Chat LLM I/O is `ChatAssessmentInput`/`ChatAssessmentResult`; the domain assessor uses `ArticleAssessmentInput`/`ArticleAssessmentResult`. Do not alias those names in other packages.
+- `api/assessment/` — LLM article assessment adapter, immutable assessment rows, state machine, manual queue, backfill/rollback, metrics. Chat LLM I/O is `ChatAssessmentInput`/`ChatAssessmentResult`; the domain assessor uses `ArticleAssessmentInput`/`ArticleAssessmentResult`. Do not alias those names in other packages. Queue surface is `ArticleJobEnqueuer` (`EnqueueAssessArticle` only).
 - `api/assessmenteval/` — owner gold-label workflow
 - `api/articlevalue/` — shared scoring/evidence helpers
-- `api/recommendation/` — daily digest (`digest.go`, `day.go`, `selection_v3.go`), settings, feedback, profile, rerank, discovery feed, inventory (`inventory.go`), item context (`item_context.go`), metrics (`metrics.go`). Candidate topics/summary come from assessment write-back, not a separate enrichment hop. Do not revive `_m3`–`_m17` filename suffixes.
-- `api/jobqueue/` — River (Postgres) and in-memory queue. The full `JobEnqueuer` lives here; discovery uses `DiscoveryJobEnqueuer` (fetch/blogroll/backfill/process only, no daily digest).
+- `api/recommendation/` — daily digest (`digest.go`, `day.go`, `selection_v3.go`), settings, feedback, profile, rerank, discovery feed, inventory (`inventory.go`), item context (`item_context.go`), metrics (`metrics.go`). Candidate topics/summary come from assessment write-back, not a separate enrichment hop. Do not revive `_m3`–`_m17` filename suffixes. Daily enqueue surface is `DailyJobEnqueuer`.
+- `api/jobqueue/` — River (Postgres) and in-memory queue. The full `JobEnqueuer` lives here as the union of the three domain enqueue interfaces. Discovery does not import this package.
 - `api/search/` — Meilisearch index
 - `api/backup/` — backup/restore
 - `api/database/` — GORM connection; Goose runner

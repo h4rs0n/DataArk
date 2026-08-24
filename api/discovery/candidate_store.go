@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"DataArk/archive"
-	"DataArk/jobqueue"
 	"context"
 	"errors"
 	"fmt"
@@ -17,7 +16,7 @@ var enqueueCandidateForProcessing = func(ctx context.Context, candidate Discover
 	if candidate.ProcessingState == DiscoveryProcessingDomainBlocked {
 		return nil
 	}
-	queue, available := jobqueue.Default()
+	queue, available := jobQueue()
 	if !available {
 		return nil
 	}

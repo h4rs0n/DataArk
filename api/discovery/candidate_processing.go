@@ -4,7 +4,6 @@ import (
 	"DataArk/archive"
 	"DataArk/config"
 	"DataArk/discovery/articlerules"
-	"DataArk/jobqueue"
 	"DataArk/observability"
 	"context"
 	"errors"
@@ -129,8 +128,8 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 	return enqueueCandidateForAssessment(ctx, candidate.ID)
 }
 
-// enqueueCandidateForAssessment 把已抽取的代表文章标为 pending 并交给评估队列。
-// 没有作业队列时停在 pending，由 assessment 包在有队列或测试中显式调用 AssessCandidate。
+// enqueueCandidateForAssessment 把已抽取的代表文章标为 pending。
+// 评估作业由装配层在 ProcessCandidate 成功后调用 assessment.EnqueuePending；无队列时停在 pending。
 func enqueueCandidateForAssessment(ctx context.Context, candidateID uint) error {
 	if db == nil || candidateID == 0 {
 		return gorm.ErrRecordNotFound
@@ -142,16 +141,9 @@ func enqueueCandidateForAssessment(ctx context.Context, candidateID uint) error 
 	if candidate.ProcessingState != DiscoveryProcessingReady {
 		return nil
 	}
-	if err := db.Model(&candidate).Updates(map[string]interface{}{
+	return db.Model(&candidate).Updates(map[string]interface{}{
 		"assessment_state": DiscoveryAssessmentPending, "updated_at": discoveryClock.Now(),
-	}).Error; err != nil {
-		return err
-	}
-	queue, available := jobqueue.Default()
-	if available && queue != nil {
-		return queue.EnqueueAssessArticle(ctx, candidate.ID, candidateContentVersion(candidate))
-	}
-	return nil
+	}).Error
 }
 
 func parseExpectedContentVersion(value string) (uint, error) {

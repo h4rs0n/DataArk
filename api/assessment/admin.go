@@ -2,7 +2,6 @@ package assessment
 
 import (
 	"DataArk/discovery"
-	"DataArk/jobqueue"
 	"context"
 	"errors"
 	"fmt"
@@ -30,7 +29,7 @@ type ArticleAssessmentBatchResult struct {
 }
 
 // PrepareArticleAssessmentBackfill 为缺失的模型评估行入队，或在 active 模式下激活已有行。
-func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAssessor, queue jobqueue.JobEnqueuer, options ArticleAssessmentBatchOptions) (ArticleAssessmentBatchResult, error) {
+func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAssessor, queue ArticleJobEnqueuer, options ArticleAssessmentBatchOptions) (ArticleAssessmentBatchResult, error) {
 	result := ArticleAssessmentBatchResult{DryRun: options.DryRun}
 	if db == nil {
 		return result, errors.New("assessment database is unavailable")

@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"DataArk/jobqueue"
 	"context"
 	"errors"
 	"strings"
@@ -100,7 +99,7 @@ func RequestDiscoverySiteBackfill(ctx context.Context, siteID uint) error {
 	if !site.CrawlAllowed || site.Status == DiscoverySiteStatusPaused || site.Status == DiscoverySiteStatusBlocked || site.Status == DiscoverySiteStatusNonBlog {
 		return ErrDiscoverySiteNotCrawlable
 	}
-	queue, available := jobqueue.Default()
+	queue, available := jobQueue()
 	if !available {
 		return ErrDiscoveryJobQueueUnavailable
 	}

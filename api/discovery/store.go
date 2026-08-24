@@ -4,7 +4,6 @@ import (
 	"DataArk/archive"
 	"DataArk/config"
 	"DataArk/discovery/articlerules"
-	"DataArk/jobqueue"
 	"bytes"
 	"context"
 	"encoding/xml"
@@ -158,7 +157,7 @@ func CreateDiscoverySource(name string, rawURL string, sourceType string, enable
 	}); err != nil {
 		return nil, err
 	}
-	if queue, available := jobqueue.Default(); available {
+	if queue, available := jobQueue(); available {
 		if err := queue.EnqueueFetchSource(context.Background(), source.ID); err != nil {
 			log.Printf("new discovery seed source %d fetch enqueue failed: %v", source.ID, err)
 		}
@@ -330,7 +329,7 @@ func StartDiscoveryScheduler() func() {
 		for {
 			select {
 			case <-ticker.C:
-				queue, available := jobqueue.Default()
+				queue, available := jobQueue()
 				if !available {
 					log.Printf("discovery scheduler skipped: shared job queue unavailable")
 					continue
@@ -437,7 +436,7 @@ func discoverCandidates(ctx context.Context, source *DiscoverySource) ([]discove
 			}
 			site.Status = DiscoverySiteStatusActive
 		}
-		queue, _ := jobqueue.Default()
+		queue, _ := jobQueue()
 		service := EndpointDiscoveryService{Clock: discoveryClock, Queue: queue}
 		discovered, err := service.DiscoverHomepage(ctx, site, *source, fetchResult.Body, fetchResult.FinalURLOr(source.URL))
 		if err != nil {

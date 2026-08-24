@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"DataArk/config"
-	"DataArk/jobqueue"
 	"context"
 	"encoding/json"
 	"errors"
@@ -42,7 +41,7 @@ type BackfillCoverage struct {
 }
 
 func RunBackfillSiteJob(ctx context.Context, siteID uint) error {
-	queue, _ := jobqueue.Default()
+	queue, _ := jobQueue()
 	_, err := RunBackfillSite(ctx, siteID, queue)
 	return err
 }

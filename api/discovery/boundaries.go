@@ -280,7 +280,7 @@ func looksLikeFeed(body []byte) bool {
 }
 
 // DiscoveryJobEnqueuer 只投递发现流水线作业：抓取、blogroll、回填、候选处理。
-// 评估与日报走 jobqueue.JobEnqueuer，避免与全量队列同名，也不把日报方法暴露给发现包。
+// 评估入队由装配层在抽取成功后调用 assessment.EnqueuePending；日报走 recommendation.DailyJobEnqueuer。
 type DiscoveryJobEnqueuer interface {
 	EnqueueFetchSource(context.Context, uint) error
 	EnqueueScanBlogroll(context.Context, uint) error

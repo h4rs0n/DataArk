@@ -42,23 +42,8 @@ func (queue recordingJobEnqueuer) enqueue(key string) error {
 	return nil
 }
 
-func (queue recordingJobEnqueuer) EnqueueFetchSource(_ context.Context, sourceID uint) error {
-	return queue.enqueue(fmt.Sprintf("fetch:%d", sourceID))
-}
-func (queue recordingJobEnqueuer) EnqueueScanBlogroll(_ context.Context, siteID uint) error {
-	return queue.enqueue(fmt.Sprintf("blogroll:%d", siteID))
-}
-func (queue recordingJobEnqueuer) EnqueueBackfillSite(_ context.Context, siteID uint) error {
-	return queue.enqueue(fmt.Sprintf("backfill:%d", siteID))
-}
-func (queue recordingJobEnqueuer) EnqueueProcessCandidate(_ context.Context, candidateID uint, contentVersion string) error {
-	return queue.enqueue(fmt.Sprintf("candidate:%d:%s", candidateID, contentVersion))
-}
 func (queue recordingJobEnqueuer) EnqueueAssessArticle(_ context.Context, candidateID uint, contentVersion string) error {
 	return queue.enqueue(fmt.Sprintf("assess:%d:%s", candidateID, contentVersion))
-}
-func (queue recordingJobEnqueuer) EnqueueGenerateDaily(_ context.Context, userID uint, localDate string) error {
-	return queue.enqueue(fmt.Sprintf("daily:%d:%s", userID, localDate))
 }
 
 type failingAssessmentQueue struct {

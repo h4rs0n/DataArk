@@ -10,6 +10,11 @@ import (
 
 const RecommendationGenerateDailyJobKind = jobqueue.GenerateDailyJobKind
 
+// DailyJobEnqueuer 只投递日报作业，避免推荐恢复函数依赖全量 jobqueue.JobEnqueuer。
+type DailyJobEnqueuer interface {
+	EnqueueGenerateDaily(context.Context, uint, string) error
+}
+
 func RunGenerateDailyRecommendationJob(ctx context.Context, userID uint, localDate string) error {
 	_, err := GenerateDailyRecommendationsWithReranker(ctx, userID, localDate, ConfiguredRecommendationReranker())
 	return err
@@ -40,7 +45,7 @@ func EnqueueDailyRecommendation(ctx context.Context, userID uint, date string) (
 // RecoverDueJobs enqueues local dates that should already have a daily digest.
 // Each user is considered independently so one enqueue failure does not starve
 // the remaining users.
-func RecoverDueJobs(ctx context.Context, queue jobqueue.JobEnqueuer, now time.Time) error {
+func RecoverDueJobs(ctx context.Context, queue DailyJobEnqueuer, now time.Time) error {
 	if db == nil || queue == nil {
 		return nil
 	}

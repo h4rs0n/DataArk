@@ -32,7 +32,14 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 			return ignoreBlacklisted(discovery.RunBackfillSiteJob(ctx, siteID))
 		},
 		ProcessCandidate: func(ctx context.Context, candidateID uint, contentVersion string) error {
-			return ignoreBlacklisted(discovery.ProcessCandidate(ctx, candidateID, contentVersion))
+			if err := ignoreBlacklisted(discovery.ProcessCandidate(ctx, candidateID, contentVersion)); err != nil {
+				return err
+			}
+			queue, ok := jobqueue.Default()
+			if !ok {
+				return nil
+			}
+			return ignoreBlacklisted(assessment.EnqueuePending(ctx, queue, candidateID))
 		},
 		AssessArticle: func(ctx context.Context, candidateID uint, contentVersion string) error {
 			return ignoreBlacklisted(assessment.AssessCandidate(ctx, candidateID, assessment.ConfiguredArticleAssessor()))
@@ -40,6 +47,7 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 		GenerateDaily: recommendation.RunGenerateDailyRecommendationJob,
 	}
 	recover := func(ctx context.Context, queue jobqueue.JobEnqueuer) error {
+		discovery.SetJobQueue(queue)
 		now := time.Now()
 		return errors.Join(
 			discovery.RecoverDueJobs(ctx, queue, now),
@@ -47,5 +55,16 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 			recommendation.RecoverDueJobs(ctx, queue, now),
 		)
 	}
-	return jobqueue.Start(ctx, database.DB(), handlers, recover)
+	stop, err := jobqueue.Start(ctx, database.DB(), handlers, recover)
+	if err != nil {
+		discovery.SetJobQueue(nil)
+		return nil, err
+	}
+	if queue, ok := jobqueue.Default(); ok {
+		discovery.SetJobQueue(queue)
+	}
+	return func() {
+		discovery.SetJobQueue(nil)
+		stop()
+	}, nil
 }

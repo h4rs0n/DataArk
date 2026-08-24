@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"DataArk/jobqueue"
 	"context"
 	"errors"
 	"fmt"
@@ -20,7 +19,7 @@ type BlogrollScanResult struct {
 }
 
 func RunScanBlogrollJob(ctx context.Context, siteID uint) error {
-	queue, _ := jobqueue.Default()
+	queue, _ := jobQueue()
 	_, err := ScanBlogroll(ctx, siteID, queue)
 	return err
 }
