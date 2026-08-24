@@ -16,6 +16,7 @@ import (
 
 const (
 	ChatMaxTokens         = 32768
+	ChatRerankMaxTokens   = 2048 // 只给日报重排留补全预算，避免 max_tokens 占满整段上下文。
 	ChatTemperature       = 0.7
 	ChatTopP              = 0.80
 	ChatTopK              = 20
@@ -59,6 +60,7 @@ type ChatOptions struct {
 	EvidenceTruncated      bool
 	StrictOutput           bool
 	ValidateOutput         func() error
+	MaxTokens              int // 覆盖默认补全上限；0 表示使用 ChatMaxTokens。
 }
 
 type chatCompletionResponse struct {
@@ -112,6 +114,14 @@ func (client Client) Embed(ctx context.Context, texts []string) ([][]float32, er
 	return vectors, nil
 }
 
+// chatCompletionMaxTokens 允许 rerank 等短输出阶段覆盖默认 32k 补全上限。
+func chatCompletionMaxTokens(options ChatOptions) int {
+	if options.MaxTokens > 0 {
+		return options.MaxTokens
+	}
+	return ChatMaxTokens
+}
+
 // ChatJSON 调用 /chat/completions 并把 content 解成 JSON。失败时仍写 llm_call。
 func (client Client) ChatJSON(ctx context.Context, messages []map[string]string, output interface{}, options ChatOptions) (content string, callErr error) {
 	startedAt := time.Now()
@@ -127,7 +137,7 @@ func (client Client) ChatJSON(ctx context.Context, messages []map[string]string,
 		"model":              model,
 		"messages":           messages,
 		"temperature":        ChatTemperature,
-		"max_tokens":         ChatMaxTokens,
+		"max_tokens":         chatCompletionMaxTokens(options),
 		"top_p":              ChatTopP,
 		"top_k":              ChatTopK,
 		"min_p":              ChatMinP,

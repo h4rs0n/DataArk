@@ -15,8 +15,10 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 	if len(candidates) == 0 {
 		return []recommendationCandidateScore{}, "", "", ""
 	}
+	// 送模型前先截到 rerank 上限，避免把整池（常为 300 篇）打进有限上下文。
+	candidates = trimRecommendationCandidates(candidates, requestedCount)
 	if reranker == nil {
-		return trimRecommendationCandidates(candidates, requestedCount), "", "", ""
+		return candidates, "", "", ""
 	}
 	input := RerankInput{
 		UserID:          userID,

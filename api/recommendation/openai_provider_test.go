@@ -169,7 +169,7 @@ func TestOpenAICompatibleProviderRerank(t *testing.T) {
 	if len(client.paths) != 1 || client.paths[0] != "/v1/chat/completions" {
 		t.Fatalf("paths = %#v", client.paths)
 	}
-	assertChatSampling(t, client.payloads[0])
+	assertChatSamplingWithMaxTokens(t, client.payloads[0], llmChatRerankMaxTokens)
 	thinking, ok := client.payloads[0]["thinking"].(map[string]interface{})
 	if !ok || thinking["type"] != "disabled" {
 		t.Fatalf("thinking = %#v", client.payloads[0]["thinking"])
@@ -568,6 +568,11 @@ func requireMap(t *testing.T, value interface{}) map[string]interface{} {
 
 func assertChatSampling(t *testing.T, payload map[string]interface{}) {
 	t.Helper()
+	assertChatSamplingWithMaxTokens(t, payload, llmChatMaxTokens)
+}
+
+func assertChatSamplingWithMaxTokens(t *testing.T, payload map[string]interface{}, maxTokens int) {
+	t.Helper()
 	want := map[string]interface{}{
 		"temperature":        llmChatTemperature,
 		"top_p":              llmChatTopP,
@@ -575,7 +580,7 @@ func assertChatSampling(t *testing.T, payload map[string]interface{}) {
 		"min_p":              llmChatMinP,
 		"presence_penalty":   llmChatPresencePenalty,
 		"repetition_penalty": llmChatRepetitionPenalty,
-		"max_tokens":         float64(llmChatMaxTokens),
+		"max_tokens":         float64(maxTokens),
 	}
 	for field, expected := range want {
 		if payload[field] != expected {

@@ -12,6 +12,7 @@ import (
 
 const (
 	llmChatMaxTokens                    = llm.ChatMaxTokens
+	llmChatRerankMaxTokens              = llm.ChatRerankMaxTokens
 	llmChatTemperature                  = llm.ChatTemperature
 	llmChatTopP                         = llm.ChatTopP
 	llmChatTopK                         = llm.ChatTopK
@@ -56,6 +57,7 @@ func (provider OpenAICompatibleProvider) Rerank(ctx context.Context, input Reran
 	}, &result, llm.ChatOptions{
 		Stage: llm.StageRecommendationRerank, UserID: input.UserID,
 		ResponseFormat: map[string]string{"type": "json_object"},
+		MaxTokens:      llmChatRerankMaxTokens,
 	}); err != nil {
 		return RerankResult{}, err
 	}
