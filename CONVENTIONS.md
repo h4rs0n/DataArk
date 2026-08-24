@@ -6,6 +6,10 @@
 
 ## Git
 
+Whether to commit during a session is defined in `AGENTS.md`: do not commit unless the user asked.
+
+PR shape (apply only when the user asked to open a PR; squash then, not after each local change):
+
 - Each PR contains exactly **1 commit** — squash before submitting
 - Rebase onto latest target branch before PR
 - No merge commits

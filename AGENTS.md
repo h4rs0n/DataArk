@@ -58,6 +58,8 @@ Format Go with `gofmt`. Package names are lower-case; imports use the `DataArk/.
 
 ## Verification (match the change radius)
 
+Stop when the matching row's **Minimum proof** is done. Do not escalate to Docker, Postgres, or MCP "to be safer." Subagents without browser MCP should run the commands that row allows and say they did not do browser verification.
+
 Do not rebuild Docker for a Go unit-test fix. Do not treat `npm test` greps as a substitute for clicking a flow you actually changed.
 
 | Change radius | Minimum proof | Do not |
@@ -72,9 +74,15 @@ If Compose is already running in a terminal, do not start a second foreground `u
 
 ## Git
 
-Commit only when the user asks. Message style: `Add:`, `Fix:`, `Change:`, or `Repo:` plus an imperative summary. Do not commit `passwd.txt`, `docker/.env`, archives, volumes, Meilisearch keys, or database passwords.
+This table is the git policy. If `PLANS.md` or `CONVENTIONS.md` disagrees, follow this file.
 
-PRs: exactly one squashed commit, rebase onto the target branch, no merge commits (`CONVENTIONS.md`).
+| Situation | Do | Do not |
+| --- | --- | --- |
+| Coding session / implementing an ExecPlan | Use the plan's Progress section as the checkpoint | `git commit` unless the user asked |
+| User asked to commit | One logical commit; message `Add:`, `Fix:`, `Change:`, or `Repo:` plus an imperative summary | `passwd.txt`, `docker/.env`, archives, volumes, Meilisearch keys, database passwords |
+| User asked to open a PR | Squash to exactly one commit, rebase onto the target branch, no merge commits | Leave session WIP commits on the PR |
+
+Squash happens when opening a PR, not after each local change. PR shape details also live in `CONVENTIONS.md`.
 
 ## Configuration and secrets
 
@@ -86,4 +94,4 @@ Do not commit real credentials. `passwd.txt` at the repo root is a local admin-p
 
 Follow `CONVENTIONS.md` for delegation: worker outputs are untrusted; verify with an independent command; at most one delegation retry, then do the work directly.
 
-For large new work, an ExecPlan under `docs/exec-plans/` following `PLANS.md` is optional when the user wants a living spec. **Do not execute finished historical plans as if they were current.** Plans that name `api/common/`, sitemap owner gap-fill, or `make build` are outdated. Current recommendation-center split: discovery crawls automatically, LLM assessment is a paused manual queue, recommendation reads ready eligible inventory. Ops detail: `docs/operations/recommendation-v3-runbook.md` and `docs/operations/article-assessment-v3-runbook.md`.
+Default to a short design note or a Cursor plan. Write a new ExecPlan under `docs/exec-plans/` following `PLANS.md` only when the user asks for a living spec. Checkpoints go in that plan's Progress section, not git (see Git above). **Do not execute finished historical plans as if they were current.** Plans that name `api/common/`, sitemap owner gap-fill, or `make build` are outdated. Current recommendation-center split: discovery crawls automatically, LLM assessment is a paused manual queue, recommendation reads ready eligible inventory. Ops detail: `docs/operations/recommendation-v3-runbook.md` and `docs/operations/article-assessment-v3-runbook.md`.
