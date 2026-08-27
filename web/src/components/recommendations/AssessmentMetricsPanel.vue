@@ -121,6 +121,8 @@ const queueStateLabel = computed(() => ({
 
 const remainingQueueJobs = computed(() => queue.counts.pending + queue.counts.running)
 
+// articles/hour：近 24 小时单作业平均墙钟耗时反推，再乘评估并发。
+
 // decode 吞吐：近 24 小时各次 chat 优先用 llama.cpp timings.predicted_*；无 timings 则回退 completion / 墙钟。
 const tokenRateLabel = computed(() => formatTokenRate(metrics.tokensPerSecond))
 

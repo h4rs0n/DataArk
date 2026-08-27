@@ -1,6 +1,7 @@
 package assessment
 
 import (
+	"DataArk/config"
 	"DataArk/discovery"
 	"DataArk/jobqueue"
 	"DataArk/llm"
@@ -69,11 +70,6 @@ func GetMetrics(now time.Time) (*Metrics, error) {
 	if err := assignCompleteJobWindow(metrics, since); err != nil {
 		return nil, err
 	}
-	var articleIDs []uint
-	if err := db.Model(&LLMCall{}).Where("stage = ? AND created_at >= ? AND status = ? AND candidate_id > 0", llm.StageArticleAssessment, since, "success").Distinct("candidate_id").Pluck("candidate_id", &articleIDs).Error; err != nil {
-		return nil, err
-	}
-	metrics.ArticlesPerHour = float64(len(articleIDs)) / 24
 	var totals MetricsTokens
 	if err := db.Model(&LLMCall{}).Where("stage = ? AND created_at >= ?", llm.StageArticleAssessment, since).
 		Select("COALESCE(SUM(prompt_tokens),0) as prompt, COALESCE(SUM(completion_tokens),0) as completion, COALESCE(SUM(reasoning_tokens),0) as reasoning, COALESCE(SUM(cached_tokens),0) as cached, COALESCE(SUM(total_tokens),0) as total").
@@ -160,6 +156,8 @@ func assignJobThroughput(metrics *Metrics, since time.Time) error {
 	}
 	if jobCount > 0 {
 		metrics.AvgJobDurationMs = jobDurationMS / jobCount
+		// articles/hour 由均耗时反推：并发 × 3600 / 单作业秒数，与队列在跑时的产能一致。
+		metrics.ArticlesPerHour = float64(assessmentJobConcurrency()) * 3_600_000 / float64(metrics.AvgJobDurationMs)
 	}
 
 	var calls []decodeThroughputRow
@@ -204,4 +202,12 @@ func percentileDuration(values []int64, percentile int) int64 {
 		n = len(sorted)
 	}
 	return sorted[n-1]
+}
+
+// assessmentJobConcurrency 与评估队列工人数、评估槽位默认值一致。
+func assessmentJobConcurrency() int {
+	if config.ARTICLEASSESSMENTCONCURRENCY < 1 {
+		return 2
+	}
+	return config.ARTICLEASSESSMENTCONCURRENCY
 }

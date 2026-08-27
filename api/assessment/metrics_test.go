@@ -1,6 +1,7 @@
 package assessment
 
 import (
+	"DataArk/config"
 	"DataArk/discovery"
 	"DataArk/llm"
 	"DataArk/observability"
@@ -10,6 +11,7 @@ import (
 
 func TestGetMetricsAggregatesQueueAndSafeTokenRows(t *testing.T) {
 	setupAssessmentDB(t)
+	restoreAssessmentConcurrency(t, 2)
 	now := time.Date(2026, 8, 18, 18, 0, 0, 0, time.UTC)
 	pending := discovery.DiscoveryCandidate{
 		SourceID: 1, SourceName: "Feed", URL: "https://metrics.example/pending",
@@ -58,10 +60,15 @@ func TestGetMetricsAggregatesQueueAndSafeTokenRows(t *testing.T) {
 	if metrics.AvgJobDurationMs != 200 {
 		t.Fatalf("avgJobDurationMs = %d", metrics.AvgJobDurationMs)
 	}
+	// 均耗时反推：2 并发 × 3600s / 0.2s = 36000
+	if metrics.ArticlesPerHour != 36000 {
+		t.Fatalf("articlesPerHour = %v", metrics.ArticlesPerHour)
+	}
 }
 
 func TestGetMetricsPrefersLlamaCppDecodeTimings(t *testing.T) {
 	setupAssessmentDB(t)
+	restoreAssessmentConcurrency(t, 2)
 	now := time.Date(2026, 8, 18, 18, 0, 0, 0, time.UTC)
 	rows := []LLMCall{
 		{CandidateID: 11, Stage: llm.StageArticleAssessment, Status: "success", Attempt: 1, DurationMS: 9000, CompletionTokens: 10, PredictedTokens: 100, PredictedMS: 2000, CreatedAt: now.Add(-time.Hour)},
@@ -83,6 +90,9 @@ func TestGetMetricsPrefersLlamaCppDecodeTimings(t *testing.T) {
 	if metrics.AvgJobDurationMs != 5000 {
 		t.Fatalf("avgJobDurationMs = %d", metrics.AvgJobDurationMs)
 	}
+	if metrics.ArticlesPerHour != 1440 {
+		t.Fatalf("articlesPerHour = %v", metrics.ArticlesPerHour)
+	}
 }
 
 func TestPersistLLMCallEventWritesDecodeTimings(t *testing.T) {
@@ -101,4 +111,11 @@ func TestPersistLLMCallEventWritesDecodeTimings(t *testing.T) {
 	if row.PredictedTokens != 100 || row.PredictedMS != 2000 || row.CompletionTokens != 10 {
 		t.Fatalf("persisted llm call = %#v", row)
 	}
+}
+
+func restoreAssessmentConcurrency(t *testing.T, concurrency int) {
+	t.Helper()
+	previous := config.ARTICLEASSESSMENTCONCURRENCY
+	config.ARTICLEASSESSMENTCONCURRENCY = concurrency
+	t.Cleanup(func() { config.ARTICLEASSESSMENTCONCURRENCY = previous })
 }
