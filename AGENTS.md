@@ -27,7 +27,7 @@ Backend (`api/`, Go module `DataArk`, Go 1.26):
 
 Frontend (`web/src/`): `views/` (`*View.vue`), `components/` (recommendation center panels live in `components/recommendations/`), `api/` (shared `client.ts` + domain helpers), `stores/` (Pinia auth store only; page data stays in views), `router/`, `assets/`. Node `>=24.15 <25`. The npm package name is still `web2`.
 
-Ops: `docker/` (Compose + Dockerfile). Docs: `docs/operations/` runbooks, `docs/references/frontend-pitfalls.md` (Arco API traps), `docs/exec-plans/` (in-progress living plans only; finished plans live in `docs/exec-plans/done/`). `docs/design-docs/dbDesign.md` is stale (still names `api/common/db.go`).
+Ops: `docker/` (Compose + Dockerfile). Docs: `docs/operations/` runbooks, `docs/references/frontend-pitfalls.md` (Arco API traps), `docs/exec-plans/` (in-progress living plans only; finished plans live in `docs/exec-plans/done/`). `docs/design-docs/dbDesign.md` describes the live Postgres schema (Goose `000001`–`000030` plus River); production DDL is still only the numbered migrations.
 
 ## Build and development commands
 
