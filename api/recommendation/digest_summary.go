@@ -119,11 +119,32 @@ func topCountedValues(counts map[string]int, limit int) []string {
 	return top
 }
 
-// GetRecommendationDaySummary 返回指定日期日报摘要。
-func GetRecommendationDaySummary(ctx context.Context, userID uint, date string) (*RecommendationDaySummary, error) {
-	return GetRecommendationDaySummaryWithGenerator(ctx, userID, date, nil)
+// GetRecommendationDaySummary 只读已落库的日报摘要，不在 GET 路径调用 LLM。
+func GetRecommendationDaySummary(_ context.Context, userID uint, date string) (*RecommendationDaySummary, error) {
+	return readRecommendationDaySummary(userID, date)
 }
 
+// readRecommendationDaySummary 读取缓存；缺失时返回「生成中」，由发布/补文作业预生成。
+func readRecommendationDaySummary(userID uint, date string) (*RecommendationDaySummary, error) {
+	snapshot, err := GetRecommendationDaySnapshot(userID, date)
+	if err != nil {
+		return nil, err
+	}
+	day := snapshot.Day
+	date = day.RecommendationDate
+	if day.Status != RecommendationDayStatusPublished && day.Status != RecommendationDayStatusSupplemented {
+		return &RecommendationDaySummary{Date: date, Highlights: []string{}, Topics: []string{}, Reason: "该日推荐尚未生成"}, nil
+	}
+	if len(snapshot.Items) == 0 {
+		return &RecommendationDaySummary{Date: date, Highlights: []string{}, Topics: []string{}, Reason: "该日推荐暂无文章"}, nil
+	}
+	if strings.TrimSpace(day.SummaryText) != "" && day.SummaryActualCount == day.ActualCount {
+		return daySummaryFromDay(day), nil
+	}
+	return &RecommendationDaySummary{Date: date, Highlights: []string{}, Topics: []string{}, Reason: "日报总结生成中"}, nil
+}
+
+// GetRecommendationDaySummaryWithGenerator 生成并落库摘要，供后台作业与测试调用。
 func GetRecommendationDaySummaryWithGenerator(ctx context.Context, userID uint, date string, generator DigestSummaryGenerator) (*RecommendationDaySummary, error) {
 	snapshot, err := GetRecommendationDaySnapshot(userID, date)
 	if err != nil {

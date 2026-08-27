@@ -44,7 +44,8 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 		AssessArticle: func(ctx context.Context, candidateID uint, contentVersion string) error {
 			return ignoreBlacklisted(assessment.AssessCandidate(ctx, candidateID, assessment.ConfiguredArticleAssessor()))
 		},
-		GenerateDaily: recommendation.RunGenerateDailyRecommendationJob,
+		GenerateDaily:         recommendation.RunGenerateDailyRecommendationJob,
+		GenerateDigestSummary: recommendation.RunGenerateDigestSummaryJob,
 	}
 	recover := func(ctx context.Context, queue jobqueue.JobEnqueuer) error {
 		discovery.SetJobQueue(queue)

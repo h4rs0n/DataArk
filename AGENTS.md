@@ -16,8 +16,8 @@ Backend (`api/`, Go module `DataArk`, Go 1.26):
 - `api/assessment/` — LLM article assessment adapter, immutable assessment rows, state machine, manual queue, backfill/rollback, metrics. Chat LLM I/O is `ChatAssessmentInput`/`ChatAssessmentResult`; the domain assessor uses `ArticleAssessmentInput`/`ArticleAssessmentResult`. Do not alias those names in other packages. Queue surface is `ArticleJobEnqueuer` (`EnqueueAssessArticle` only).
 - `api/assessmenteval/` — owner gold-label workflow
 - `api/articlevalue/` — shared scoring/evidence helpers
-- `api/recommendation/` — daily digest (`digest.go`, `day.go`, `selection_v3.go`), settings, feedback, profile, rerank, discovery feed, inventory (`inventory.go`), item context (`item_context.go`), metrics (`metrics.go`). Candidate topics/summary come from assessment write-back, not a separate enrichment hop. Do not revive `_m3`–`_m17` filename suffixes. Daily enqueue surface is `DailyJobEnqueuer`.
-- `api/jobqueue/` — River (Postgres) and in-memory queue. The full `JobEnqueuer` lives here as the union of the three domain enqueue interfaces. Discovery does not import this package.
+- `api/recommendation/` — daily digest (`digest.go`, `day.go`, `selection_v3.go`), settings, feedback, profile, rerank, discovery feed, inventory (`inventory.go`), item context (`item_context.go`), metrics (`metrics.go`). Candidate topics/summary come from assessment write-back, not a separate enrichment hop. Do not revive `_m3`–`_m17` filename suffixes. Daily enqueue surface is `DailyJobEnqueuer` (`EnqueueGenerateDaily` plus `EnqueueGenerateDigestSummary`). Digest summary is pre-generated after publish/supplement; GET `/recommendations/today/summary` only reads the cache.
+- `api/jobqueue/` — River (Postgres) and in-memory queue. The full `JobEnqueuer` lives here as the union of the three domain enqueue interfaces. Discovery does not import this package. Digest summary jobs are `recommendation_generate_digest_summary` on the default queue.
 - `api/search/` — Meilisearch index
 - `api/backup/` — backup/restore
 - `api/database/` — GORM connection; Goose runner

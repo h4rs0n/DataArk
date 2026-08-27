@@ -21,12 +21,13 @@ import (
 )
 
 const (
-	FetchSourceJobKind      = "discovery_fetch_source"
-	ScanBlogrollJobKind     = "discovery_scan_blogroll"
-	BackfillSiteJobKind     = "discovery_backfill_site"
-	ProcessCandidateJobKind = "discovery_process_candidate"
-	AssessArticleJobKind    = "assessment_assess_article"
-	GenerateDailyJobKind    = "recommendation_generate_daily"
+	FetchSourceJobKind           = "discovery_fetch_source"
+	ScanBlogrollJobKind          = "discovery_scan_blogroll"
+	BackfillSiteJobKind          = "discovery_backfill_site"
+	ProcessCandidateJobKind      = "discovery_process_candidate"
+	AssessArticleJobKind         = "assessment_assess_article"
+	GenerateDailyJobKind         = "recommendation_generate_daily"
+	GenerateDigestSummaryJobKind = "recommendation_generate_digest_summary"
 )
 
 var ErrHandlerUnavailable = errors.New("job handler is not registered")
@@ -38,15 +39,17 @@ type JobEnqueuer interface {
 	EnqueueProcessCandidate(context.Context, uint, string) error
 	EnqueueAssessArticle(context.Context, uint, string) error
 	EnqueueGenerateDaily(context.Context, uint, string) error
+	EnqueueGenerateDigestSummary(context.Context, uint, string) error
 }
 
 type Handlers struct {
-	FetchSource      func(context.Context, uint) error
-	ScanBlogroll     func(context.Context, uint) error
-	BackfillSite     func(context.Context, uint) error
-	ProcessCandidate func(context.Context, uint, string) error
-	AssessArticle    func(context.Context, uint, string) error
-	GenerateDaily    func(context.Context, uint, string) error
+	FetchSource           func(context.Context, uint) error
+	ScanBlogroll          func(context.Context, uint) error
+	BackfillSite          func(context.Context, uint) error
+	ProcessCandidate      func(context.Context, uint, string) error
+	AssessArticle         func(context.Context, uint, string) error
+	GenerateDaily         func(context.Context, uint, string) error
+	GenerateDigestSummary func(context.Context, uint, string) error
 }
 
 type RecoveryFunc func(context.Context, JobEnqueuer) error
@@ -97,6 +100,19 @@ func (GenerateDailyArgs) Kind() string { return GenerateDailyJobKind }
 func (GenerateDailyArgs) InsertOpts() river.InsertOpts {
 	opts := uniqueByArgsOpts()
 	opts.UniqueOpts.ByPeriod = 24 * time.Hour
+	return opts
+}
+
+// GenerateDigestSummaryArgs 按用户本地日期预生成日报摘要；补文后需能再次入队，因此不加 24h 周期唯一。
+type GenerateDigestSummaryArgs struct {
+	UserID    uint   `json:"user_id"`
+	LocalDate string `json:"local_date"`
+}
+
+func (GenerateDigestSummaryArgs) Kind() string { return GenerateDigestSummaryJobKind }
+func (GenerateDigestSummaryArgs) InsertOpts() river.InsertOpts {
+	opts := uniqueByArgsOpts()
+	opts.MaxAttempts = 1
 	return opts
 }
 
@@ -279,6 +295,11 @@ func (queue *riverQueue) EnqueueAssessArticle(ctx context.Context, candidateID u
 
 func (queue *riverQueue) EnqueueGenerateDaily(ctx context.Context, userID uint, localDate string) error {
 	_, err := queue.client.Insert(ctx, GenerateDailyArgs{UserID: userID, LocalDate: localDate}, nil)
+	return err
+}
+
+func (queue *riverQueue) EnqueueGenerateDigestSummary(ctx context.Context, userID uint, localDate string) error {
+	_, err := queue.client.Insert(ctx, GenerateDigestSummaryArgs{UserID: userID, LocalDate: localDate}, nil)
 	return err
 }
 
@@ -630,10 +651,10 @@ type assessArticleWorker struct {
 
 // Timeout 评估作业跟随 LLM_TIMEOUT，避免模型返回前被 River 默认一分钟限制取消。
 func (worker *assessArticleWorker) Timeout(*river.Job[AssessArticleArgs]) time.Duration {
-	return assessArticleJobTimeout()
+	return llmJobTimeout()
 }
 
-func assessArticleJobTimeout() time.Duration {
+func llmJobTimeout() time.Duration {
 	timeout, err := time.ParseDuration(strings.TrimSpace(config.LLMTIMEOUT))
 	if err != nil || timeout <= 0 {
 		return 30 * time.Second
@@ -664,6 +685,25 @@ func (worker *generateDailyWorker) Work(ctx context.Context, job *river.Job[Gene
 	return err
 }
 
+type generateDigestSummaryWorker struct {
+	river.WorkerDefaults[GenerateDigestSummaryArgs]
+	handler func(context.Context, uint, string) error
+}
+
+// Timeout 摘要作业跟随 LLM_TIMEOUT，避免模型返回前被 River 默认一分钟限制取消。
+func (worker *generateDigestSummaryWorker) Timeout(*river.Job[GenerateDigestSummaryArgs]) time.Duration {
+	return llmJobTimeout()
+}
+
+func (worker *generateDigestSummaryWorker) Work(ctx context.Context, job *river.Job[GenerateDigestSummaryArgs]) error {
+	if worker.handler == nil {
+		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, GenerateDigestSummaryJobKind)
+	}
+	err := worker.handler(ctx, job.Args.UserID, job.Args.LocalDate)
+	logWorkerEvent("generate_digest_summary", fmt.Sprint(job.ID), observability.Event{UserID: job.Args.UserID, LocalDate: job.Args.LocalDate}, err)
+	return err
+}
+
 func logWorkerEvent(name string, jobID string, event observability.Event, err error) {
 	observability.Log(workerEvent(name, jobID, event, err))
 }
@@ -684,4 +724,5 @@ func registerWorkers(workers *river.Workers, handlers Handlers) {
 	river.AddWorker(workers, &processCandidateWorker{handler: handlers.ProcessCandidate})
 	river.AddWorker(workers, &assessArticleWorker{handler: handlers.AssessArticle})
 	river.AddWorker(workers, &generateDailyWorker{handler: handlers.GenerateDaily})
+	river.AddWorker(workers, &generateDigestSummaryWorker{handler: handlers.GenerateDigestSummary})
 }

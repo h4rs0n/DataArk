@@ -109,7 +109,7 @@ import {
 import { IconLeft, IconRefresh, IconRight } from '@arco-design/web-vue/es/icon'
 import { Message } from '@arco-design/web-vue'
 import zhCN from '@arco-design/web-vue/es/locale/lang/zh-cn'
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 
 const props = defineProps<{
   isOwner: boolean
@@ -140,6 +140,9 @@ const digestLoading = ref(false)
 const digestAvailableDates = ref<Set<string>>(new Set())
 const digestCalendarReady = ref(false)
 let digestLoadToken = 0
+let digestSummaryPollTimer = 0
+const digestSummaryPollMs = 2000
+const digestSummaryPollMaxMs = 30000
 
 const isViewingToday = computed(() => digestDate.value === todayDate.value)
 
@@ -205,23 +208,60 @@ async function loadSelectedDigest(refreshToday = false) {
     digestSummary.value = null
     digestSummaryError.value = ''
     await applyDigestSnapshot(snapshot)
-    await loadDigestSummary(digestDate.value, token)
   } finally {
     if (token === digestLoadToken) digestLoading.value = false
   }
+  if (token === digestLoadToken) void loadDigestSummary(digestDate.value, token)
 }
 
 async function reloadSelectedDigest() {
   await loadSelectedDigest(true)
 }
 
+function stopDigestSummaryPoll() {
+  if (digestSummaryPollTimer) {
+    window.clearTimeout(digestSummaryPollTimer)
+    digestSummaryPollTimer = 0
+  }
+}
+
+// shouldPollDigestSummary 已发布但仍无缓存摘要时继续轮询后台作业。
+function shouldPollDigestSummary(summary: TodayDigestSummary | null) {
+  const day = digestSnapshot.value.day
+  if (day.status !== 'published' && day.status !== 'supplemented') return false
+  if (!digestSnapshot.value.items.length) return false
+  return !summary?.available
+}
+
+// scheduleDigestSummaryPoll 每 2 秒再拉一次摘要，最多 30 秒或切日期即停。
+function scheduleDigestSummaryPoll(date: string, token: number, startedAt: number) {
+  stopDigestSummaryPoll()
+  digestSummaryPollTimer = window.setTimeout(async () => {
+    if (token !== digestLoadToken) return
+    if (Date.now() - startedAt >= digestSummaryPollMaxMs) return
+    try {
+      const summary = await requestJSON<TodayDigestSummary>(digestSummaryURL(date))
+      if (token !== digestLoadToken) return
+      digestSummary.value = summary
+      digestSummaryError.value = ''
+      if (shouldPollDigestSummary(summary)) scheduleDigestSummaryPoll(date, token, startedAt)
+    } catch {
+      if (token === digestLoadToken && shouldPollDigestSummary(digestSummary.value)) {
+        scheduleDigestSummaryPoll(date, token, startedAt)
+      }
+    }
+  }, digestSummaryPollMs)
+}
+
 async function loadDigestSummary(date = digestDate.value, token = digestLoadToken) {
+  stopDigestSummaryPoll()
   digestSummaryLoading.value = true
   digestSummaryError.value = ''
   try {
     const summary = await requestJSON<TodayDigestSummary>(digestSummaryURL(date))
     if (token !== digestLoadToken) return
     digestSummary.value = summary
+    if (shouldPollDigestSummary(summary)) scheduleDigestSummaryPoll(date, token, Date.now())
   } catch (error) {
     if (token !== digestLoadToken) return
     digestSummary.value = null
@@ -292,6 +332,10 @@ async function supplementDaily(date: string) {
     generating.value = false
   }
 }
+
+onUnmounted(() => {
+  stopDigestSummaryPoll()
+})
 
 defineExpose({
   reload: async () => {

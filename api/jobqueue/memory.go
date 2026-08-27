@@ -146,6 +146,13 @@ func (queue *MemoryQueue) EnqueueGenerateDaily(ctx context.Context, userID uint,
 	return queue.handlers.GenerateDaily(ctx, userID, localDate)
 }
 
+func (queue *MemoryQueue) EnqueueGenerateDigestSummary(ctx context.Context, userID uint, localDate string) error {
+	if queue.handlers.GenerateDigestSummary == nil {
+		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, GenerateDigestSummaryJobKind)
+	}
+	return queue.handlers.GenerateDigestSummary(ctx, userID, localDate)
+}
+
 func (queue *MemoryQueue) stage(kind, identity, targetType string, targetID uint, contentVersion string) error {
 	key := kind + ":" + identity
 	now := time.Now()

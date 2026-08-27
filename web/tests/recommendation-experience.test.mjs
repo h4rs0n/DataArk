@@ -50,6 +50,13 @@ test('frontend has no destructive daily regeneration interaction', () => {
   assert.match(digest, /admin\/recommendations\/supplement/)
 })
 
+test('digest summary loads after the article list and polls until ready', () => {
+  assert.match(digest, /if \(token === digestLoadToken\) void loadDigestSummary/)
+  assert.match(digest, /function scheduleDigestSummaryPoll/)
+  assert.match(digest, /digestSummaryPollMaxMs = 30000/)
+  assert.match(digest, /onUnmounted\(\(\) => \{\s*stopDigestSummaryPoll\(\)/s)
+})
+
 test('discovery UI lists manual subscriptions without sitemap gap fill', () => {
   assert.match(sources, /仅显示管理员主动设置的第一优先级来源/)
   assert.match(view, /title="发现"/)

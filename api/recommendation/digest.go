@@ -63,6 +63,7 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 		return nil, err
 	}
 	if existing.Day != nil && (existing.Day.Status == RecommendationDayStatusPublished || existing.Day.Status == RecommendationDayStatusSupplemented) {
+		enqueuePublishedDigestSummary(ctx, existing)
 		return existing, nil
 	}
 	profile, err := RebuildUserRecommendationProfile(userID)
@@ -107,7 +108,12 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 		return nil, err
 	}
 	observability.Log(observability.Event{Name: "recommendation_day_published", OccurredAt: now, UserID: userID, DayID: day.ID, LocalDate: date, Status: RecommendationDayStatusPublished, Count: len(items)})
-	return GetRecommendationDaySnapshot(userID, day.RecommendationDate)
+	snapshot, err := GetRecommendationDaySnapshot(userID, day.RecommendationDate)
+	if err != nil {
+		return nil, err
+	}
+	enqueuePublishedDigestSummary(ctx, snapshot)
+	return snapshot, nil
 }
 
 func buildRecommendationItems(dayID uint, userID uint, selected []recommendationCandidateScore, firstRank int, profileVersion uint, supplemental bool, now time.Time) []RecommendationItem {
@@ -219,7 +225,12 @@ func SupplementDailyRecommendationsWithReranker(ctx context.Context, userID uint
 	if len(items) > 0 {
 		observability.Log(observability.Event{Name: "recommendation_day_supplemented", OccurredAt: now, UserID: userID, DayID: day.ID, LocalDate: day.RecommendationDate, Status: RecommendationDayStatusSupplemented, Count: len(items)})
 	}
-	return GetRecommendationDaySnapshot(userID, day.RecommendationDate)
+	snapshot, err = GetRecommendationDaySnapshot(userID, day.RecommendationDate)
+	if err != nil {
+		return snapshot, err
+	}
+	enqueuePublishedDigestSummary(ctx, snapshot)
+	return snapshot, nil
 }
 
 func appendRecommendationSupplement(dayID uint, userID uint, requestedCount int, items []RecommendationItem, selection *recommendationSelectionReport, relaxations []string, rerankModel string, rerankPrompt string, degradationReason string, now time.Time) error {

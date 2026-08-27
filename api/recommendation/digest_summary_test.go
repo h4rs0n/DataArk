@@ -85,18 +85,28 @@ func TestDigestSummaryIsCachedPerDay(t *testing.T) {
 	if second.Overview != first.Overview || second.Model != first.Model {
 		t.Fatalf("cached summary changed: %#v", second)
 	}
+
+	read, err := GetRecommendationDaySummary(context.Background(), 901, "2026-06-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generator.calls != 1 {
+		t.Fatalf("GET read path called generator: %d", generator.calls)
+	}
+	if read.Overview != first.Overview || !read.Available {
+		t.Fatalf("read summary = %#v", read)
+	}
 }
 
 func TestDigestSummaryUnavailableBeforeGeneration(t *testing.T) {
 	setupSQLiteDB(t)
 	useRecommendationTestClock(t, time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC))
-	generator := &fakeDigestSummaryGenerator{}
-	summary, err := GetRecommendationDaySummaryWithGenerator(context.Background(), 902, "2026-06-01", generator)
+	summary, err := GetRecommendationDaySummary(context.Background(), 902, "2026-06-01")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Available || summary.Reason == "" || generator.calls != 0 {
-		t.Fatalf("summary = %#v calls = %d", summary, generator.calls)
+	if summary.Available || summary.Reason == "" {
+		t.Fatalf("summary = %#v", summary)
 	}
 	var count int64
 	if err := db.Model(&RecommendationDay{}).Where("summary_text <> ''").Count(&count).Error; err != nil {
@@ -104,6 +114,18 @@ func TestDigestSummaryUnavailableBeforeGeneration(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("summary persisted for missing day: %d", count)
+	}
+}
+
+func TestDigestSummaryGetDoesNotGenerate(t *testing.T) {
+	seedDigestSummaryDay(t, 906, 2)
+	generator := &fakeDigestSummaryGenerator{output: DigestSummaryOutput{Overview: "不应被 GET 触发。"}}
+	summary, err := GetRecommendationDaySummary(context.Background(), 906, "2026-06-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Available || summary.Reason != "日报总结生成中" || generator.calls != 0 {
+		t.Fatalf("summary = %#v calls = %d", summary, generator.calls)
 	}
 }
 
@@ -145,6 +167,13 @@ func TestDigestSummaryRegeneratesAfterSupplement(t *testing.T) {
 	if err := db.Model(&RecommendationDay{}).Where("id = ?", snapshot.Day.ID).
 		Update("actual_count", snapshot.Day.ActualCount+1).Error; err != nil {
 		t.Fatal(err)
+	}
+	read, err := GetRecommendationDaySummary(context.Background(), 904, "2026-06-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.Available || generator.calls != 1 {
+		t.Fatalf("GET regenerated after count change: %#v calls=%d", read, generator.calls)
 	}
 	if _, err := GetRecommendationDaySummaryWithGenerator(context.Background(), 904, "2026-06-01", generator); err != nil {
 		t.Fatal(err)

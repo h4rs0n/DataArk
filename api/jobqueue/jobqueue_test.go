@@ -61,6 +61,7 @@ func TestJobArgsUseStableIdentityAndUniqueOptions(t *testing.T) {
 		{ProcessCandidateJobKind, ProcessCandidateArgs{CandidateID: 4, ContentVersion: "2"}},
 		{AssessArticleJobKind, AssessArticleArgs{CandidateID: 6, ContentVersion: "2"}},
 		{GenerateDailyJobKind, GenerateDailyArgs{UserID: 5, LocalDate: "2026-07-13"}},
+		{GenerateDigestSummaryJobKind, GenerateDigestSummaryArgs{UserID: 5, LocalDate: "2026-07-13"}},
 	}
 	for _, testCase := range tests {
 		if testCase.args.Kind() != testCase.kind {
@@ -69,7 +70,7 @@ func TestJobArgsUseStableIdentityAndUniqueOptions(t *testing.T) {
 		if !testCase.args.InsertOpts().UniqueOpts.ByArgs {
 			t.Fatalf("%s must be unique by stable args", testCase.kind)
 		}
-		if testCase.kind == GenerateDailyJobKind || testCase.kind == AssessArticleJobKind {
+		if testCase.kind == GenerateDailyJobKind || testCase.kind == GenerateDigestSummaryJobKind || testCase.kind == AssessArticleJobKind {
 			if testCase.args.InsertOpts().Queue == DiscoveryQueueName {
 				t.Fatalf("%s must not use the automatic discovery crawl queue", testCase.kind)
 			}
@@ -78,6 +79,9 @@ func TestJobArgsUseStableIdentityAndUniqueOptions(t *testing.T) {
 		}
 		if testCase.kind == AssessArticleJobKind && testCase.args.InsertOpts().Queue != AssessmentQueueName {
 			t.Fatalf("assessment queue = %q, want %q", testCase.args.InsertOpts().Queue, AssessmentQueueName)
+		}
+		if testCase.kind == GenerateDigestSummaryJobKind && testCase.args.InsertOpts().UniqueOpts.ByPeriod != 0 {
+			t.Fatalf("%s must not use a 24h unique period so supplement can re-enqueue", testCase.kind)
 		}
 		if testCase.kind != GenerateDailyJobKind && testCase.args.InsertOpts().MaxAttempts != 1 {
 			t.Fatalf("%s max attempts = %d, want 1 so domain backoff remains authoritative", testCase.kind, testCase.args.InsertOpts().MaxAttempts)
@@ -88,20 +92,24 @@ func TestJobArgsUseStableIdentityAndUniqueOptions(t *testing.T) {
 func TestAssessArticleWorkerTimeoutFollowsLLMTimeout(t *testing.T) {
 	original := config.LLMTIMEOUT
 	t.Cleanup(func() { config.LLMTIMEOUT = original })
-	worker := assessArticleWorker{}
+	assessmentWorker := assessArticleWorker{}
+	summaryWorker := generateDigestSummaryWorker{}
 
 	config.LLMTIMEOUT = "300s"
-	if got := worker.Timeout(nil); got != 300*time.Second {
+	if got := assessmentWorker.Timeout(nil); got != 300*time.Second {
 		t.Fatalf("timeout = %s, want 300s from LLM_TIMEOUT", got)
+	}
+	if got := summaryWorker.Timeout(nil); got != 300*time.Second {
+		t.Fatalf("digest summary timeout = %s, want 300s from LLM_TIMEOUT", got)
 	}
 
 	config.LLMTIMEOUT = "  "
-	if got := worker.Timeout(nil); got != 30*time.Second {
+	if got := assessmentWorker.Timeout(nil); got != 30*time.Second {
 		t.Fatalf("timeout = %s, want 30s fallback", got)
 	}
 
 	config.LLMTIMEOUT = "-5s"
-	if got := worker.Timeout(nil); got != 30*time.Second {
+	if got := assessmentWorker.Timeout(nil); got != 30*time.Second {
 		t.Fatalf("timeout = %s, want 30s fallback for non-positive duration", got)
 	}
 }
@@ -378,6 +386,29 @@ func TestStartSQLiteInstallsRecoverableSharedQueue(t *testing.T) {
 	stop()
 	if _, available := Default(); available {
 		t.Fatal("shared queue was not restored on stop")
+	}
+}
+
+func TestMemoryQueueGenerateDigestSummaryRunsSynchronously(t *testing.T) {
+	var ran atomic.Int32
+	queue := NewMemoryQueue(NewMemoryStore(), Handlers{GenerateDigestSummary: func(_ context.Context, userID uint, localDate string) error {
+		if userID != 9 || localDate != "2026-08-27" {
+			t.Fatalf("digest summary args = %d %q", userID, localDate)
+		}
+		ran.Add(1)
+		return nil
+	}})
+	if err := queue.EnqueueGenerateDigestSummary(context.Background(), 9, "2026-08-27"); err != nil {
+		t.Fatal(err)
+	}
+	if ran.Load() != 1 {
+		t.Fatalf("digest summary executions = %d, want 1", ran.Load())
+	}
+	if err := queue.EnqueueGenerateDigestSummary(context.Background(), 9, "2026-08-27"); err != nil {
+		t.Fatal(err)
+	}
+	if ran.Load() != 2 {
+		t.Fatalf("completed digest summary could not be re-enqueued: %d", ran.Load())
 	}
 }
 
