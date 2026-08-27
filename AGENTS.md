@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-DataArk is a Go API plus Vue 3 UI monorepo. This file is the current source of truth for agents. If another document disagrees (especially anything under `docs/exec-plans/` that still mentions `api/common/`), follow this file and the live tree.
+DataArk is a Go API plus Vue 3 UI monorepo. This file is the current source of truth for agents. If another document disagrees (especially anything under `docs/exec-plans/done/` that still mentions `api/common/`), follow this file and the live tree.
 
 There is **no** `api/common/` package. Flags live in `api/flag/flag.go` and write package-level vars in `api/config/config.go`. Startup wiring is `api/bootstrap`. HTTP lives in `api/api/` as same-package files: `starter.go` (`WebStarter`), `routes.go`, `deps.go`, `jobs.go`, `helpers.go`, `middleware.go`, plus domain handlers `auth.go`, `search.go`, `archive.go`, `discovery.go`, `assessment.go`, `recommendation.go`, `backup.go`.
 
@@ -27,7 +27,7 @@ Backend (`api/`, Go module `DataArk`, Go 1.26):
 
 Frontend (`web/src/`): `views/` (`*View.vue`), `components/` (recommendation center panels live in `components/recommendations/`), `api/` (shared `client.ts` + domain helpers), `stores/` (Pinia auth store only; page data stays in views), `router/`, `assets/`. Node `>=24.15 <25`. The npm package name is still `web2`.
 
-Ops: `docker/` (Compose + Dockerfile). Docs: `docs/operations/` runbooks, `docs/references/frontend-pitfalls.md` (Arco API traps), `docs/exec-plans/` (historical living plans; many are finished). `docs/design-docs/dbDesign.md` is stale (still names `api/common/db.go`).
+Ops: `docker/` (Compose + Dockerfile). Docs: `docs/operations/` runbooks, `docs/references/frontend-pitfalls.md` (Arco API traps), `docs/exec-plans/` (in-progress living plans only; finished plans live in `docs/exec-plans/done/`). `docs/design-docs/dbDesign.md` is stale (still names `api/common/db.go`).
 
 ## Build and development commands
 
@@ -94,4 +94,8 @@ Do not commit real credentials. `passwd.txt` at the repo root is a local admin-p
 
 Follow `CONVENTIONS.md` for delegation: worker outputs are untrusted; verify with an independent command; at most one delegation retry, then do the work directly.
 
-Default to a short design note or a Cursor plan. Write a new ExecPlan under `docs/exec-plans/` following `PLANS.md` only when the user asks for a living spec. Checkpoints go in that plan's Progress section, not git (see Git above). **Do not execute finished historical plans as if they were current.** Plans that name `api/common/`, sitemap owner gap-fill, or `make build` are outdated. Current recommendation-center split: discovery crawls automatically, LLM assessment is a paused manual queue, recommendation reads ready eligible inventory. Ops detail: `docs/operations/recommendation-v3-runbook.md` and `docs/operations/article-assessment-v3-runbook.md`.
+Default to a short design note or a Cursor plan. Write a new ExecPlan under `docs/exec-plans/` following `PLANS.md` only when the user asks for a living spec. Checkpoints go in that plan's Progress section, not git (see Git above).
+
+Active ExecPlans stay in `docs/exec-plans/`. When Progress is fully checked and `Outcomes & Retrospective` is written, **move the file to `docs/exec-plans/done/`** in the same change that marks it complete. Do not leave finished plans in the live directory. **Do not execute anything under `docs/exec-plans/done/` as current work.** Those files are historical; plans that name `api/common/`, sitemap owner gap-fill, or `make build` describe past trees, not today's.
+
+Current recommendation-center split: discovery crawls automatically, LLM assessment is a paused manual queue, recommendation reads ready eligible inventory. Ops detail: `docs/operations/recommendation-v3-runbook.md` and `docs/operations/article-assessment-v3-runbook.md`.
