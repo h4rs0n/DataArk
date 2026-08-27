@@ -45,12 +45,13 @@ func TestNormalizeEventBoundsLLMMetadataAndCounters(t *testing.T) {
 		LLMAttempt: -1, LLMEvidenceTokens: -2, LLMOriginalEvidenceTokens: -3, LLMDuration: -1,
 		LLMUsage: &LLMUsage{
 			Available: true, PromptTokens: -1, CompletionTokens: -2, ReasoningTokens: -3, CachedTokens: -4, TotalTokens: -5,
+			PredictedTokens: -6, PredictedMS: -7,
 		},
 	})
 	if len([]rune(event.LLMStage)) != 64 || len([]rune(event.LLMModel)) != 255 || len([]rune(event.LLMResponseMode)) != 32 || event.LLMAttempt != 0 || event.LLMEvidenceTokens != 0 || event.LLMOriginalEvidenceTokens != 0 || event.LLMDuration != 0 {
 		t.Fatalf("bounded LLM metadata = %#v", event)
 	}
-	if event.LLMUsage == nil || event.LLMUsage.PromptTokens != 0 || event.LLMUsage.CompletionTokens != 0 || event.LLMUsage.ReasoningTokens != 0 || event.LLMUsage.CachedTokens != 0 || event.LLMUsage.TotalTokens != 0 {
+	if event.LLMUsage == nil || event.LLMUsage.PromptTokens != 0 || event.LLMUsage.CompletionTokens != 0 || event.LLMUsage.ReasoningTokens != 0 || event.LLMUsage.CachedTokens != 0 || event.LLMUsage.TotalTokens != 0 || event.LLMUsage.PredictedTokens != 0 || event.LLMUsage.PredictedMS != 0 {
 		t.Fatalf("normalized LLM usage = %#v", event.LLMUsage)
 	}
 }

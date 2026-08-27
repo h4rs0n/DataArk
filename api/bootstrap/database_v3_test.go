@@ -265,7 +265,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 29 || migrations[len(migrations)-1].Version != 29 {
+	if len(migrations) != 30 || migrations[len(migrations)-1].Version != 30 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	coreSchema, err := appmigrations.FS.ReadFile("000001_recommendation_v2.sql")
@@ -517,6 +517,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"CREATE TABLE IF NOT EXISTS assessment_llm_calls", "prompt_tokens", "Data-preserving rollback"} {
 		if !strings.Contains(string(llmCalls), required) {
 			t.Fatalf("assessment llm call migration missing %q", required)
+		}
+	}
+	decodeTimings, err := appmigrations.FS.ReadFile("000030_assessment_llm_decode_timings.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"predicted_tokens", "predicted_ms", "Data-preserving rollback"} {
+		if !strings.Contains(string(decodeTimings), required) {
+			t.Fatalf("assessment llm decode timings migration missing %q", required)
 		}
 	}
 }

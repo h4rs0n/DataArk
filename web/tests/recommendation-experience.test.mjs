@@ -77,7 +77,7 @@ test('owner assessment module shows metrics and a manual LLM queue', () => {
   assert.match(metricsPanel, /article-assessments\/backfill/)
   assert.match(metricsPanel, /article-assessments\/rollback/)
   assert.match(metricsPanel, /待评估队列/)
-  assert.match(metricsPanel, /token\/s/)
+  assert.match(metricsPanel, /decode token\/s/)
   assert.match(metricsPanel, /预计完成/)
   assert.match(metricsPanel, /queue\.counts\.succeeded24h/)
   assert.match(metricsPanel, /queue\.counts\.failed24h/)

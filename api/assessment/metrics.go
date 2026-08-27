@@ -40,11 +40,18 @@ type MetricsLatency struct {
 	P95 int64 `json:"p95Ms"`
 }
 
-// jobThroughputRow 把同一篇文章的多次聊天尝试合成一次作业，用于 token/s 和作业均耗时。
-type jobThroughputRow struct {
+// jobDurationRow 把同一篇文章的多次聊天尝试合成一次作业，用于作业均耗时。
+type jobDurationRow struct {
 	CandidateID uint  `gorm:"column:candidate_id"`
-	Output      int64 `gorm:"column:output"`
 	DurationMS  int64 `gorm:"column:duration_ms"`
+}
+
+// decodeThroughputRow 是单次 chat 的 decode 计时；有 predicted_* 时对齐 llama.cpp eval 速度。
+type decodeThroughputRow struct {
+	CompletionTokens int   `gorm:"column:completion_tokens"`
+	DurationMS       int64 `gorm:"column:duration_ms"`
+	PredictedTokens  int   `gorm:"column:predicted_tokens"`
+	PredictedMS      int64 `gorm:"column:predicted_ms"`
 }
 
 // GetMetrics 聚合待评估队列、完整作业成败、近 24 小时安全 token/耗时，供 owner 评估面板使用。
@@ -130,37 +137,55 @@ func assignCompleteJobWindow(metrics *Metrics, since time.Time) error {
 	return nil
 }
 
-// assignJobThroughput 按作业汇总输出 token 与耗时：token/s = 总输出 token / 各作业耗时之和。
+// assignJobThroughput 分开计算 decode token/s 与作业均耗时。
+// token/s 按单次 chat 加权：有 llama.cpp timings 用 predicted_n/predicted_ms，否则回退 completion/墙钟。
+// 作业均耗时仍按文章汇总墙钟，供队列预计完成使用。
 func assignJobThroughput(metrics *Metrics, since time.Time) error {
-	var rows []jobThroughputRow
+	var jobRows []jobDurationRow
 	if err := db.Model(&LLMCall{}).
-		Select("candidate_id, COALESCE(SUM(completion_tokens),0) as output, COALESCE(SUM(duration_ms),0) as duration_ms").
+		Select("candidate_id, COALESCE(SUM(duration_ms),0) as duration_ms").
 		Where("stage = ? AND created_at >= ? AND candidate_id > 0", llm.StageArticleAssessment, since).
 		Group("candidate_id").
-		Scan(&rows).Error; err != nil {
+		Scan(&jobRows).Error; err != nil {
 		return err
 	}
-	var outputTokens int64
-	var outputDurationMS int64
 	var jobDurationMS int64
 	var jobCount int64
-	for _, row := range rows {
+	for _, row := range jobRows {
 		if row.DurationMS <= 0 {
 			continue
 		}
 		jobDurationMS += row.DurationMS
 		jobCount++
-		if row.Output <= 0 {
-			continue
-		}
-		outputTokens += row.Output
-		outputDurationMS += row.DurationMS
-	}
-	if outputDurationMS > 0 {
-		metrics.TokensPerSecond = float64(outputTokens) / (float64(outputDurationMS) / 1000)
 	}
 	if jobCount > 0 {
 		metrics.AvgJobDurationMs = jobDurationMS / jobCount
+	}
+
+	var calls []decodeThroughputRow
+	if err := db.Model(&LLMCall{}).
+		Select("completion_tokens, duration_ms, predicted_tokens, predicted_ms").
+		Where("stage = ? AND created_at >= ? AND candidate_id > 0", llm.StageArticleAssessment, since).
+		Scan(&calls).Error; err != nil {
+		return err
+	}
+	var outputTokens int64
+	var outputDurationMS int64
+	for _, call := range calls {
+		tokens := int64(call.CompletionTokens)
+		durationMS := call.DurationMS
+		if call.PredictedTokens > 0 && call.PredictedMS > 0 {
+			tokens = int64(call.PredictedTokens)
+			durationMS = call.PredictedMS
+		}
+		if tokens <= 0 || durationMS <= 0 {
+			continue
+		}
+		outputTokens += tokens
+		outputDurationMS += durationMS
+	}
+	if outputDurationMS > 0 {
+		metrics.TokensPerSecond = float64(outputTokens) / (float64(outputDurationMS) / 1000)
 	}
 	return nil
 }

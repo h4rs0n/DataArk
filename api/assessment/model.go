@@ -46,6 +46,8 @@ type LLMCall struct {
 	ReasoningTokens  int       `json:"reasoningTokens" gorm:"not null;default:0"`
 	CachedTokens     int       `json:"cachedTokens" gorm:"not null;default:0"`
 	TotalTokens      int       `json:"totalTokens" gorm:"not null;default:0"`
+	PredictedTokens  int       `json:"predictedTokens" gorm:"not null;default:0"`
+	PredictedMS      int64     `json:"predictedMs" gorm:"not null;default:0"`
 	EvidenceTokens   int       `json:"evidenceTokens" gorm:"not null;default:0"`
 	ResponseMode     string    `json:"responseMode" gorm:"size:32"`
 	ErrorType        string    `json:"errorType" gorm:"size:64"`
@@ -71,8 +73,9 @@ func persistLLMCallEvent(event observability.Event) {
 		Attempt: event.LLMAttempt, DurationMS: event.LLMDuration,
 		PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
 		ReasoningTokens: usage.ReasoningTokens, CachedTokens: usage.CachedTokens,
-		TotalTokens: usage.TotalTokens, EvidenceTokens: event.LLMEvidenceTokens,
-		ResponseMode: event.LLMResponseMode, ErrorType: event.ErrorType,
+		TotalTokens: usage.TotalTokens, PredictedTokens: usage.PredictedTokens, PredictedMS: usage.PredictedMS,
+		EvidenceTokens: event.LLMEvidenceTokens,
+		ResponseMode:   event.LLMResponseMode, ErrorType: event.ErrorType,
 		CreatedAt: event.OccurredAt,
 	}
 	if row.CreatedAt.IsZero() {

@@ -301,7 +301,7 @@ func TestOpenAICompatibleProviderLogsUsageWithoutPayloadText(t *testing.T) {
 	resetAssessmentOutputCapabilitiesForTest()
 	logOutput := captureStandardLog(t)
 	client := &fakeOpenAIDoer{responses: []string{
-		`{"choices":[{"message":{"content":` + mustJSONString(articleAssessmentJSON(80, 70, 60, "completion-text-sentinel", "No major limitation")) + `,"reasoning_content":"reasoning-text-sentinel"}}],"usage":{"prompt_tokens":101,"completion_tokens":20,"total_tokens":121,"prompt_tokens_details":{"cached_tokens":11},"completion_tokens_details":{"reasoning_tokens":0}}}`,
+		`{"choices":[{"message":{"content":` + mustJSONString(articleAssessmentJSON(80, 70, 60, "completion-text-sentinel", "No major limitation")) + `,"reasoning_content":"reasoning-text-sentinel"}}],"usage":{"prompt_tokens":101,"completion_tokens":20,"total_tokens":121,"prompt_tokens_details":{"cached_tokens":11},"completion_tokens_details":{"reasoning_tokens":0}},"timings":{"predicted_n":20,"predicted_ms":400}}`,
 	}}
 	provider := OpenAICompatibleProvider{BaseURL: "https://llm.example", ChatModel: "deepseek-v4", HTTPClient: client}
 	if _, err := provider.AssessArticle(context.Background(), assessment.ChatAssessmentInput{Title: "Title", BodyText: "prompt-text-sentinel"}); err != nil {
@@ -321,6 +321,7 @@ func TestOpenAICompatibleProviderLogsUsageWithoutPayloadText(t *testing.T) {
 	want := map[string]interface{}{
 		"available": true, "prompt_tokens": float64(101), "completion_tokens": float64(20),
 		"reasoning_tokens": float64(0), "cached_tokens": float64(11), "total_tokens": float64(121),
+		"predicted_tokens": float64(20), "predicted_ms": float64(400),
 	}
 	for field, expected := range want {
 		if usage[field] != expected {

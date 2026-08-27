@@ -52,12 +52,14 @@ type Event struct {
 // LLMUsage contains provider-reported counters only. It deliberately cannot
 // carry prompt, completion, or reasoning text.
 type LLMUsage struct {
-	Available        bool `json:"available"`
-	PromptTokens     int  `json:"prompt_tokens"`
-	CompletionTokens int  `json:"completion_tokens"`
-	ReasoningTokens  int  `json:"reasoning_tokens"`
-	CachedTokens     int  `json:"cached_tokens"`
-	TotalTokens      int  `json:"total_tokens"`
+	Available        bool  `json:"available"`
+	PromptTokens     int   `json:"prompt_tokens"`
+	CompletionTokens int   `json:"completion_tokens"`
+	ReasoningTokens  int   `json:"reasoning_tokens"`
+	CachedTokens     int   `json:"cached_tokens"`
+	TotalTokens      int   `json:"total_tokens"`
+	PredictedTokens  int   `json:"predicted_tokens,omitempty"`
+	PredictedMS      int64 `json:"predicted_ms,omitempty"`
 }
 
 // FailureDetails is the fixed, safe metadata an error may expose to structured
@@ -134,6 +136,10 @@ func normalizeEvent(event Event) Event {
 		usage.ReasoningTokens = nonNegativeCount(usage.ReasoningTokens)
 		usage.CachedTokens = nonNegativeCount(usage.CachedTokens)
 		usage.TotalTokens = nonNegativeCount(usage.TotalTokens)
+		usage.PredictedTokens = nonNegativeCount(usage.PredictedTokens)
+		if usage.PredictedMS < 0 {
+			usage.PredictedMS = 0
+		}
 		event.LLMUsage = &usage
 	}
 	event.Domain = normalizeDomain(event.Domain)

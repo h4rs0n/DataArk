@@ -3,6 +3,7 @@ package assessment
 import (
 	"DataArk/discovery"
 	"DataArk/llm"
+	"DataArk/observability"
 	"testing"
 	"time"
 )
@@ -56,5 +57,48 @@ func TestGetMetricsAggregatesQueueAndSafeTokenRows(t *testing.T) {
 	}
 	if metrics.AvgJobDurationMs != 200 {
 		t.Fatalf("avgJobDurationMs = %d", metrics.AvgJobDurationMs)
+	}
+}
+
+func TestGetMetricsPrefersLlamaCppDecodeTimings(t *testing.T) {
+	setupAssessmentDB(t)
+	now := time.Date(2026, 8, 18, 18, 0, 0, 0, time.UTC)
+	rows := []LLMCall{
+		{CandidateID: 11, Stage: llm.StageArticleAssessment, Status: "success", Attempt: 1, DurationMS: 9000, CompletionTokens: 10, PredictedTokens: 100, PredictedMS: 2000, CreatedAt: now.Add(-time.Hour)},
+		{CandidateID: 12, Stage: llm.StageArticleAssessment, Status: "success", Attempt: 1, DurationMS: 1000, CompletionTokens: 10, CreatedAt: now.Add(-time.Hour)},
+	}
+	for _, row := range rows {
+		if err := db.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	metrics, err := GetMetrics(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 有 timings 的行用 100/2s，无 timings 的行用 10/1s：token/s = (100+10) / 3 = 36.666...
+	if metrics.TokensPerSecond < 36.6 || metrics.TokensPerSecond > 36.7 {
+		t.Fatalf("tokensPerSecond = %v", metrics.TokensPerSecond)
+	}
+	if metrics.AvgJobDurationMs != 5000 {
+		t.Fatalf("avgJobDurationMs = %d", metrics.AvgJobDurationMs)
+	}
+}
+
+func TestPersistLLMCallEventWritesDecodeTimings(t *testing.T) {
+	setupAssessmentDB(t)
+	persistLLMCallEvent(observability.Event{
+		CandidateID: 3, LLMStage: llm.StageArticleAssessment, Status: "success",
+		LLMDuration: 9000,
+		LLMUsage: &observability.LLMUsage{
+			Available: true, CompletionTokens: 10, PredictedTokens: 100, PredictedMS: 2000,
+		},
+	})
+	var row LLMCall
+	if err := db.First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.PredictedTokens != 100 || row.PredictedMS != 2000 || row.CompletionTokens != 10 {
+		t.Fatalf("persisted llm call = %#v", row)
 	}
 }

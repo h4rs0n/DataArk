@@ -28,7 +28,7 @@
         <div><strong>{{ (metrics.schemaRetryRate * 100).toFixed(1) }}%</strong><span>schema 重试率</span></div>
       </div>
       <div class="queue-summary">
-        <div><strong>{{ tokenRateLabel }}</strong><span>token/s</span></div>
+        <div><strong>{{ tokenRateLabel }}</strong><span>decode token/s</span></div>
         <div><strong>{{ estimatedCompletionLabel }}</strong><span>预计完成</span></div>
       </div>
     </a-spin>
@@ -121,7 +121,7 @@ const queueStateLabel = computed(() => ({
 
 const remainingQueueJobs = computed(() => queue.counts.pending + queue.counts.running)
 
-// 输出吞吐：近 24 小时各作业 completion token 之和 / 各作业耗时之和。
+// decode 吞吐：近 24 小时各次 chat 优先用 llama.cpp timings.predicted_*；无 timings 则回退 completion / 墙钟。
 const tokenRateLabel = computed(() => formatTokenRate(metrics.tokensPerSecond))
 
 // 预计完成：剩余作业数 × 近 24 小时单作业平均耗时。

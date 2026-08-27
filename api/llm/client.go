@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -80,6 +81,11 @@ type chatCompletionResponse struct {
 			ReasoningTokens int `json:"reasoning_tokens"`
 		} `json:"completion_tokens_details"`
 	} `json:"usage"`
+	// Timings 是 llama.cpp 的 decode/prefill 计时；其他 OpenAI 兼容后端通常省略。
+	Timings *struct {
+		PredictedN  int     `json:"predicted_n"`
+		PredictedMS float64 `json:"predicted_ms"`
+	} `json:"timings"`
 }
 
 func (client Client) Embed(ctx context.Context, texts []string) ([][]float32, error) {
@@ -220,6 +226,13 @@ func (client Client) logChatCall(options ChatOptions, model string, response *ch
 		usage.CachedTokens = response.Usage.PromptDetails.CachedTokens
 		usage.TotalTokens = response.Usage.TotalTokens
 	}
+	if response != nil && response.Timings != nil {
+		usage.PredictedTokens = response.Timings.PredictedN
+		usage.PredictedMS = decodeDurationMS(response.Timings.PredictedMS)
+		if usage.PredictedTokens > 0 || usage.PredictedMS > 0 {
+			usage.Available = true
+		}
+	}
 	event := observability.Event{
 		Name: CallEventName, Status: "success", CandidateID: options.CandidateID, UserID: options.UserID,
 		LLMStage: options.Stage, LLMModel: model, LLMResponseMode: options.ResponseMode, LLMAttempt: options.Attempt,
@@ -235,6 +248,18 @@ func (client Client) logChatCall(options ChatOptions, model string, response *ch
 	if client.CallObserver != nil {
 		client.CallObserver(event)
 	}
+}
+
+// decodeDurationMS 把 llama.cpp timings.predicted_ms 收成毫秒整数；正值不足 1ms 记 1。
+func decodeDurationMS(predictedMS float64) int64 {
+	if predictedMS <= 0 {
+		return 0
+	}
+	ms := int64(math.Round(predictedMS))
+	if ms < 1 {
+		return 1
+	}
+	return ms
 }
 
 // ClassifyCallError 把网关错误压成固定短码，供日志和评估指标共用。
