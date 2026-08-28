@@ -43,12 +43,13 @@ type CrawlQueueTask struct {
 }
 
 type CrawlQueueSnapshot struct {
-	Mode      string           `json:"mode"`
-	State     string           `json:"state"`
-	CanRun    bool             `json:"canRun"`
-	UpdatedAt time.Time        `json:"updatedAt"`
-	Counts    CrawlQueueCounts `json:"counts"`
-	Tasks     []CrawlQueueTask `json:"tasks"`
+	Mode         string           `json:"mode"`
+	State        string           `json:"state"`
+	CanRun       bool             `json:"canRun"`
+	UpdatedAt    time.Time        `json:"updatedAt"`
+	RunStartedAt *time.Time       `json:"runStartedAt,omitempty"`
+	Counts       CrawlQueueCounts `json:"counts"`
+	Tasks        []CrawlQueueTask `json:"tasks"`
 }
 
 // CrawlQueueController 只提供观察快照：文章爬取由工人自动消费。

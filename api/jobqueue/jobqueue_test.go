@@ -359,6 +359,49 @@ func TestMemoryQueueAssessArticleWaitsForManualStart(t *testing.T) {
 	if assessed.Load() != 1 {
 		t.Fatalf("assessment executions = %d, want 1", assessed.Load())
 	}
+	idle, err := memoryAssessmentView{queue: queue}.Snapshot(context.Background(), 50)
+	if err != nil || idle.Counts.Succeeded24h != 0 || idle.RunStartedAt != nil {
+		t.Fatalf("paused assessment metrics must clear: %#v err=%v", idle, err)
+	}
+}
+
+func TestMemoryQueueAssessmentSnapshotCountsCurrentRun(t *testing.T) {
+	store := NewMemoryStore()
+	queue := NewMemoryQueue(store, Handlers{AssessArticle: func(context.Context, uint, string) error { return nil }})
+	now := time.Now()
+	started := now.Add(-time.Minute)
+	oldDone := now.Add(-time.Hour)
+	newDone := now.Add(-time.Second)
+	store.mu.Lock()
+	store.jobs["old"] = MemoryJob{
+		Key: "old", Kind: AssessArticleJobKind, Status: MemoryJobCompleted,
+		FinishedAt: &oldDone, CreatedAt: oldDone, UpdatedAt: oldDone,
+	}
+	store.jobs["cur"] = MemoryJob{
+		Key: "cur", Kind: AssessArticleJobKind, Status: MemoryJobCompleted,
+		FinishedAt: &newDone, CreatedAt: newDone, UpdatedAt: newDone,
+	}
+	store.assessmentRunning = true
+	store.assessmentRunStartedAt = started
+	store.mu.Unlock()
+	snapshot, err := memoryAssessmentView{queue: queue}.Snapshot(context.Background(), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Counts.Succeeded24h != 1 || snapshot.RunStartedAt == nil || snapshot.State != "running" {
+		t.Fatalf("running snapshot = %#v", snapshot)
+	}
+	store.mu.Lock()
+	store.assessmentRunning = false
+	store.assessmentRunStartedAt = time.Time{}
+	store.mu.Unlock()
+	idle, err := memoryAssessmentView{queue: queue}.Snapshot(context.Background(), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idle.Counts.Succeeded24h != 0 || idle.RunStartedAt != nil {
+		t.Fatalf("idle snapshot = %#v", idle)
+	}
 }
 
 func TestStartSQLiteInstallsRecoverableSharedQueue(t *testing.T) {

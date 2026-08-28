@@ -31,10 +31,11 @@ type MemoryJob struct {
 }
 
 type MemoryStore struct {
-	mu                sync.Mutex
-	jobs              map[string]MemoryJob
-	crawlRunning      bool
-	assessmentRunning bool
+	mu                     sync.Mutex
+	jobs                   map[string]MemoryJob
+	crawlRunning           bool
+	assessmentRunning      bool
+	assessmentRunStartedAt time.Time
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -83,6 +84,7 @@ func NewMemoryQueue(store *MemoryStore, handlers Handlers) *MemoryQueue {
 	store.mu.Lock()
 	store.crawlRunning = false
 	store.assessmentRunning = false
+	store.assessmentRunStartedAt = time.Time{}
 	for key, job := range store.jobs {
 		if job.Status == MemoryJobRunning {
 			job.Status = MemoryJobPending
@@ -196,10 +198,12 @@ func (queue *MemoryQueue) runAssessment(ctx context.Context) (*CrawlQueueSnapsho
 	queue.store.mu.Lock()
 	if !queue.store.assessmentRunning {
 		queue.store.assessmentRunning = true
+		queue.store.assessmentRunStartedAt = time.Now()
 		queue.store.mu.Unlock()
 		go queue.drain(isAssessmentJobKind, func() {
 			queue.store.mu.Lock()
 			queue.store.assessmentRunning = false
+			queue.store.assessmentRunStartedAt = time.Time{}
 			queue.store.mu.Unlock()
 		})
 	} else {
@@ -332,11 +336,13 @@ func (queue *MemoryQueue) snapshot(limit int, match func(string) bool, mode stri
 	limit = normalizeSnapshotLimit(limit)
 	queue.store.mu.Lock()
 	running := false
+	var runStartedAt time.Time
 	if match(FetchSourceJobKind) {
 		running = queue.store.crawlRunning
 	}
 	if match(AssessArticleJobKind) {
 		running = queue.store.assessmentRunning
+		runStartedAt = queue.store.assessmentRunStartedAt
 	}
 	jobs := make([]MemoryJob, 0, len(queue.store.jobs))
 	for _, job := range queue.store.jobs {
@@ -348,7 +354,17 @@ func (queue *MemoryQueue) snapshot(limit int, match func(string) bool, mode stri
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].UpdatedAt.After(jobs[j].UpdatedAt) })
 	now := time.Now()
 	cutoff := now.Add(-24 * time.Hour)
+	if manual {
+		cutoff = now
+		if running && !runStartedAt.IsZero() {
+			cutoff = runStartedAt
+		}
+	}
 	snapshot := &CrawlQueueSnapshot{Mode: mode, UpdatedAt: now, Tasks: make([]CrawlQueueTask, 0, limit)}
+	if manual && running && !runStartedAt.IsZero() {
+		started := runStartedAt
+		snapshot.RunStartedAt = &started
+	}
 	for _, job := range jobs {
 		task := CrawlQueueTask{
 			ID: job.Key, Kind: job.Kind, TargetType: job.TargetType, TargetID: job.TargetID,

@@ -19,8 +19,8 @@
       <p v-if="errorMessage" class="ops-error">{{ errorMessage }}</p>
       <div v-else class="metrics-grid">
         <div><strong>{{ metrics.pendingQueue }}</strong><span>待评估队列</span></div>
-        <div><strong>{{ queue.counts.succeeded24h }}</strong><span>近 24 小时成功</span></div>
-        <div><strong>{{ queue.counts.failed24h }}</strong><span>近 24 小时失败</span></div>
+        <div><strong>{{ queue.counts.succeeded24h }}</strong><span>本次成功</span></div>
+        <div><strong>{{ queue.counts.failed24h }}</strong><span>本次失败</span></div>
         <div><strong>{{ metrics.articlesPerHour.toFixed(2) }}</strong><span>articles/hour</span></div>
         <div><strong>{{ metrics.tokenTotals.total }}</strong><span>token 合计</span></div>
         <div><strong>{{ metrics.tokenTotals.prompt }} / {{ metrics.tokenTotals.completion }}</strong><span>prompt / completion</span></div>
@@ -68,7 +68,7 @@ const props = defineProps<{ active: boolean }>()
 
 interface AssessmentMetrics {
   pendingQueue: number
-  last24h: { success: number; failure: number }
+  currentRun: { success: number; failure: number }
   articlesPerHour: number
   tokenTotals: { prompt: number; completion: number; reasoning: number; cached: number; total: number }
   duration: { p50Ms: number; p95Ms: number }
@@ -93,7 +93,7 @@ const emptyQueue = (): AssessmentQueueSnapshot => ({
 
 const emptyMetrics = (): AssessmentMetrics => ({
   pendingQueue: 0,
-  last24h: { success: 0, failure: 0 },
+  currentRun: { success: 0, failure: 0 },
   articlesPerHour: 0,
   tokenTotals: { prompt: 0, completion: 0, reasoning: 0, cached: 0, total: 0 },
   duration: { p50Ms: 0, p95Ms: 0 },
@@ -121,12 +121,12 @@ const queueStateLabel = computed(() => ({
 
 const remainingQueueJobs = computed(() => queue.counts.pending + queue.counts.running)
 
-// articles/hour：近 24 小时单作业平均墙钟耗时反推，再乘评估并发。
+// articles/hour：本次任务单作业平均墙钟耗时反推，再乘评估并发。
 
-// decode 吞吐：近 24 小时各次 chat 优先用 llama.cpp timings.predicted_*；无 timings 则回退 completion / 墙钟。
+// decode 吞吐：本次任务各次 chat 优先用 llama.cpp timings.predicted_*；无 timings 则回退 completion / 墙钟。
 const tokenRateLabel = computed(() => formatTokenRate(metrics.tokensPerSecond))
 
-// 预计完成：剩余作业数 × 近 24 小时单作业平均耗时。
+// 预计完成：剩余作业数 × 本次任务单作业平均耗时。
 const estimatedCompletionLabel = computed(() => {
   if (remainingQueueJobs.value <= 0) return '队列已空'
   if (!(metrics.avgJobDurationMs > 0)) return '—'
@@ -154,21 +154,25 @@ function formatRemaining(ms: number): string {
   return `${seconds} 秒`
 }
 
-// 加载 owner 评估面板的安全 token/耗时聚合。
-const loadMetrics = async () => {
+// 加载 owner 评估面板的安全 token/耗时聚合。silent 时不打断正在看的数字。
+const loadMetrics = async (silent = false) => {
   try {
-    loading.value = true
-    errorMessage.value = ''
+    if (!silent) {
+      loading.value = true
+      errorMessage.value = ''
+    }
     const data = await requestJSON<AssessmentMetrics>('/api/admin/assessment/metrics')
     Object.assign(metrics, emptyMetrics(), data, {
-      last24h: { ...emptyMetrics().last24h, ...(data?.last24h || {}) },
+      currentRun: { ...emptyMetrics().currentRun, ...(data?.currentRun || {}) },
       tokenTotals: { ...emptyMetrics().tokenTotals, ...(data?.tokenTotals || {}) },
       duration: { ...emptyMetrics().duration, ...(data?.duration || {}) },
     })
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '加载评估指标失败'
+    if (!silent) {
+      errorMessage.value = error instanceof Error ? error.message : '加载评估指标失败'
+    }
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -186,8 +190,9 @@ const scheduleQueueRefresh = () => {
   queueTimer = window.setTimeout(() => { void loadQueue(true) }, delay)
 }
 
-// 加载暂停中的 LLM 评估作业快照。
+// 加载暂停中的 LLM 评估作业快照；执行中顺带静默刷新本次任务指标。
 const loadQueue = async (silent = false) => {
+  const wasRunning = queue.state === 'running'
   try {
     const data = await requestJSON<AssessmentQueueSnapshot>('/api/admin/assessment/queue?limit=50')
     Object.assign(queue, emptyQueue(), data, {
@@ -198,6 +203,9 @@ const loadQueue = async (silent = false) => {
       errorMessage.value = error instanceof Error ? error.message : '加载评估队列失败'
     }
   } finally {
+    if (silent && (wasRunning || queue.state === 'running')) {
+      void loadMetrics(true)
+    }
     scheduleQueueRefresh()
   }
 }
@@ -214,6 +222,7 @@ const runQueue = async () => {
       counts: { ...emptyQueue().counts, ...(data?.counts || {}) },
     })
     Message.success('评估任务队列已开始执行')
+    void loadMetrics(true)
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '启动评估任务队列失败')
   } finally {

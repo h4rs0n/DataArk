@@ -184,10 +184,11 @@ func installDefault(queue JobEnqueuer, crawl CrawlQueueController, assessment As
 }
 
 type riverQueue struct {
-	client  *river.Client[*sql.Tx]
-	runMu   sync.Mutex
-	running bool
-	stop    chan struct{}
+	client       *river.Client[*sql.Tx]
+	runMu        sync.Mutex
+	running      bool
+	runStartedAt time.Time
+	stop         chan struct{}
 }
 
 type riverCrawlView struct {
@@ -408,7 +409,8 @@ func (queue *riverQueue) crawlSnapshot(ctx context.Context, limit int) (*CrawlQu
 	if err != nil {
 		return nil, err
 	}
-	return buildQueueSnapshot(result.Jobs, limit, CrawlQueueMode, false, time.Now()), nil
+	now := time.Now()
+	return buildQueueSnapshot(result.Jobs, limit, CrawlQueueMode, false, now, now.Add(-24*time.Hour)), nil
 }
 
 func (queue *riverQueue) assessmentSnapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
@@ -423,12 +425,21 @@ func (queue *riverQueue) assessmentSnapshot(ctx context.Context, limit int) (*Cr
 	}
 	queue.runMu.Lock()
 	running := queue.running
+	startedAt := queue.runStartedAt
 	queue.runMu.Unlock()
 	now := time.Now()
-	snapshot := buildQueueSnapshot(result.Jobs, limit, AssessmentQueueMode, running, now)
+	cutoff := now
+	if running && !startedAt.IsZero() {
+		cutoff = startedAt
+	}
+	snapshot := buildQueueSnapshot(result.Jobs, limit, AssessmentQueueMode, running, now, cutoff)
 	snapshot.CanRun = !running && riverJobsRunnable(result.Jobs, now)
 	if running {
 		snapshot.State = "running"
+		if !startedAt.IsZero() {
+			started := startedAt
+			snapshot.RunStartedAt = &started
+		}
 	}
 	return snapshot, nil
 }
@@ -440,15 +451,21 @@ func (queue *riverQueue) assessmentRun(ctx context.Context) (*CrawlQueueSnapshot
 		return queue.assessmentSnapshot(ctx, 50)
 	}
 	queue.running = true
+	queue.runStartedAt = time.Now()
 	queue.runMu.Unlock()
 	if err := queue.client.QueueResume(ctx, AssessmentQueueName, nil); err != nil {
-		queue.runMu.Lock()
-		queue.running = false
-		queue.runMu.Unlock()
+		queue.clearAssessmentRun()
 		return nil, err
 	}
 	go queue.pauseAssessmentWhenDrained()
 	return queue.assessmentSnapshot(ctx, 50)
+}
+
+func (queue *riverQueue) clearAssessmentRun() {
+	queue.runMu.Lock()
+	queue.running = false
+	queue.runStartedAt = time.Time{}
+	queue.runMu.Unlock()
 }
 
 func (queue *riverQueue) pauseAssessmentWhenDrained() {
@@ -483,16 +500,13 @@ func (queue *riverQueue) pauseAssessmentWhenDrained() {
 				quietChecks = 0
 				continue
 			}
-			queue.runMu.Lock()
-			queue.running = false
-			queue.runMu.Unlock()
+			queue.clearAssessmentRun()
 			return
 		}
 	}
 }
 
-func buildQueueSnapshot(rows []*rivertype.JobRow, limit int, mode string, forceRunning bool, now time.Time) *CrawlQueueSnapshot {
-	cutoff := now.Add(-24 * time.Hour)
+func buildQueueSnapshot(rows []*rivertype.JobRow, limit int, mode string, forceRunning bool, now time.Time, cutoff time.Time) *CrawlQueueSnapshot {
 	snapshot := &CrawlQueueSnapshot{Mode: mode, UpdatedAt: now, Tasks: make([]CrawlQueueTask, 0, limit)}
 	for _, row := range rows {
 		task := crawlTaskFromRiverRow(row)

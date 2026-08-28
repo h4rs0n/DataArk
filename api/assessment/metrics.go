@@ -2,7 +2,6 @@ package assessment
 
 import (
 	"DataArk/config"
-	"DataArk/discovery"
 	"DataArk/jobqueue"
 	"DataArk/llm"
 	"context"
@@ -14,7 +13,7 @@ import (
 type Metrics struct {
 	GeneratedAt      time.Time      `json:"generatedAt"`
 	PendingQueue     int64          `json:"pendingQueue"`
-	Last24h          MetricsWindow  `json:"last24h"`
+	CurrentRun       MetricsWindow  `json:"currentRun"`
 	ArticlesPerHour  float64        `json:"articlesPerHour"`
 	TokenTotals      MetricsTokens  `json:"tokenTotals"`
 	Duration         MetricsLatency `json:"duration"`
@@ -55,20 +54,49 @@ type decodeThroughputRow struct {
 	PredictedMS      int64 `gorm:"column:predicted_ms"`
 }
 
-// GetMetrics 聚合待评估队列、完整作业成败、近 24 小时安全 token/耗时，供 owner 评估面板使用。
+// assessmentSnapshot 拉取评估队列快照；测试可注入，避免打真实 River。
+var assessmentSnapshot = liveAssessmentSnapshot
+
+// liveAssessmentSnapshot 走暂停的 article_assessment 队列；无控制器或失败时当作队列不可用。
+func liveAssessmentSnapshot() (*jobqueue.CrawlQueueSnapshot, error) {
+	controller, ok := jobqueue.AssessmentControl()
+	if !ok {
+		return nil, nil
+	}
+	snapshot, err := controller.Snapshot(context.Background(), 1)
+	if err != nil {
+		return nil, nil
+	}
+	return snapshot, nil
+}
+
+// currentRunWindowFromSnapshot 从已加载的快照判断本次手动评估是否在跑。
+func currentRunWindowFromSnapshot(snapshot *jobqueue.CrawlQueueSnapshot) (time.Time, bool) {
+	if snapshot == nil || snapshot.State != "running" || snapshot.RunStartedAt == nil || snapshot.RunStartedAt.IsZero() {
+		return time.Time{}, false
+	}
+	return snapshot.RunStartedAt.UTC(), true
+}
+
+// GetMetrics 用 River 作业数作为待评估队列深度，并在本次手动评估 running 时聚合 token/耗时。
 func GetMetrics(now time.Time) (*Metrics, error) {
 	metrics := &Metrics{GeneratedAt: now}
-	if db == nil {
+	snapshot, err := assessmentSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	if snapshot != nil {
+		metrics.PendingQueue = int64(snapshot.Counts.Pending)
+	}
+	since, active := currentRunWindowFromSnapshot(snapshot)
+	if !active {
 		return metrics, nil
 	}
-	if err := db.Model(&discovery.DiscoveryCandidate{}).
-		Where("processing_state = ? AND dedupe_state = ? AND assessment_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryDedupeReady, discovery.DiscoveryAssessmentPending).
-		Count(&metrics.PendingQueue).Error; err != nil {
+	if err := assignCompleteJobWindow(metrics, since, snapshot); err != nil {
 		return nil, err
 	}
-	since := now.Add(-24 * time.Hour)
-	if err := assignCompleteJobWindow(metrics, since); err != nil {
-		return nil, err
+	if db == nil {
+		return metrics, nil
 	}
 	var totals MetricsTokens
 	if err := db.Model(&LLMCall{}).Where("stage = ? AND created_at >= ?", llm.StageArticleAssessment, since).
@@ -100,15 +128,12 @@ func GetMetrics(now time.Time) (*Metrics, error) {
 	return metrics, nil
 }
 
-// assignCompleteJobWindow 统计近 24 小时完整评估作业的成功/失败；有队列时优先用作业快照。
-func assignCompleteJobWindow(metrics *Metrics, since time.Time) error {
-	if controller, ok := jobqueue.AssessmentControl(); ok {
-		snapshot, err := controller.Snapshot(context.Background(), 1)
-		if err == nil && snapshot != nil {
-			metrics.Last24h.Success = int64(snapshot.Counts.Succeeded24h)
-			metrics.Last24h.Failure = int64(snapshot.Counts.Failed24h)
-			return nil
-		}
+// assignCompleteJobWindow 统计本次任务完整评估作业的成功/失败；有快照时用作业计数，否则回退 LLM 调用行。
+func assignCompleteJobWindow(metrics *Metrics, since time.Time, snapshot *jobqueue.CrawlQueueSnapshot) error {
+	if snapshot != nil {
+		metrics.CurrentRun.Success = int64(snapshot.Counts.Succeeded24h)
+		metrics.CurrentRun.Failure = int64(snapshot.Counts.Failed24h)
+		return nil
 	}
 	var successIDs []uint
 	if err := db.Model(&LLMCall{}).Where("stage = ? AND created_at >= ? AND status = ? AND candidate_id > 0", llm.StageArticleAssessment, since, "success").Distinct("candidate_id").Pluck("candidate_id", &successIDs).Error; err != nil {
@@ -118,7 +143,7 @@ func assignCompleteJobWindow(metrics *Metrics, since time.Time) error {
 	for _, id := range successIDs {
 		success[id] = struct{}{}
 	}
-	metrics.Last24h.Success = int64(len(success))
+	metrics.CurrentRun.Success = int64(len(success))
 	var failedIDs []uint
 	if err := db.Model(&LLMCall{}).Where("stage = ? AND created_at >= ? AND status = ? AND candidate_id > 0", llm.StageArticleAssessment, since, "failed").Distinct("candidate_id").Pluck("candidate_id", &failedIDs).Error; err != nil {
 		return err
@@ -129,13 +154,13 @@ func assignCompleteJobWindow(metrics *Metrics, since time.Time) error {
 			failures++
 		}
 	}
-	metrics.Last24h.Failure = failures
+	metrics.CurrentRun.Failure = failures
 	return nil
 }
 
 // assignJobThroughput 分开计算 decode token/s 与作业均耗时。
 // token/s 按单次 chat 加权：有 llama.cpp timings 用 predicted_n/predicted_ms，否则回退 completion/墙钟。
-// 作业均耗时仍按文章汇总墙钟，供队列预计完成使用。
+// 作业均耗时按文章汇总墙钟，供本次任务预计完成使用。
 func assignJobThroughput(metrics *Metrics, since time.Time) error {
 	var jobRows []jobDurationRow
 	if err := db.Model(&LLMCall{}).
