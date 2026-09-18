@@ -183,12 +183,42 @@ func installDefault(queue JobEnqueuer, crawl CrawlQueueController, assessment As
 	}
 }
 
+var (
+	discoveryJobKinds  = []string{FetchSourceJobKind, ScanBlogrollJobKind, BackfillSiteJobKind, ProcessCandidateJobKind}
+	assessmentJobKinds = []string{AssessArticleJobKind}
+)
+
 type riverQueue struct {
 	client       *river.Client[*sql.Tx]
+	db           *sql.DB
 	runMu        sync.Mutex
 	running      bool
 	runStartedAt time.Time
 	stop         chan struct{}
+}
+
+// riverQueueCountResult 是 river_job 全表计数，不受 JobList 1 万条上限影响。
+type riverQueueCountResult struct {
+	Counts   CrawlQueueCounts
+	Runnable int
+}
+
+// riverCountRow 抽象 QueryRow.Scan，便于测试注入假计数。
+type riverCountRow interface {
+	Scan(dest ...any) error
+}
+
+// contextSQLQuerier 查询 river_job 聚合计数；生产走 *sql.DB，测试可注入。
+type contextSQLQuerier interface {
+	QueryRowContext(context.Context, string, ...any) riverCountRow
+}
+
+type stdSQLQuerier struct {
+	db *sql.DB
+}
+
+func (querier stdSQLQuerier) QueryRowContext(ctx context.Context, query string, args ...any) riverCountRow {
+	return querier.db.QueryRowContext(ctx, query, args...)
 }
 
 type riverCrawlView struct {
@@ -374,7 +404,7 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 	if err := client.Start(ctx); err != nil {
 		return func() {}, err
 	}
-	queue := &riverQueue{client: client, stop: make(chan struct{})}
+	queue := &riverQueue{client: client, db: sqlDB, stop: make(chan struct{})}
 	restore := installDefault(queue, riverCrawlView{queue: queue}, riverAssessmentView{queue: queue})
 	if recover != nil {
 		if err := recover(ctx, queue); err != nil {
@@ -401,28 +431,24 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 
 func (queue *riverQueue) crawlSnapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
 	limit = normalizeSnapshotLimit(limit)
-	result, err := queue.client.JobList(ctx, river.NewJobListParams().
-		Kinds(FetchSourceJobKind, ScanBlogrollJobKind, BackfillSiteJobKind, ProcessCandidateJobKind).
-		Queues(DiscoveryQueueName).
-		OrderBy(river.JobListOrderByID, river.SortOrderDesc).
-		First(10_000))
+	now := time.Now()
+	counted, err := countRiverQueueJobs(ctx, stdSQLQuerier{db: queue.db}, DiscoveryQueueName, discoveryJobKinds, now.Add(-24*time.Hour))
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now()
-	return buildQueueSnapshot(result.Jobs, limit, CrawlQueueMode, false, now, now.Add(-24*time.Hour)), nil
+	result, err := queue.client.JobList(ctx, river.NewJobListParams().
+		Kinds(discoveryJobKinds...).
+		Queues(DiscoveryQueueName).
+		OrderBy(river.JobListOrderByID, river.SortOrderDesc).
+		First(limit))
+	if err != nil {
+		return nil, err
+	}
+	return buildQueueSnapshot(result.Jobs, limit, CrawlQueueMode, false, now, counted.Counts), nil
 }
 
 func (queue *riverQueue) assessmentSnapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
 	limit = normalizeSnapshotLimit(limit)
-	result, err := queue.client.JobList(ctx, river.NewJobListParams().
-		Kinds(AssessArticleJobKind).
-		Queues(AssessmentQueueName).
-		OrderBy(river.JobListOrderByID, river.SortOrderDesc).
-		First(10_000))
-	if err != nil {
-		return nil, err
-	}
 	queue.runMu.Lock()
 	running := queue.running
 	startedAt := queue.runStartedAt
@@ -432,8 +458,20 @@ func (queue *riverQueue) assessmentSnapshot(ctx context.Context, limit int) (*Cr
 	if running && !startedAt.IsZero() {
 		cutoff = startedAt
 	}
-	snapshot := buildQueueSnapshot(result.Jobs, limit, AssessmentQueueMode, running, now, cutoff)
-	snapshot.CanRun = !running && riverJobsRunnable(result.Jobs, now)
+	counted, err := countRiverQueueJobs(ctx, stdSQLQuerier{db: queue.db}, AssessmentQueueName, assessmentJobKinds, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	result, err := queue.client.JobList(ctx, river.NewJobListParams().
+		Kinds(assessmentJobKinds...).
+		Queues(AssessmentQueueName).
+		OrderBy(river.JobListOrderByID, river.SortOrderDesc).
+		First(limit))
+	if err != nil {
+		return nil, err
+	}
+	snapshot := buildQueueSnapshot(result.Jobs, limit, AssessmentQueueMode, running, now, counted.Counts)
+	snapshot.CanRun = !running && counted.Runnable > 0
 	if running {
 		snapshot.State = "running"
 		if !startedAt.IsZero() {
@@ -478,13 +516,9 @@ func (queue *riverQueue) pauseAssessmentWhenDrained() {
 			return
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			result, err := queue.client.JobList(ctx, river.NewJobListParams().
-				Kinds(AssessArticleJobKind).
-				Queues(AssessmentQueueName).
-				States(rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled).
-				First(10_000))
+			counted, err := countRiverQueueJobs(ctx, stdSQLQuerier{db: queue.db}, AssessmentQueueName, assessmentJobKinds, time.Now())
 			cancel()
-			if err != nil || riverJobsRunnable(result.Jobs, time.Now()) {
+			if err != nil || counted.Runnable > 0 {
 				quietChecks = 0
 				continue
 			}
@@ -506,27 +540,14 @@ func (queue *riverQueue) pauseAssessmentWhenDrained() {
 	}
 }
 
-func buildQueueSnapshot(rows []*rivertype.JobRow, limit int, mode string, forceRunning bool, now time.Time, cutoff time.Time) *CrawlQueueSnapshot {
-	snapshot := &CrawlQueueSnapshot{Mode: mode, UpdatedAt: now, Tasks: make([]CrawlQueueTask, 0, limit)}
+// buildQueueSnapshot 只用 JobList 行填充任务预览；pending/成功/失败来自 SQL COUNT。
+func buildQueueSnapshot(rows []*rivertype.JobRow, limit int, mode string, forceRunning bool, now time.Time, counts CrawlQueueCounts) *CrawlQueueSnapshot {
+	snapshot := &CrawlQueueSnapshot{Mode: mode, UpdatedAt: now, Counts: counts, Tasks: make([]CrawlQueueTask, 0, limit)}
 	for _, row := range rows {
-		task := crawlTaskFromRiverRow(row)
-		switch task.Status {
-		case "pending":
-			snapshot.Counts.Pending++
-		case "running":
-			snapshot.Counts.Running++
-		case "succeeded":
-			if task.FinishedAt != nil && !task.FinishedAt.Before(cutoff) {
-				snapshot.Counts.Succeeded24h++
-			}
-		case "failed":
-			if task.FinishedAt != nil && !task.FinishedAt.Before(cutoff) {
-				snapshot.Counts.Failed24h++
-			}
+		if len(snapshot.Tasks) >= limit {
+			break
 		}
-		if len(snapshot.Tasks) < limit {
-			snapshot.Tasks = append(snapshot.Tasks, task)
-		}
+		snapshot.Tasks = append(snapshot.Tasks, crawlTaskFromRiverRow(row))
 	}
 	switch {
 	case forceRunning || snapshot.Counts.Running > 0:
@@ -539,18 +560,60 @@ func buildQueueSnapshot(rows []*rivertype.JobRow, limit int, mode string, forceR
 	return snapshot
 }
 
-func riverJobsRunnable(rows []*rivertype.JobRow, now time.Time) bool {
-	for _, row := range rows {
-		switch row.State {
-		case rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning:
-			return true
-		case rivertype.JobStateRetryable, rivertype.JobStateScheduled:
-			if !row.ScheduledAt.After(now) {
-				return true
-			}
-		}
+// countRiverQueueJobs 按队列与 kind 对 river_job 做全表 COUNT，避免 JobList 1 万条抽样截断。
+func countRiverQueueJobs(ctx context.Context, querier contextSQLQuerier, queueName string, kinds []string, cutoff time.Time) (riverQueueCountResult, error) {
+	if querier == nil {
+		return riverQueueCountResult{}, errors.New("river job counter is unavailable")
 	}
-	return false
+	if len(kinds) == 0 {
+		return riverQueueCountResult{}, errors.New("river job count requires at least one kind")
+	}
+	row := querier.QueryRowContext(ctx, riverQueueCountQuery(len(kinds)), riverQueueCountArgs(queueName, cutoff, kinds)...)
+	if row == nil {
+		return riverQueueCountResult{}, errors.New("river job count returned no row")
+	}
+	var pending, running, succeeded, failed, runnable int64
+	if err := row.Scan(&pending, &running, &succeeded, &failed, &runnable); err != nil {
+		return riverQueueCountResult{}, err
+	}
+	return riverQueueCountResult{
+		Counts: CrawlQueueCounts{
+			Pending:      int(pending),
+			Running:      int(running),
+			Succeeded24h: int(succeeded),
+			Failed24h:    int(failed),
+		},
+		Runnable: int(runnable),
+	}, nil
+}
+
+// riverQueueCountQuery 生成按 state 过滤的聚合 SQL；$1 队列，$2 cutoff，$3 起为 kind。
+func riverQueueCountQuery(kindCount int) string {
+	placeholders := make([]string, kindCount)
+	for index := range placeholders {
+		placeholders[index] = fmt.Sprintf("$%d", index+3)
+	}
+	return `
+SELECT
+  COUNT(*) FILTER (WHERE state IN ('available', 'pending', 'retryable', 'scheduled')),
+  COUNT(*) FILTER (WHERE state = 'running'),
+  COUNT(*) FILTER (WHERE state = 'completed' AND finalized_at >= $2),
+  COUNT(*) FILTER (WHERE state IN ('cancelled', 'discarded') AND finalized_at >= $2),
+  COUNT(*) FILTER (
+    WHERE state IN ('available', 'pending', 'running')
+       OR (state IN ('retryable', 'scheduled') AND scheduled_at <= now())
+  )
+FROM river_job
+WHERE queue = $1 AND kind IN (` + strings.Join(placeholders, ", ") + `)`
+}
+
+func riverQueueCountArgs(queueName string, cutoff time.Time, kinds []string) []any {
+	args := make([]any, 0, 2+len(kinds))
+	args = append(args, queueName, cutoff)
+	for _, kind := range kinds {
+		args = append(args, kind)
+	}
+	return args
 }
 
 func crawlTaskFromRiverRow(row *rivertype.JobRow) CrawlQueueTask {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -177,6 +179,130 @@ func TestReconcileManualDiscoveryJobsReturnsDatabaseError(t *testing.T) {
 	_, err := reconcileManualDiscoveryJobs(context.Background(), &recordingSQLExecer{err: want})
 	if !errors.Is(err, want) {
 		t.Fatalf("migration error = %v, want %v", err, want)
+	}
+}
+
+type stubSQLQuerier struct {
+	query     string
+	args      []any
+	pending   int64
+	running   int64
+	succeeded int64
+	failed    int64
+	runnable  int64
+	err       error
+}
+
+func (querier *stubSQLQuerier) QueryRowContext(_ context.Context, query string, args ...any) riverCountRow {
+	querier.query = query
+	querier.args = args
+	return stubCountRow{querier: querier}
+}
+
+type stubCountRow struct {
+	querier *stubSQLQuerier
+}
+
+func (row stubCountRow) Scan(dest ...any) error {
+	if row.querier.err != nil {
+		return row.querier.err
+	}
+	values := []int64{row.querier.pending, row.querier.running, row.querier.succeeded, row.querier.failed, row.querier.runnable}
+	if len(dest) != len(values) {
+		return fmt.Errorf("scan dest = %d, want %d", len(dest), len(values))
+	}
+	for index, value := range values {
+		ptr, ok := dest[index].(*int64)
+		if !ok {
+			return fmt.Errorf("dest %d is %T, want *int64", index, dest[index])
+		}
+		*ptr = value
+	}
+	return nil
+}
+
+func TestCountRiverQueueJobsUsesUncappedSQLCounts(t *testing.T) {
+	cutoff := time.Date(2026, 9, 18, 13, 26, 0, 0, time.UTC)
+	querier := &stubSQLQuerier{pending: 24990, running: 2, succeeded: 530, failed: 3, runnable: 24992}
+	counted, err := countRiverQueueJobs(context.Background(), querier, AssessmentQueueName, assessmentJobKinds, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counted.Counts.Pending != 24990 || counted.Counts.Running != 2 || counted.Counts.Succeeded24h != 530 || counted.Counts.Failed24h != 3 || counted.Runnable != 24992 {
+		t.Fatalf("counts = %#v runnable=%d", counted.Counts, counted.Runnable)
+	}
+	if counted.Counts.Pending <= 10_000 {
+		t.Fatalf("pending = %d, SQL COUNT must not inherit JobList First(10000)", counted.Counts.Pending)
+	}
+	for _, fragment := range []string{
+		"COUNT(*) FILTER (WHERE state IN ('available', 'pending', 'retryable', 'scheduled'))",
+		"COUNT(*) FILTER (WHERE state = 'running')",
+		"COUNT(*) FILTER (WHERE state = 'completed' AND finalized_at >= $2)",
+		"COUNT(*) FILTER (WHERE state IN ('cancelled', 'discarded') AND finalized_at >= $2)",
+		"FROM river_job",
+		"WHERE queue = $1 AND kind IN ($3)",
+	} {
+		if !strings.Contains(querier.query, fragment) {
+			t.Fatalf("count query missing %q: %s", fragment, querier.query)
+		}
+	}
+	if strings.Contains(querier.query, "LIMIT") || strings.Contains(querier.query, "10_000") || strings.Contains(querier.query, "10000") {
+		t.Fatalf("count query must not sample JobList rows: %s", querier.query)
+	}
+	if len(querier.args) != 3 || querier.args[0] != AssessmentQueueName || querier.args[1] != cutoff || querier.args[2] != AssessArticleJobKind {
+		t.Fatalf("count args = %#v", querier.args)
+	}
+}
+
+func TestCountRiverQueueJobsIncludesDiscoveryKindsAndCutoff(t *testing.T) {
+	cutoff := time.Date(2026, 9, 17, 13, 26, 0, 0, time.UTC)
+	querier := &stubSQLQuerier{pending: 12_500, succeeded: 80, failed: 4, runnable: 12_500}
+	counted, err := countRiverQueueJobs(context.Background(), querier, DiscoveryQueueName, discoveryJobKinds, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counted.Counts.Pending != 12_500 || counted.Counts.Succeeded24h != 80 || counted.Counts.Failed24h != 4 {
+		t.Fatalf("discovery counts = %#v", counted.Counts)
+	}
+	wantArgs := []any{DiscoveryQueueName, cutoff, FetchSourceJobKind, ScanBlogrollJobKind, BackfillSiteJobKind, ProcessCandidateJobKind}
+	if len(querier.args) != len(wantArgs) {
+		t.Fatalf("discovery args = %#v, want %#v", querier.args, wantArgs)
+	}
+	for index := range wantArgs {
+		if querier.args[index] != wantArgs[index] {
+			t.Fatalf("discovery arg %d = %#v, want %#v", index, querier.args[index], wantArgs[index])
+		}
+	}
+	if !strings.Contains(querier.query, "kind IN ($3, $4, $5, $6)") {
+		t.Fatalf("discovery count query kinds = %s", querier.query)
+	}
+}
+
+func TestCountRiverQueueJobsReturnsQueryError(t *testing.T) {
+	want := errors.New("database unavailable")
+	_, err := countRiverQueueJobs(context.Background(), &stubSQLQuerier{err: want}, AssessmentQueueName, assessmentJobKinds, time.Now())
+	if !errors.Is(err, want) {
+		t.Fatalf("count error = %v, want %v", err, want)
+	}
+}
+
+func TestBuildQueueSnapshotUsesSQLCountsNotJobListRows(t *testing.T) {
+	now := time.Now()
+	finished := now.Add(-time.Minute)
+	rows := []*rivertype.JobRow{
+		{ID: 1, Kind: AssessArticleJobKind, State: rivertype.JobStateCompleted, FinalizedAt: &finished, CreatedAt: now},
+		{ID: 2, Kind: AssessArticleJobKind, State: rivertype.JobStateCompleted, FinalizedAt: &finished, CreatedAt: now},
+	}
+	counts := CrawlQueueCounts{Pending: 24990, Running: 2, Succeeded24h: 530, Failed24h: 3}
+	snapshot := buildQueueSnapshot(rows, 1, AssessmentQueueMode, true, now, counts)
+	if snapshot.Counts != counts {
+		t.Fatalf("snapshot counts = %#v, want SQL counts %#v", snapshot.Counts, counts)
+	}
+	if snapshot.State != "running" {
+		t.Fatalf("state = %q, want running", snapshot.State)
+	}
+	if len(snapshot.Tasks) != 1 || snapshot.Tasks[0].ID != "1" {
+		t.Fatalf("preview tasks = %#v, JobList must only fill the task list", snapshot.Tasks)
 	}
 }
 
