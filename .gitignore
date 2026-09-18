@@ -44,3 +44,7 @@ coverage
 *.so
 *.dylib
 *.out
+
+# For Dev
+.codex
+passwd.txt
