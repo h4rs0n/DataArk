@@ -18,7 +18,6 @@ type ArticleChatProvider interface {
 type EnrichmentArticleAssessor struct {
 	Provider ArticleChatProvider
 	Model    string
-	Mode     string
 }
 
 func (assessor EnrichmentArticleAssessor) Name() string { return "openai_compatible" }
@@ -30,14 +29,9 @@ func (assessor EnrichmentArticleAssessor) Version() string {
 }
 func (EnrichmentArticleAssessor) PolicyVersion() string { return articlevalue.PolicyVersion }
 
-func (assessor EnrichmentArticleAssessor) ShouldActivateAssessment() bool {
-	mode := strings.ToLower(strings.TrimSpace(assessor.Mode))
-	return mode == "" || mode == "active"
-}
-
 func (assessor EnrichmentArticleAssessor) Assess(ctx context.Context, input ArticleAssessmentInput) (ArticleAssessmentResult, error) {
 	if assessor.Provider == nil {
-		return ArticleAssessmentResult{}, fmt.Errorf("missing optional article assessment provider")
+		return ArticleAssessmentResult{}, fmt.Errorf("article assessment provider is not configured")
 	}
 	release, err := acquireArticleAssessmentSlot(ctx)
 	if err != nil {
@@ -50,24 +44,14 @@ func (assessor EnrichmentArticleAssessor) Assess(ctx context.Context, input Arti
 	if err != nil {
 		return ArticleAssessmentResult{}, err
 	}
-	evidenceTokens := result.OriginalEvidenceTokens
-	truncated := result.EvidenceTruncated
-	if evidenceTokens <= 0 {
-		evidence, evidenceErr := articlevalue.BuildEvidence(input.Title, input.BodyText)
-		if evidenceErr != nil {
-			return ArticleAssessmentResult{}, evidenceErr
-		}
-		evidenceTokens = evidence.OriginalEstimatedTokens
-		truncated = evidence.Truncated
-	}
-	scores := articlevalue.ApplyEvidenceCaps(articlevalue.Scores{
+	scores := articlevalue.NormalizeModelScores(articlevalue.Scores{
 		Quality:   float64(result.QualityScore) / 100,
 		Depth:     float64(result.DepthScore) / 100,
 		Evergreen: float64(result.EvergreenScore) / 100,
-	}, evidenceTokens)
+	})
 	return ArticleAssessmentResult{
 		Quality: scores.Quality, Depth: scores.Depth, Evergreen: scores.Evergreen,
-		Confidence: articlevalue.EvidenceConfidence(evidenceTokens, truncated),
+		Confidence: 1,
 		Reasons:    append([]string(nil), result.Reasons...),
 		Summary:    strings.TrimSpace(result.Summary),
 		Keywords:   append([]string(nil), result.Keywords...),
@@ -75,12 +59,8 @@ func (assessor EnrichmentArticleAssessor) Assess(ctx context.Context, input Arti
 }
 
 func ConfiguredArticleAssessor() ArticleAssessor {
-	if strings.TrimSpace(config.LLMCHATMODEL) == "" {
-		return nil
-	}
 	return EnrichmentArticleAssessor{
 		Provider: ConfiguredChatProvider(), Model: config.LLMCHATMODEL,
-		Mode: config.ARTICLEASSESSMENTMODE,
 	}
 }
 

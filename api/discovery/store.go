@@ -785,6 +785,7 @@ func scoreAndLimitCandidates(candidates []discoveredCandidate, unlimited bool) [
 	return result
 }
 
+// scoreDiscoveredCandidate 只做爬取预算截断：有标题/摘要、发布时间近的优先入池，不把语义质量交给爬虫。
 func scoreDiscoveredCandidate(candidate discoveredCandidate) float64 {
 	score := 1.0
 	if candidate.Title != "" {
@@ -801,15 +802,6 @@ func scoreDiscoveredCandidate(candidate discoveredCandidate) float64 {
 			score += 2
 		} else if ageHours < 24*30 {
 			score += 1
-		}
-	}
-	keywords, err := archive.GetKeywordStats("", "30d", 20)
-	if err == nil {
-		text := strings.ToLower(candidate.Title + " " + candidate.Summary + " " + candidate.URL)
-		for _, keyword := range keywords {
-			if keyword.Keyword != "" && strings.Contains(text, strings.ToLower(keyword.Keyword)) {
-				score += float64(keyword.Count)
-			}
 		}
 	}
 	return score

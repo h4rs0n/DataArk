@@ -1,4 +1,4 @@
-// 评估状态机：规则评估、可选 LLM 增强、不可变行落库与候选激活。
+// 评估状态机：只跑 LLM 评估，不可变行落库与候选激活。
 package assessment
 
 import (
@@ -18,8 +18,8 @@ import (
 
 const (
 	ArticleQualityPolicyVersion = articlevalue.PolicyVersion
-	RuleArticleAssessorName     = "deterministic_rules"
-	RuleArticleAssessorVersion  = "2.0.0"
+	// RuleArticleAssessorName 只用来识别历史规则行，不再作为评估器实现。
+	RuleArticleAssessorName = "deterministic_rules"
 )
 
 // ArticleAssessmentInput 只含当前正文版本的身份与纯文本，禁止带入 URL/来源/图谱/反馈。
@@ -46,38 +46,12 @@ type ArticleAssessor interface {
 	Assess(context.Context, ArticleAssessmentInput) (ArticleAssessmentResult, error)
 }
 
-type articleAssessmentActivator interface {
-	ShouldActivateAssessment() bool
+func isModelAssessment(row ArticleAssessment) bool {
+	return strings.TrimSpace(row.Assessor) != "" && row.Assessor != RuleArticleAssessorName
 }
 
-type RuleBasedArticleAssessor struct{}
-
-func (RuleBasedArticleAssessor) Name() string          { return RuleArticleAssessorName }
-func (RuleBasedArticleAssessor) Version() string       { return RuleArticleAssessorVersion }
-func (RuleBasedArticleAssessor) PolicyVersion() string { return ArticleQualityPolicyVersion }
-
-func (RuleBasedArticleAssessor) Assess(ctx context.Context, input ArticleAssessmentInput) (ArticleAssessmentResult, error) {
-	if err := ctx.Err(); err != nil {
-		return ArticleAssessmentResult{}, err
-	}
-	content := strings.TrimSpace(input.Title + " " + input.BodyText)
-	if content == "" {
-		return ArticleAssessmentResult{}, errors.New("article assessment requires body text")
-	}
-	tokens := articlevalue.EstimateTokens(content)
-	scores := articlevalue.FallbackScores(tokens)
-	reasons := []string{
-		fmt.Sprintf("semantic model unavailable; conservative policy %s applied", ArticleQualityPolicyVersion),
-		fmt.Sprintf("assessment evidence is approximately %d tokens", tokens),
-	}
-	return ArticleAssessmentResult{
-		Quality: scores.Quality, Depth: scores.Depth, Evergreen: scores.Evergreen,
-		Confidence: 0.25, Reasons: reasons,
-	}, nil
-}
-
-// AssessCandidate 对已抽取的代表文章跑规则评估，并在有增强器时尝试 LLM 行。
-func AssessCandidate(ctx context.Context, candidateID uint, enhanced ArticleAssessor) error {
+// AssessCandidate 对已抽取的代表文章强制调用 LLM 评估；失败时不写规则分。
+func AssessCandidate(ctx context.Context, candidateID uint, assessor ArticleAssessor) error {
 	if db == nil || candidateID == 0 {
 		return gorm.ErrRecordNotFound
 	}
@@ -96,55 +70,42 @@ func AssessCandidate(ctx context.Context, candidateID uint, enhanced ArticleAsse
 			"eligibility_reasons": "duplicate_non_representative", "updated_at": discovery.Timestamp(),
 		}).Error
 	}
+	if assessor == nil {
+		return retainCurrentModelOrFail(candidate, ArticleAssessment{}, false, errors.New("article assessment provider is not configured"))
+	}
 	input := ArticleAssessmentInput{
 		CandidateID: candidate.ID, Title: candidate.Title, BodyText: candidate.BodyText,
 	}
-	rule := RuleBasedArticleAssessor{}
-	ruleResult, err := rule.Assess(ctx, input)
-	if err != nil {
-		return markAssessmentReview(candidate, err)
+	currentAssessment, hasCurrent := loadCurrentAssessment(candidate)
+	if hasCurrent && !isModelAssessment(currentAssessment) {
+		hasCurrent = false
+		currentAssessment = ArticleAssessment{}
 	}
-	ruleAssessment, err := persistArticleAssessment(candidate, rule, ruleResult)
-	if err != nil {
+	result, stored, found, lookupErr := loadPersistedAssessment(candidate, assessor)
+	if lookupErr != nil {
+		return lookupErr
+	}
+	if !found {
+		var assessErr error
+		result, assessErr = assessor.Assess(ctx, input)
+		if assessErr != nil {
+			return retainCurrentModelOrFail(candidate, currentAssessment, hasCurrent, enhancedAssessmentError(assessor, assessErr))
+		}
+		if validationErr := validateAssessmentResult(result); validationErr != nil {
+			return retainCurrentModelOrFail(candidate, currentAssessment, hasCurrent, enhancedAssessmentError(assessor, validationErr))
+		}
+		var persistErr error
+		stored, persistErr = persistArticleAssessment(candidate, assessor, result)
+		if persistErr != nil {
+			return persistErr
+		}
+	} else if validationErr := validateAssessmentResult(result); validationErr != nil {
+		return retainCurrentModelOrFail(candidate, currentAssessment, hasCurrent, enhancedAssessmentError(assessor, validationErr))
+	}
+	if err := applyAssessmentArticleMetadata(candidate, result); err != nil {
 		return err
 	}
-	currentAssessment, hasCurrent := loadCurrentAssessment(candidate)
-	if enhanced != nil && !(enhanced.Name() == rule.Name() && enhanced.Version() == rule.Version() && enhanced.PolicyVersion() == rule.PolicyVersion()) {
-		result, stored, found, lookupErr := loadPersistedAssessment(candidate, enhanced)
-		if lookupErr != nil {
-			return lookupErr
-		}
-		var assessErr error
-		if !found {
-			result, assessErr = enhanced.Assess(ctx, input)
-		}
-		if assessErr != nil {
-			return retainOrActivateFallback(candidate, currentAssessment, hasCurrent, ruleAssessment, ruleResult, enhancedAssessmentError(enhanced, assessErr))
-		} else if validationErr := validateAssessmentResult(result); validationErr != nil {
-			return retainOrActivateFallback(candidate, currentAssessment, hasCurrent, ruleAssessment, ruleResult, enhancedAssessmentError(enhanced, validationErr))
-		}
-		if !found {
-			var persistErr error
-			stored, persistErr = persistArticleAssessment(candidate, enhanced, result)
-			if persistErr != nil {
-				return persistErr
-			}
-		}
-		if err := applyAssessmentArticleMetadata(candidate, result); err != nil {
-			return err
-		}
-		if !shouldActivateArticleAssessment(enhanced) {
-			if hasCurrent {
-				return updateAssessmentStatus(candidate, discovery.DiscoveryAssessmentReady, "")
-			}
-			return activateArticleAssessment(candidate, ruleAssessment, ruleResult, "", false)
-		}
-		return activateArticleAssessment(candidate, stored, result, "", false)
-	}
-	if hasCurrent {
-		return updateAssessmentStatus(candidate, discovery.DiscoveryAssessmentReady, "")
-	}
-	return activateArticleAssessment(candidate, ruleAssessment, ruleResult, "", false)
+	return activateArticleAssessment(candidate, stored, result, "")
 }
 
 func enhancedAssessmentError(assessor ArticleAssessor, err error) error {
@@ -187,17 +148,14 @@ func assessmentResultFromRow(row ArticleAssessment) ArticleAssessmentResult {
 	}
 }
 
-func shouldActivateArticleAssessment(assessor ArticleAssessor) bool {
-	activator, ok := assessor.(articleAssessmentActivator)
-	return !ok || activator.ShouldActivateAssessment()
-}
-
-func retainOrActivateFallback(candidate discovery.DiscoveryCandidate, current ArticleAssessment, hasCurrent bool, fallback ArticleAssessment, fallbackResult ArticleAssessmentResult, assessmentErr error) error {
-	message := compactAssessmentError(assessmentErr.Error())
-	if hasCurrent {
-		return updateAssessmentStatus(candidate, discovery.DiscoveryAssessmentReady, message)
+func retainCurrentModelOrFail(candidate discovery.DiscoveryCandidate, current ArticleAssessment, hasCurrent bool, assessmentErr error) error {
+	if hasCurrent && isModelAssessment(current) {
+		return updateAssessmentStatus(candidate, discovery.DiscoveryAssessmentReady, compactAssessmentError(assessmentErr.Error()))
 	}
-	return activateArticleAssessment(candidate, fallback, fallbackResult, message, true)
+	if err := markAssessmentReview(candidate, assessmentErr); err != nil {
+		return err
+	}
+	return assessmentErr
 }
 
 func updateAssessmentStatus(candidate discovery.DiscoveryCandidate, state string, assessmentError string) error {
@@ -233,25 +191,21 @@ func persistArticleAssessment(candidate discovery.DiscoveryCandidate, assessor A
 	return row, err
 }
 
-// activateArticleAssessment 把一行评估设为当前指针，并按质量门槛更新 eligibility。
-func activateArticleAssessment(candidate discovery.DiscoveryCandidate, row ArticleAssessment, result ArticleAssessmentResult, assessmentError string, degraded bool) error {
+// activateArticleAssessment 把一行模型评估设为当前指针，并按质量门槛更新 eligibility。
+func activateArticleAssessment(candidate discovery.DiscoveryCandidate, row ArticleAssessment, result ArticleAssessmentResult, assessmentError string) error {
 	threshold := config.DISCOVERYARTICLEQUALITYTHRESHOLD
 	if threshold <= 0 || threshold > 1 {
 		threshold = articlevalue.QualityFloor
 	}
 	eligibility := discovery.DiscoveryEligibilityEligible
 	reason := "article_quality_passed"
-	assessmentState := discovery.DiscoveryAssessmentReady
-	if degraded {
-		assessmentState = discovery.DiscoveryAssessmentDegraded
-	}
 	if result.Quality < threshold {
 		eligibility = discovery.DiscoveryEligibilityIneligible
 		reason = "article_quality_below_threshold"
 	}
 	now := discovery.Timestamp()
 	return db.Model(&candidate).Updates(map[string]interface{}{
-		"current_assessment_id": row.ID, "assessment_state": assessmentState,
+		"current_assessment_id": row.ID, "assessment_state": discovery.DiscoveryAssessmentReady,
 		"assessment_error": assessmentError, "quality_score": clampAssessment(result.Quality),
 		"depth_score": clampAssessment(result.Depth), "eligibility_state": eligibility,
 		"eligibility_reasons": reason, "updated_at": now,

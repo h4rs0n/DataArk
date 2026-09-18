@@ -27,7 +27,7 @@ Backend (`api/`, Go module `DataArk`, Go 1.26):
 
 Frontend (`web/src/`): `views/` (`*View.vue`), `components/` (recommendation center panels live in `components/recommendations/`), `api/` (shared `client.ts` + domain helpers), `stores/` (Pinia auth store only; page data stays in views), `router/`, `assets/`. Node `>=24.15 <25`. The npm package name is still `web2`.
 
-Ops: `docker/` (Compose + Dockerfile). Docs: `docs/operations/` runbooks, `docs/references/frontend-pitfalls.md` (Arco API traps), `docs/exec-plans/` (in-progress living plans only; finished plans live in `docs/exec-plans/done/`). `docs/design-docs/dbDesign.md` describes the live Postgres schema (Goose `000001`–`000030` plus River); production DDL is still only the numbered migrations.
+Ops: `docker/` (Compose + Dockerfile). Docs: `docs/operations/` runbooks, `docs/references/frontend-pitfalls.md` (Arco API traps), `docs/exec-plans/` (in-progress living plans only; finished plans live in `docs/exec-plans/done/`). `docs/design-docs/dbDesign.md` describes the live Postgres schema (Goose `000001`–`000031` plus River); production DDL is still only the numbered migrations.
 
 ## Build and development commands
 
@@ -86,7 +86,7 @@ Squash happens when opening a PR, not after each local change. PR shape details 
 
 ## Configuration and secrets
 
-CLI flags: `api/flag/flag.go`. Runtime vars: `api/config/config.go`. New required flags must be documented in `README.md`, `README_en.md`, `docker/docker-compose.yml`, and release workflows. LLM flags are optional; without them, assessment/rerank/digest summary stay rule-based.
+CLI flags: `api/flag/flag.go`. Runtime vars: `api/config/config.go`. New required flags must be documented in `README.md`, `README_en.md`, `docker/docker-compose.yml`, and release workflows. `-llm-base-url` and `-llm-chat-model` are required; assessment, rerank, digest summary, discovery feed, and archive recommendations are LLM-only and have no rule-based fallback. `-llm-api-key` and `-llm-embedding-model` stay optional. `-article-assessment-mode` must be `active`.
 
 Do not commit real credentials. `passwd.txt` at the repo root is a local admin-password note and must stay untracked.
 

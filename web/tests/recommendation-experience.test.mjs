@@ -50,11 +50,14 @@ test('frontend has no destructive daily regeneration interaction', () => {
   assert.match(digest, /admin\/recommendations\/supplement/)
 })
 
-test('digest summary loads after the article list and polls until ready', () => {
-  assert.match(digest, /if \(token === digestLoadToken\) void loadDigestSummary/)
-  assert.match(digest, /function scheduleDigestSummaryPoll/)
-  assert.match(digest, /digestSummaryPollMaxMs = 30000/)
-  assert.match(digest, /onUnmounted\(\(\) => \{\s*stopDigestSummaryPoll\(\)/s)
+test('digest summary is LLM-only and archive recommendations show errors', () => {
+  assert.doesNotMatch(digest, /统计总结/)
+  assert.doesNotMatch(digest, /rule-based/)
+  assert.match(digest, /AI 总结/)
+  assert.doesNotMatch(archives, /基于点击、搜索词/)
+  assert.match(archives, /由模型根据近期归档选出/)
+  assert.match(archives, /loadError/)
+  assert.match(archives, /归档推荐失败/)
 })
 
 test('discovery UI lists manual subscriptions without sitemap gap fill', () => {

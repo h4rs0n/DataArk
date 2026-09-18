@@ -29,6 +29,9 @@ func main() {
 func run() (runErr error) {
 	display_banner()
 	parseFlags()
+	if err := config.ValidateRequiredLLM(); err != nil {
+		return fmt.Errorf("llm configuration: %w", err)
+	}
 	logRuntime, err := configureLogging(config.LOGDIR, config.LOGRETENTIONDAYS)
 	if err != nil {
 		return fmt.Errorf("initialize logging: %w", err)

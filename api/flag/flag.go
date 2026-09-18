@@ -46,7 +46,7 @@ func ParseFlag() {
 	DiscoveryInventoryFreshDaysFlag := stdflag.Int("discover-inventory-fresh-days", 30, "Assign recent article window used by candidate inventory")
 	DiscoveryInventoryWarningDaysFlag := stdflag.Float64("discover-inventory-warning-days", 7, "Assign candidate inventory warning threshold in days")
 	DiscoveryInventoryCriticalDaysFlag := stdflag.Float64("discover-inventory-critical-days", 3, "Assign candidate inventory critical threshold in days")
-	RecommendationEnabledFlag := stdflag.Bool("recommend-enabled", false, "Enable deterministic daily recommendations with optional model enhancement")
+	RecommendationEnabledFlag := stdflag.Bool("recommend-enabled", false, "Enable daily recommendations that require LLM rerank")
 	RecommendationDailyLimitFlag := stdflag.Int("recommend-daily-limit", 10, "Assign default daily recommendation count")
 	RecommendationTimezoneFlag := stdflag.String("recommend-timezone", "Asia/Shanghai", "Assign recommendation timezone")
 	RecommendationGenerationTimeFlag := stdflag.String("recommend-time", "07:00", "Assign daily recommendation generation time")
@@ -55,12 +55,12 @@ func ParseFlag() {
 	RecommendationRerankLimitFlag := stdflag.Int("recommend-rerank-limit", 30, "Assign max candidates sent to LLM reranker")
 	RecommendationExplorationRateFlag := stdflag.Float64("recommend-exploration-rate", 0.15, "Assign recommendation exploration rate")
 	RecommendationReexposureCooldownFlag := stdflag.String("recommend-reexposure-cooldown", "1800h", "Assign cooldown before an exposed but unopened article can compete again")
-	LLMBaseURLFlag := stdflag.String("llm-base-url", "", "Assign OpenAI-compatible LLM base URL")
+	LLMBaseURLFlag := stdflag.String("llm-base-url", "", "Assign required OpenAI-compatible LLM base URL")
 	LLMAPIKeyFlag := stdflag.String("llm-api-key", "", "Assign LLM API key")
-	LLMChatModelFlag := stdflag.String("llm-chat-model", "", "Assign LLM chat model")
+	LLMChatModelFlag := stdflag.String("llm-chat-model", "", "Assign required LLM chat model")
 	LLMEmbeddingModelFlag := stdflag.String("llm-embedding-model", "", "Assign LLM embedding model")
 	LLMTimeoutFlag := stdflag.String("llm-timeout", "30s", "Assign LLM request timeout")
-	ArticleAssessmentModeFlag := stdflag.String("article-assessment-mode", "observe", "Assign article assessment activation mode: observe or active")
+	ArticleAssessmentModeFlag := stdflag.String("article-assessment-mode", "active", "Assign article assessment activation mode; only active is allowed")
 	ArticleAssessmentConcurrencyFlag := stdflag.Int("article-assessment-concurrency", 2, "Assign maximum concurrent article assessment LLM calls")
 	EmbeddingDimensionFlag := stdflag.Int("embedding-dimension", 0, "Assign embedding vector dimension")
 	RSSHubBaseURLFlag := stdflag.String("rsshub-base-url", "", "Assign optional RSSHub base URL")
@@ -119,8 +119,8 @@ func ParseFlag() {
 	config.LLMEMBEDDINGMODEL = strings.TrimSpace(*LLMEmbeddingModelFlag)
 	config.LLMTIMEOUT = strings.TrimSpace(*LLMTimeoutFlag)
 	config.ARTICLEASSESSMENTMODE = strings.ToLower(strings.TrimSpace(*ArticleAssessmentModeFlag))
-	if config.ARTICLEASSESSMENTMODE != "active" {
-		config.ARTICLEASSESSMENTMODE = "observe"
+	if config.ARTICLEASSESSMENTMODE == "" {
+		config.ARTICLEASSESSMENTMODE = "active"
 	}
 	config.ARTICLEASSESSMENTCONCURRENCY = *ArticleAssessmentConcurrencyFlag
 	if config.ARTICLEASSESSMENTCONCURRENCY < 1 {

@@ -1,6 +1,6 @@
 # Recommendation v3 Operations Runbook
 
-This runbook covers the Blogroll discovery, article assessment, per-user recommendation, feedback, and immutable daily-digest pipeline. It is intentionally safe to use without an LLM API key, vector extension, real-user fixtures, or public-network access.
+This runbook covers the Blogroll discovery, article assessment, per-user recommendation, feedback, and immutable daily-digest pipeline. Chat model configuration is required: `-llm-chat-model` and `-llm-base-url` must be set or the process refuses to start. Embedding remains optional. Assessment stays on a paused manual queue.
 
 ## Upgrade prerequisites
 
@@ -8,7 +8,7 @@ Back up PostgreSQL and the archive directory before changing the running binary.
 
 Blogroll targets remain `observing` until a single homepage response supplies deterministic blog evidence. They become `active` before endpoint, Blogroll, or backfill expansion. Targets without evidence become `non_blog`, keep their graph edges and `blog_verification:<reason>` operational detail, disable the homepage endpoint, and disappear from the subscriptions projection. If an owner confirms a false negative, change the site status to `active`; this re-enables and immediately schedules its homepage without deleting the original decision evidence from fetch and graph history.
 
-For production PostgreSQL, start the database first and then start one API instance. Startup applies Goose and River migrations, pauses the `discovery_crawl` queue before workers accept jobs, moves unfinished discovery work left in River's historical `default` queue into the paused queue, recovers interrupted crawl rows as waiting, and stages due discovery work without executing it. Daily recommendation generation remains on River's default queue. Confirm the `vector` extension only when embeddings are enabled; the rules pipeline does not need it. A representative isolated validation is:
+For production PostgreSQL, start the database first and then start one API instance. Startup applies Goose and River migrations, pauses the `discovery_crawl` queue before workers accept jobs, moves unfinished discovery work left in River's historical `default` queue into the paused queue, recovers interrupted crawl rows as waiting, and stages due discovery work without executing it. Daily recommendation generation remains on River's default queue. Confirm the `vector` extension only when embeddings are enabled; ranking no longer uses an embedding score formula. A representative isolated validation is:
 
 ```sh
 cd docker
@@ -38,8 +38,8 @@ Use the following order. Each step is reversible and must pass count reconciliat
 2. Allow startup compatibility backfills to create logical sites, endpoints, provenance, legacy-state review rows, feedback current keys, and frozen item evidence. Compare pre/post counts. Roll back reads to the old binary; do not delete backfilled rows.
 3. Enable the shared workers and safe fetcher for a small set of owner-approved seed sites. Pause a site with the owner API to stop fetch, graph, and unfinished backfill work without deleting candidates.
 4. Expand Blogroll scanning and bounded historical backfill for those seeds. If error or robots rates rise, pause the affected site or set discovery interval to zero; existing graph and provenance remain usable.
-5. Enable article processing and deterministic assessment. Compare ready, review, ineligible, duplicate, and eligible counts. A remote assessor may be enabled later, but its failure must leave the rule assessment active.
-6. Enable `-recommend-enabled=true` for a test deployment and test users. Validate at least two user-local dates, target N/actual M explanations, exploration, per-user blocks, immutable retries, and owner metrics.
+5. Enable article processing and LLM assessment. Compare ready, review, ineligible, duplicate, and eligible counts. An assessor or reranker failure must fail the job and retry; it must not write rule scores or publish a degraded digest.
+6. Enable `-recommend-enabled=true` for a test deployment and test users. Validate at least two user-local dates, target N/actual M explanations, per-user blocks, immutable retries, and owner metrics. Daily ranking and discovery feed require a successful LLM rerank; digest summaries require a successful LLM summary job.
 7. Expand to all users after a stable publication window. Stop old clients that expect global candidate status writes. The current API already writes personal read, ignore, archive, exposure, and feedback state only to the authenticated user's overlay.
 8. Keep compatibility columns until at least one additional stable release. Removing them requires a separate audited migration, fresh counts, and a rollback export.
 
@@ -67,7 +67,7 @@ Use `GET /api/admin/recommendations/metrics`, site graph/operations/backfill end
 - robots denial or unavailability: an explicit denial stops the disallowed request. An unavailable robots file is conservative and retryable. Do not bypass robots to restore throughput; correct the site/endpoint or wait for the bounded retry.
 - Processing backlog: compare discovered/fetch-pending/ready/review/failed counts and the owner-only crawl queue panel. Restarting the API stages due crawl jobs onto the automatic `discovery_crawl` queue. LLM assessment stays on the paused `article_assessment` queue until the owner clicks **执行 LLM 评估**. Persistent article-type, language, or short-body cases belong in review, not forced eligible.
 - Inventory shortage: inspect fresh/evergreen/exploration inventory days and the digest's excluded counts. Hard eligibility, user blocks, cooldown, and duplicate identity are never relaxed. Increase legitimate discovery/backfill coverage or use owner supplement after new eligible items arrive; do not insert ineligible fillers.
-- Model degradation: an absent model is normal deterministic mode. A configured assessor/reranker failure records degradation while rules continue. Remove or repair model configuration, then allow future assessments/digests to use it; never rewrite already-published snapshots.
+- Model failure: a missing chat model refuses process start. A configured assessor/reranker/summary failure fails the job and retries via River; it does not publish a degraded digest or persist a template summary. Repair model configuration, then allow future assessments/digests to use it; never rewrite already-published snapshots.
 - Missing, draft, or failed digest: startup and the scheduler recover the user/local-date job. Owner safe retry may be used. Published or supplemented days are returned unchanged. A later inventory increase may be handled only by append-only supplement.
 - Low-hit starvation: `scheduleFloorViolations` must remain zero. Low historical eligible rate is computed only for reporting; it cannot extend the active/observing/dormant maximum interval. Inspect the saved schedule decision when a violation appears.
 - Integrity alarms: `hardFilterViolations`, `duplicateClusterViolations`, and `activeBlockViolations` target zero and use publication-time snapshot evidence. Stop rollout and inspect the affected item/day before changing data; do not delete the digest.
@@ -82,7 +82,7 @@ Structured events must never contain full URLs, URL paths or queries, article bo
 
 ## Release verification
 
-Run the deterministic acceptance suite without public Internet or model credentials:
+Run the backend and frontend suites (SQLite tests use fake LLM providers; they do not require public Internet or model credentials):
 
 ```sh
 cd api

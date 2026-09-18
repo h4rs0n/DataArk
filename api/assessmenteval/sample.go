@@ -49,9 +49,6 @@ type databaseCandidateRow struct {
 	ActiveQuality    float64
 	ActiveDepth      float64
 	ActiveEvergreen  float64
-	RuleQuality      float64
-	RuleDepth        float64
-	RuleEvergreen    float64
 }
 
 func LoadCandidateRecords(database *gorm.DB) ([]CandidateRecord, error) {
@@ -72,16 +69,7 @@ SELECT c.id AS candidate_id,
        COALESCE(active.assessor, '') AS active_assessor,
        COALESCE(active.overall_quality, 0) AS active_quality,
        COALESCE(active.depth, 0) AS active_depth,
-       COALESCE(active.evergreen_value, 0) AS active_evergreen,
-       COALESCE((SELECT rules.overall_quality FROM discovery_article_assessments rules
-                 WHERE rules.candidate_id = c.id AND rules.content_version = c.content_version
-                   AND rules.assessor = 'deterministic_rules' ORDER BY rules.id DESC LIMIT 1), 0) AS rule_quality,
-       COALESCE((SELECT rules.depth FROM discovery_article_assessments rules
-                 WHERE rules.candidate_id = c.id AND rules.content_version = c.content_version
-                   AND rules.assessor = 'deterministic_rules' ORDER BY rules.id DESC LIMIT 1), 0) AS rule_depth,
-       COALESCE((SELECT rules.evergreen_value FROM discovery_article_assessments rules
-                 WHERE rules.candidate_id = c.id AND rules.content_version = c.content_version
-                   AND rules.assessor = 'deterministic_rules' ORDER BY rules.id DESC LIMIT 1), 0) AS rule_evergreen
+       COALESCE(active.evergreen_value, 0) AS active_evergreen
 FROM discovery_candidates c
 JOIN discovery_article_content_versions cv
   ON cv.candidate_id = c.id AND cv.content_version = c.content_version
@@ -107,7 +95,6 @@ WHERE c.processing_state = 'ready'
 			ContentHash: row.ContentHash, Host: host, Title: row.Title, BodyText: row.BodyText, Language: row.Language,
 			ActiveAssessor: row.ActiveAssessor,
 			ActiveScores:   AxisScores{Quality: scoreFromFraction(row.ActiveQuality), Depth: scoreFromFraction(row.ActiveDepth), Evergreen: scoreFromFraction(row.ActiveEvergreen)},
-			RuleScores:     AxisScores{Quality: scoreFromFraction(row.RuleQuality), Depth: scoreFromFraction(row.RuleDepth), Evergreen: scoreFromFraction(row.RuleEvergreen)},
 		})
 	}
 	return records, nil
@@ -157,8 +144,8 @@ func BuildManifest(records []CandidateRecord, seed string, createdAt time.Time) 
 			return record.ActiveScores.Quality >= 45 && record.ActiveScores.Quality <= 55
 		}, value: func(record CandidateRecord) float64 { return math.Abs(float64(record.ActiveScores.Quality - 50)) }},
 		{name: "saturated-high-score", filter: func(record CandidateRecord) bool { return record.ActiveScores.Quality >= 95 }, value: func(record CandidateRecord) float64 { return float64(record.ActiveScores.Quality) }, desc: true},
-		{name: "model-rule-disagreement", filter: func(CandidateRecord) bool { return true }, value: func(record CandidateRecord) float64 {
-			return math.Abs(float64(record.ActiveScores.Quality - record.RuleScores.Quality))
+		{name: "quality-depth-disagreement", filter: func(CandidateRecord) bool { return true }, value: func(record CandidateRecord) float64 {
+			return math.Abs(float64(record.ActiveScores.Quality - record.ActiveScores.Depth))
 		}, desc: true},
 		{name: "overlong-body", filter: func(record CandidateRecord) bool { return len([]rune(record.BodyText)) >= 20000 }, value: func(record CandidateRecord) float64 { return float64(len([]rune(record.BodyText))) }, desc: true},
 	}

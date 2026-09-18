@@ -48,7 +48,7 @@ func TestLoadCandidateRecordsUsesImmutableCurrentContentVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 1 || records[0].ContentVersionID != currentVersion.ID || records[0].ContentHash != "current-hash" || records[0].Title != "Current title" || records[0].ActiveScores.Quality != 80 || records[0].RuleScores.Quality != 40 {
+	if len(records) != 1 || records[0].ContentVersionID != currentVersion.ID || records[0].ContentHash != "current-hash" || records[0].Title != "Current title" || records[0].ActiveScores.Quality != 80 {
 		t.Fatalf("records = %#v", records)
 	}
 }
@@ -82,7 +82,7 @@ func TestBuildManifestUsesFixedQuotasStressStrataAndHostCap(t *testing.T) {
 	if core, stress := countPrefix(strata, "core:"), countPrefix(strata, "stress:"); core != 80 || stress != 40 {
 		t.Fatalf("core=%d stress=%d strata=%#v", core, stress, strata)
 	}
-	for _, name := range []string{"stress:low-active-score", "stress:quality-boundary", "stress:saturated-high-score", "stress:model-rule-disagreement", "stress:overlong-body"} {
+	for _, name := range []string{"stress:low-active-score", "stress:quality-boundary", "stress:saturated-high-score", "stress:quality-depth-disagreement", "stress:overlong-body"} {
 		if strata[name] != 8 {
 			t.Fatalf("%s count=%d", name, strata[name])
 		}
@@ -198,9 +198,9 @@ func syntheticCandidateRecords() []CandidateRecord {
 			nextID++
 		}
 	}
-	appendStress := func(prefix string, quality, ruleQuality, length int) {
+	appendStress := func(prefix string, quality, depth, length int) {
 		for item := 0; item < 8; item++ {
-			record := candidateFixture(nextID, "other", strings.Repeat(strconvDigit(item), length), quality+item%2, ruleQuality)
+			record := candidateFixture(nextID, "other", strings.Repeat(strconvDigit(item), length), quality+item%2, depth)
 			record.ContentHash = fmt.Sprintf("%s-%d", prefix, nextID)
 			records = append(records, record)
 			nextID++
@@ -214,11 +214,11 @@ func syntheticCandidateRecords() []CandidateRecord {
 	return records
 }
 
-func candidateFixture(id uint, language, body string, quality, ruleQuality int) CandidateRecord {
+func candidateFixture(id uint, language, body string, quality, depth int) CandidateRecord {
 	return CandidateRecord{
 		CandidateID: id, ContentVersionID: id, ContentVersion: 1, ContentHash: fmt.Sprintf("hash-%d", id), Host: fmt.Sprintf("host-%d.example", id),
 		Title: fmt.Sprintf("Article %d", id), BodyText: body, Language: language, ActiveAssessor: "baseline",
-		ActiveScores: AxisScores{Quality: quality, Depth: quality, Evergreen: quality}, RuleScores: AxisScores{Quality: ruleQuality, Depth: ruleQuality, Evergreen: ruleQuality},
+		ActiveScores: AxisScores{Quality: quality, Depth: depth, Evergreen: quality},
 	}
 }
 

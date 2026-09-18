@@ -1,5 +1,10 @@
 package config
 
+import (
+	"fmt"
+	"strings"
+)
+
 const DefaultDiscoveryUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 
 var DEBUG = false
@@ -57,7 +62,21 @@ var LLMAPIKEY = ""
 var LLMCHATMODEL = ""
 var LLMEMBEDDINGMODEL = ""
 var LLMTIMEOUT = "30s"
-var ARTICLEASSESSMENTMODE = "observe"
+var ARTICLEASSESSMENTMODE = "active"
 var ARTICLEASSESSMENTCONCURRENCY = 2
 var EMBEDDINGDIMENSION = 0
 var RSSHUBBASEURL = ""
+
+// ValidateRequiredLLM 在进程启动时强制 chat 模型可用，禁止再走规则回退。
+func ValidateRequiredLLM() error {
+	if strings.TrimSpace(LLMBASEURL) == "" {
+		return fmt.Errorf("-llm-base-url is required")
+	}
+	if strings.TrimSpace(LLMCHATMODEL) == "" {
+		return fmt.Errorf("-llm-chat-model is required")
+	}
+	if strings.ToLower(strings.TrimSpace(ARTICLEASSESSMENTMODE)) != "active" {
+		return fmt.Errorf("-article-assessment-mode must be active")
+	}
+	return nil
+}

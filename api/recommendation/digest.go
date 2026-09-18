@@ -19,7 +19,7 @@ import (
 
 // GenerateDailyRecommendations 使用生产 reranker 生成当日日报。
 func GenerateDailyRecommendations(ctx context.Context, userID uint, date string) (*RecommendationDaySnapshot, error) {
-	return GenerateDailyRecommendationsWithReranker(ctx, userID, date, ConfiguredRecommendationReranker())
+	return GenerateDailyRecommendationsWithReranker(ctx, userID, date, configuredReranker())
 }
 
 // GenerateDailyRecommendationsWithReranker 使用指定 reranker 生成当日日报。
@@ -31,7 +31,7 @@ func GenerateDailyRecommendationsWithReranker(ctx context.Context, userID uint, 
 func RegenerateDailyRecommendations(ctx context.Context, userID uint, date string) (*RecommendationDaySnapshot, error) {
 	// Kept for source compatibility: retries are now non-destructive and an
 	// already published digest is returned byte-semantically unchanged.
-	return generateDailyRecommendationsWithOptions(ctx, userID, date, ConfiguredRecommendationReranker(), true)
+	return generateDailyRecommendationsWithOptions(ctx, userID, date, configuredReranker(), true)
 }
 
 func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, date string, reranker RerankProvider, force bool) (*RecommendationDaySnapshot, error) {
@@ -71,7 +71,7 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 		return nil, err
 	}
 	selectionLimit := settings.DailyLimit
-	if reranker != nil && config.RECOMMENDATIONRERANKLIMIT > selectionLimit {
+	if config.RECOMMENDATIONRERANKLIMIT > selectionLimit {
 		selectionLimit = config.RECOMMENDATIONRERANKLIMIT
 	}
 	selection, err := selectDailyRecommendationCandidatesV3(ctx, userID, *settings, profile, selectionLimit)
@@ -80,25 +80,26 @@ func generateDailyRecommendationsWithOptions(ctx context.Context, userID uint, d
 		observability.Log(observability.Event{Name: "recommendation_day_failed", OccurredAt: recommendationClock.Now(), UserID: userID, DayID: day.ID, LocalDate: date, Status: RecommendationDayStatusFailed, ErrorType: "selection"})
 		return nil, err
 	}
-	reranked, rerankModel, rerankPrompt, degradationReason := applyRecommendationReranker(ctx, userID, selectionLimit, selection.Candidates, profile, reranker)
-	selected, softRelaxations := diversifyRecommendationCandidatesV3(reranked, settings.DailyLimit, settings.ExplorationRate)
-	selection.SoftRelaxations = softRelaxations
-	if possible := min(settings.DailyLimit, len(reranked)); len(selected) < possible {
-		selection.Excluded["same_cluster_daily"] += possible - len(selected)
+	reranked, rerankModel, rerankPrompt, err := applyRecommendationReranker(ctx, userID, settings.DailyLimit, selection.Candidates, profile, reranker)
+	if err != nil {
+		_ = markRecommendationDayFailed(day.ID, err)
+		observability.Log(observability.Event{Name: "recommendation_day_failed", OccurredAt: recommendationClock.Now(), UserID: userID, DayID: day.ID, LocalDate: date, Status: RecommendationDayStatusFailed, ErrorType: "rerank", ErrorMessage: err.Error()})
+		return nil, err
 	}
+	selected := trimRecommendationCandidates(reranked, settings.DailyLimit)
 	now := recommendationClock.Now()
 	items := buildRecommendationItems(day.ID, userID, selected, 1, profile.ProfileVersion, false, now)
 	if err := publishRecommendationDay(day.ID, userID, items, map[string]interface{}{
 		"status":             RecommendationDayStatusPublished,
 		"actual_count":       len(items),
-		"shortage_reasons":   marshalSelectionAudit(settings.DailyLimit, len(items), selection, softRelaxations),
+		"shortage_reasons":   marshalSelectionAudit(settings.DailyLimit, len(items), selection, nil),
 		"policy_version":     recommendationSelectionPolicyV3,
 		"profile_version":    profile.ProfileVersion,
 		"llm_model":          rerankModel,
 		"prompt_version":     rerankPrompt,
 		"failure_reason":     "",
-		"degraded":           degradationReason != "",
-		"degradation_reason": degradationReason,
+		"degraded":           false,
+		"degradation_reason": "",
 		"generated_at":       &now,
 		"published_at":       &now,
 		"updated_at":         now,
@@ -182,7 +183,7 @@ func publishRecommendationDay(dayID uint, userID uint, items []RecommendationIte
 
 // SupplementDailyRecommendations 为已发布但仍缺篇的日报补文。
 func SupplementDailyRecommendations(ctx context.Context, userID uint, date string) (*RecommendationDaySnapshot, error) {
-	return SupplementDailyRecommendationsWithReranker(ctx, userID, date, ConfiguredRecommendationReranker())
+	return SupplementDailyRecommendationsWithReranker(ctx, userID, date, configuredReranker())
 }
 
 // SupplementDailyRecommendationsWithReranker 使用指定 reranker 为日报补文。
@@ -208,18 +209,21 @@ func SupplementDailyRecommendationsWithReranker(ctx context.Context, userID uint
 		return nil, err
 	}
 	selectionLimit := missing
-	if reranker != nil && config.RECOMMENDATIONRERANKLIMIT > selectionLimit {
+	if config.RECOMMENDATIONRERANKLIMIT > selectionLimit {
 		selectionLimit = config.RECOMMENDATIONRERANKLIMIT
 	}
 	selection, err := selectDailyRecommendationCandidatesV3(ctx, userID, *settings, profile, selectionLimit)
 	if err != nil {
 		return nil, err
 	}
-	reranked, rerankModel, rerankPrompt, degradationReason := applyRecommendationReranker(ctx, userID, selectionLimit, selection.Candidates, profile, reranker)
-	selected, relaxations := diversifyRecommendationCandidatesV3WithReserved(reranked, missing, settings.ExplorationRate, recommendationSourceCountsFromItems(snapshot.Items))
+	reranked, rerankModel, rerankPrompt, err := applyRecommendationReranker(ctx, userID, missing, selection.Candidates, profile, reranker)
+	if err != nil {
+		return nil, err
+	}
+	selected := trimRecommendationCandidates(reranked, missing)
 	now := recommendationClock.Now()
 	items := buildRecommendationItems(day.ID, userID, selected, day.ActualCount+1, profile.ProfileVersion, true, now)
-	if err := appendRecommendationSupplement(day.ID, userID, day.RequestedCount, items, selection, relaxations, rerankModel, rerankPrompt, degradationReason, now); err != nil {
+	if err := appendRecommendationSupplement(day.ID, userID, day.RequestedCount, items, selection, nil, rerankModel, rerankPrompt, now); err != nil {
 		return nil, err
 	}
 	if len(items) > 0 {
@@ -233,7 +237,7 @@ func SupplementDailyRecommendationsWithReranker(ctx context.Context, userID uint
 	return snapshot, nil
 }
 
-func appendRecommendationSupplement(dayID uint, userID uint, requestedCount int, items []RecommendationItem, selection *recommendationSelectionReport, relaxations []string, rerankModel string, rerankPrompt string, degradationReason string, now time.Time) error {
+func appendRecommendationSupplement(dayID uint, userID uint, requestedCount int, items []RecommendationItem, selection *recommendationSelectionReport, relaxations []string, rerankModel string, rerankPrompt string, now time.Time) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		var day RecommendationDay
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", dayID, userID).First(&day).Error; err != nil {
@@ -283,9 +287,7 @@ func appendRecommendationSupplement(dayID uint, userID uint, requestedCount int,
 			"status": RecommendationDayStatusSupplemented, "actual_count": actual,
 			"shortage_reasons":  marshalSelectionAudit(requestedCount, actual, selection, relaxations),
 			"supplement_policy": "append_missing_v1", "supplemented_at": &now,
-			"degraded":           day.Degraded || degradationReason != "",
-			"degradation_reason": firstNonEmpty(day.DegradationReason, degradationReason),
-			"llm_model":          firstNonEmpty(day.LLMModel, rerankModel), "prompt_version": firstNonEmpty(day.PromptVersion, rerankPrompt),
+			"llm_model": firstNonEmpty(day.LLMModel, rerankModel), "prompt_version": firstNonEmpty(day.PromptVersion, rerankPrompt),
 			"updated_at": now,
 		}).Error
 	})

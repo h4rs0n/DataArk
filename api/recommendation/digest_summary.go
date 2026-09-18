@@ -1,20 +1,15 @@
 package recommendation
 
 import (
-	"DataArk/config"
 	"DataArk/observability"
 	"context"
 	"encoding/json"
-	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
 
 const (
 	digestSummaryItemSummaryRunes = 160
-	// RuleBasedProviderModel 标识无 LLM 时的规则摘要实现。
-	RuleBasedProviderModel = "rule-based"
 )
 
 // RecommendationDaySummary is the user-facing digest summary for a single
@@ -30,93 +25,6 @@ type RecommendationDaySummary struct {
 	PromptVersion string     `json:"promptVersion"`
 	GeneratedAt   *time.Time `json:"generatedAt"`
 	Reason        string     `json:"reason,omitempty"`
-}
-
-// ConfiguredDigestSummaryGenerator 在配置了 chat 模型时用 LLM，否则用规则摘要。
-func ConfiguredDigestSummaryGenerator() DigestSummaryGenerator {
-	if strings.TrimSpace(config.LLMCHATMODEL) == "" {
-		return RuleBasedDigestSummaryGenerator{}
-	}
-	return configuredOpenAICompatibleProvider()
-}
-
-// RuleBasedDigestSummaryGenerator produces a deterministic statistics-based
-// summary without any network call. It never fails, so it also serves as the
-// fallback when the LLM call fails.
-type RuleBasedDigestSummaryGenerator struct{}
-
-func (generator RuleBasedDigestSummaryGenerator) GenerateDigestSummary(_ context.Context, input DigestSummaryInput) (DigestSummaryOutput, error) {
-	sourceCounts := make(map[string]int)
-	topicCounts := make(map[string]int)
-	for _, item := range input.Items {
-		if source := strings.TrimSpace(item.Source); source != "" {
-			sourceCounts[source]++
-		}
-		for _, topic := range item.Topics {
-			if topic = strings.TrimSpace(topic); topic != "" {
-				topicCounts[topic]++
-			}
-		}
-	}
-	topTopics := topCountedValues(topicCounts, 3)
-
-	overview := fmt.Sprintf("当天共推荐 %d 篇文章", len(input.Items))
-	if len(sourceCounts) > 0 {
-		overview += fmt.Sprintf("，覆盖 %d 个来源", len(sourceCounts))
-	}
-	if len(topTopics) > 0 {
-		overview += "，主要主题：" + strings.Join(topTopics, "、")
-	}
-	overview += "。"
-
-	highlights := make([]string, 0, 3)
-	for _, item := range input.Items {
-		if len(highlights) == 3 {
-			break
-		}
-		title := strings.TrimSpace(item.Title)
-		if title == "" {
-			continue
-		}
-		if source := strings.TrimSpace(item.Source); source != "" {
-			highlights = append(highlights, fmt.Sprintf("《%s》（%s）", title, source))
-		} else {
-			highlights = append(highlights, fmt.Sprintf("《%s》", title))
-		}
-	}
-
-	return DigestSummaryOutput{
-		Overview:      overview,
-		Highlights:    highlights,
-		Topics:        topTopics,
-		Model:         RuleBasedProviderModel,
-		PromptVersion: "rule-digest-summary-v1",
-	}, nil
-}
-
-func topCountedValues(counts map[string]int, limit int) []string {
-	type counted struct {
-		value string
-		count int
-	}
-	values := make([]counted, 0, len(counts))
-	for value, count := range counts {
-		values = append(values, counted{value: value, count: count})
-	}
-	sort.Slice(values, func(i, j int) bool {
-		if values[i].count != values[j].count {
-			return values[i].count > values[j].count
-		}
-		return values[i].value < values[j].value
-	})
-	top := make([]string, 0, limit)
-	for _, value := range values {
-		if len(top) == limit {
-			break
-		}
-		top = append(top, value.value)
-	}
-	return top
 }
 
 // GetRecommendationDaySummary 只读已落库的日报摘要，不在 GET 路径调用 LLM。
@@ -144,7 +52,7 @@ func readRecommendationDaySummary(userID uint, date string) (*RecommendationDayS
 	return &RecommendationDaySummary{Date: date, Highlights: []string{}, Topics: []string{}, Reason: "日报总结生成中"}, nil
 }
 
-// GetRecommendationDaySummaryWithGenerator 生成并落库摘要，供后台作业与测试调用。
+// GetRecommendationDaySummaryWithGenerator 生成并落库摘要，供后台作业与测试调用。失败不写缓存。
 func GetRecommendationDaySummaryWithGenerator(ctx context.Context, userID uint, date string, generator DigestSummaryGenerator) (*RecommendationDaySummary, error) {
 	snapshot, err := GetRecommendationDaySnapshot(userID, date)
 	if err != nil {
@@ -162,29 +70,24 @@ func GetRecommendationDaySummaryWithGenerator(ctx context.Context, userID uint, 
 		return daySummaryFromDay(day), nil
 	}
 	if generator == nil {
-		generator = ConfiguredDigestSummaryGenerator()
+		generator = configuredDigestSummaryGenerator()
 	}
 
 	input := digestSummaryInputFromSnapshot(snapshot)
 	output, generatorErr := generator.GenerateDigestSummary(ctx, input)
 	if generatorErr != nil {
-		if _, isRuleBased := generator.(RuleBasedDigestSummaryGenerator); !isRuleBased {
-			observability.Log(observability.Event{
-				Name:         "digest_summary_llm_failed",
-				OccurredAt:   time.Now(),
-				UserID:       userID,
-				DayID:        day.ID,
-				LocalDate:    date,
-				Status:       "failed",
-				ErrorType:    "provider_request",
-				ErrorMessage: generatorErr.Error(),
-				LLMStage:     llmStageDigestSummary,
-			})
-			output, generatorErr = RuleBasedDigestSummaryGenerator{}.GenerateDigestSummary(ctx, input)
-		}
-		if generatorErr != nil {
-			return nil, generatorErr
-		}
+		observability.Log(observability.Event{
+			Name:         "digest_summary_llm_failed",
+			OccurredAt:   time.Now(),
+			UserID:       userID,
+			DayID:        day.ID,
+			LocalDate:    date,
+			Status:       "failed",
+			ErrorType:    "provider_request",
+			ErrorMessage: generatorErr.Error(),
+			LLMStage:     llmStageDigestSummary,
+		})
+		return nil, generatorErr
 	}
 
 	persistDaySummary(day, userID, output)

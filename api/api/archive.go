@@ -164,7 +164,7 @@ func GetArchiveRankings(c *gin.Context) {
 
 // GetArchiveRecommendations 返回基于归档的推荐列表。
 func GetArchiveRecommendations(c *gin.Context) {
-	recommendations, err := getArchiveRecommendations(c.DefaultQuery("window", "7d"), queryInt(c, "limit", 20))
+	recommendations, err := getArchiveRecommendations(c.Request.Context(), c.DefaultQuery("window", "7d"), queryInt(c, "limit", 20))
 	if err != nil {
 		c.JSON(500, gin.H{"Status": "0", "Message": "查询归档推荐失败", "Error": err.Error()})
 		return

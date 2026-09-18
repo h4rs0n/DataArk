@@ -2,7 +2,6 @@ package articlevalue
 
 import (
 	"errors"
-	"math"
 	"strings"
 	"unicode/utf8"
 )
@@ -111,51 +110,11 @@ func BuildEvidence(title string, body string) (Evidence, error) {
 	}, nil
 }
 
-func ApplyEvidenceCaps(scores Scores, originalTokens int) Scores {
-	qualityCap, depthCap, evergreenCap := 1.0, 1.0, 1.0
-	switch {
-	case originalTokens < 80:
-		qualityCap, depthCap, evergreenCap = 0.40, 0.35, 0.50
-	case originalTokens < 200:
-		qualityCap, depthCap, evergreenCap = 0.55, 0.50, 0.65
-	case originalTokens < 400:
-		qualityCap, depthCap, evergreenCap = 0.70, 0.65, 0.80
-	}
-	scores.Quality = clamp(math.Min(scores.Quality, qualityCap))
-	scores.Depth = clamp(math.Min(scores.Depth, depthCap))
-	scores.Evergreen = clamp(math.Min(scores.Evergreen, evergreenCap))
+func NormalizeModelScores(scores Scores) Scores {
+	scores.Quality = clamp(scores.Quality)
+	scores.Depth = clamp(scores.Depth)
+	scores.Evergreen = clamp(scores.Evergreen)
 	return scores
-}
-
-func EvidenceConfidence(originalTokens int, truncated bool) float64 {
-	switch {
-	case originalTokens < 80:
-		return 0.35
-	case originalTokens < 200:
-		return 0.50
-	case originalTokens < 400:
-		return 0.70
-	case truncated:
-		return 0.80
-	default:
-		return 0.90
-	}
-}
-
-// FallbackScores are deliberately conservative. They describe evidence
-// sufficiency, not a pretend semantic judgment, and keep a new article usable
-// while an optional model is unavailable.
-func FallbackScores(originalTokens int) Scores {
-	switch {
-	case originalTokens < 80:
-		return Scores{Quality: 0.30, Depth: 0.20, Evergreen: 0.25}
-	case originalTokens < 200:
-		return Scores{Quality: 0.35, Depth: 0.25, Evergreen: 0.30}
-	case originalTokens < 400:
-		return Scores{Quality: 0.40, Depth: 0.30, Evergreen: 0.35}
-	default:
-		return Scores{Quality: 0.45, Depth: 0.35, Evergreen: 0.40}
-	}
 }
 
 func normalizeText(value string) string {

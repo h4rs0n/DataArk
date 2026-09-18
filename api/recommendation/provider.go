@@ -75,13 +75,19 @@ type DigestSummaryOutput struct {
 	PromptVersion string   `json:"-"`
 }
 
-// ConfiguredRecommendationReranker 返回生产 reranker；未配置 LLM 时返回 nil。
+// ConfiguredRecommendationReranker 返回生产 reranker；启动门禁已保证 chat 模型存在。
 func ConfiguredRecommendationReranker() RerankProvider {
-	if strings.TrimSpace(config.LLMCHATMODEL) == "" {
-		return nil
-	}
 	return configuredOpenAICompatibleProvider()
 }
+
+// ConfiguredDigestSummaryGenerator 只返回 LLM 摘要器，禁止规则统计回退。
+func ConfiguredDigestSummaryGenerator() DigestSummaryGenerator {
+	return configuredOpenAICompatibleProvider()
+}
+
+// configuredReranker / configuredDigestSummaryGenerator 可在测试中替换，避免 SQLite 单测打真实 LLM。
+var configuredReranker = ConfiguredRecommendationReranker
+var configuredDigestSummaryGenerator = ConfiguredDigestSummaryGenerator
 
 // ConfiguredOpenAICompatibleProvider 返回生产评估用的 OpenAI 兼容提供者，不通过 HTTP 暴露凭证。
 func ConfiguredOpenAICompatibleProvider() OpenAICompatibleProvider {

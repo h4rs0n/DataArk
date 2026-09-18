@@ -147,7 +147,7 @@ func TestDailyDigestM14SupplementFillsFromSameSourceWhenShort(t *testing.T) {
 	}
 }
 
-func TestDailyDigestM14FailureIsRetryableAndRerankerFallbackIsAudited(t *testing.T) {
+func TestDailyDigestM14FailureIsRetryableAndRerankerFailureDoesNotPublish(t *testing.T) {
 	setupSQLiteDB(t)
 	useRecommendationTestClock(t, time.Date(2026, 4, 1, 8, 0, 0, 0, time.UTC))
 	settings := DefaultRecommendationSettings(805)
@@ -168,11 +168,18 @@ func TestDailyDigestM14FailureIsRetryableAndRerankerFallbackIsAudited(t *testing
 	if failed.Day.Status != RecommendationDayStatusFailed || failed.Day.FailureReason == "" || len(failed.Items) != 0 {
 		t.Fatalf("failed day = %#v", failed)
 	}
-	published, err := GenerateDailyRecommendationsWithReranker(context.Background(), 805, "2026-04-01", fakeReranker{err: errors.New("local model down")})
+	failedRetry, err := GenerateDailyRecommendationsWithReranker(context.Background(), 805, "2026-04-01", fakeReranker{err: errors.New("local model down")})
+	if err == nil {
+		t.Fatal("reranker failure should not publish")
+	}
+	if failedRetry != nil {
+		t.Fatalf("unexpected snapshot = %#v", failedRetry)
+	}
+	stillFailed, err := GetRecommendationDaySnapshot(805, "2026-04-01")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if published.Day.Status != RecommendationDayStatusPublished || !published.Day.Degraded || published.Day.DegradationReason == "" || published.Day.FailureReason != "" || len(published.Items) != 1 {
-		t.Fatalf("fallback publish = %#v", published)
+	if stillFailed.Day.Status != RecommendationDayStatusFailed || stillFailed.Day.Degraded || stillFailed.Day.FailureReason == "" || len(stillFailed.Items) != 0 {
+		t.Fatalf("failed day = %#v", stillFailed)
 	}
 }

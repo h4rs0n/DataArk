@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// helpers.go 提供选文、屏蔽与评分共用的小函数。
+// helpers.go 提供选文与屏蔽共用的小函数。
 
 func uintPointer(value uint) *uint {
 	return &value
@@ -23,15 +23,6 @@ func clampScore(value float64) float64 {
 	}
 	if value > 1 {
 		return 1
-	}
-	return value
-}
-func boundedWeight(value float64) float64 {
-	if value > 2 {
-		return 2
-	}
-	if value < -2 {
-		return -2
 	}
 	return value
 }
@@ -110,53 +101,7 @@ func sourceHost(rawURL string) string {
 	return strings.ToLower(parsed.Hostname())
 }
 
-func dominantTopicCount(topics []string, counts map[string]int) int {
-	maxCount := 0
-	for _, topic := range topics {
-		if counts[topic] > maxCount {
-			maxCount = counts[topic]
-		}
-	}
-	return maxCount
-}
-
-func maxSimilarityPenalty(candidate recommendationCandidateScore, selected []recommendationCandidateScore) float64 {
-	penalty := 0.0
-	for _, item := range selected {
-		if firstNonEmpty(candidate.Candidate.SourceName, candidate.SourceHost) == firstNonEmpty(item.Candidate.SourceName, item.SourceHost) {
-			penalty = maxFloat(penalty, 0.08)
-		}
-		if sharedTopic(candidate.Topics, item.Topics) {
-			penalty = maxFloat(penalty, 0.12)
-		}
-		if candidate.Candidate.DuplicateClusterID != "" && candidate.Candidate.DuplicateClusterID == item.Candidate.DuplicateClusterID {
-			penalty = maxFloat(penalty, 0.5)
-		}
-	}
-	return penalty
-}
-
-func sharedTopic(left []string, right []string) bool {
-	seen := make(map[string]struct{})
-	for _, value := range left {
-		seen[strings.ToLower(value)] = struct{}{}
-	}
-	for _, value := range right {
-		if _, ok := seen[strings.ToLower(value)]; ok {
-			return true
-		}
-	}
-	return false
-}
-
 func maxInt(left int, right int) int {
-	if left > right {
-		return left
-	}
-	return right
-}
-
-func maxFloat(left float64, right float64) float64 {
 	if left > right {
 		return left
 	}

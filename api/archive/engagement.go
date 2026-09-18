@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -138,77 +137,6 @@ func GetArchiveRankings(window string, limit int) ([]ArchiveRankingItem, error) 
 	return rows, nil
 }
 
-func GetArchiveRecommendations(window string, limit int) ([]ArchiveRecommendationItem, error) {
-	if db == nil {
-		return []ArchiveRecommendationItem{}, nil
-	}
-	limit = normalizeLimit(limit, 20, 100)
-
-	var documents []ArchiveDocument
-	if err := db.Order("updated_at desc").Limit(500).Find(&documents).Error; err != nil {
-		return nil, err
-	}
-	if len(documents) == 0 {
-		return []ArchiveRecommendationItem{}, nil
-	}
-
-	clicks, err := archiveClickCounts(window)
-	if err != nil {
-		return nil, err
-	}
-	keywords, err := GetKeywordStats("", window, 20)
-	if err != nil {
-		return nil, err
-	}
-
-	recommendations := make([]ArchiveRecommendationItem, 0, len(documents))
-	for _, document := range documents {
-		path := archiveRequestPath(document.Domain, document.FileName)
-		clickCount := clicks[document.Domain+"/"+document.FileName]
-		text := strings.ToLower(document.Title + " " + document.Summary + " " + document.Domain + " " + document.SourceURL)
-		score := float64(clickCount) * 5
-		reason := "近期归档"
-		if clickCount > 0 {
-			reason = "近期常看"
-		}
-
-		for _, keyword := range keywords {
-			normalizedKeyword := strings.ToLower(keyword.Keyword)
-			if normalizedKeyword != "" && strings.Contains(text, normalizedKeyword) {
-				score += float64(keyword.Count) * 3
-				if reason == "近期归档" {
-					reason = "匹配常搜关键词"
-				}
-			}
-		}
-		score += recencyScore(document.UpdatedAt)
-
-		recommendations = append(recommendations, ArchiveRecommendationItem{
-			Path:       path,
-			Domain:     document.Domain,
-			FileName:   document.FileName,
-			Title:      archiveDisplayTitle(&document),
-			Summary:    document.Summary,
-			SourceURL:  document.SourceURL,
-			Score:      score,
-			UpdatedAt:  document.UpdatedAt,
-			Reason:     reason,
-			ClickCount: clickCount,
-		})
-	}
-
-	sort.SliceStable(recommendations, func(i, j int) bool {
-		if recommendations[i].Score != recommendations[j].Score {
-			return recommendations[i].Score > recommendations[j].Score
-		}
-		return recommendations[i].UpdatedAt.After(recommendations[j].UpdatedAt)
-	})
-	if len(recommendations) > limit {
-		recommendations = recommendations[:limit]
-	}
-	return recommendations, nil
-}
-
 func BackfillArchiveDocumentMetadataFromDisk() error {
 	if db == nil {
 		return nil
@@ -331,23 +259,6 @@ func archiveDisplayTitle(document *ArchiveDocument) string {
 
 func archiveRequestPath(domain string, fileName string) string {
 	return "/archive/" + strings.Trim(domain, "/") + "/" + strings.TrimLeft(fileName, "/")
-}
-
-func recencyScore(updatedAt time.Time) float64 {
-	if updatedAt.IsZero() {
-		return 0
-	}
-	ageHours := time.Since(updatedAt).Hours()
-	switch {
-	case ageHours < 24:
-		return 4
-	case ageHours < 24*7:
-		return 2
-	case ageHours < 24*30:
-		return 1
-	default:
-		return 0
-	}
 }
 
 func BuildSummary(text string, maxRunes int) string {

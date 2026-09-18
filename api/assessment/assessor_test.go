@@ -113,33 +113,45 @@ func TestLowHitSourceHighArticlesAreAssessedIndependently(t *testing.T) {
 	}
 }
 
-func TestOptionalAssessorFailureFallsBackAndVersionsRemainImmutable(t *testing.T) {
+func TestAssessorFailureKeepsInventoryOutAndVersionsRemainImmutable(t *testing.T) {
 	setupAssessmentDB(t)
 	now := time.Date(2026, 7, 14, 5, 0, 0, 0, time.UTC)
 	body := strings.Repeat("Evidence and measurement support this durable method because alternatives and counterexamples explain the mechanism and conclusion. ", 12)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/assessment", "Assessment fixture", body, now)
 	failing := fixtureArticleAssessor{name: "optional_fixture", version: "broken", err: errors.New("fixture LLM unavailable")}
-	if err := AssessCandidate(context.Background(), candidate.ID, failing); err != nil {
-		t.Fatal(err)
+	if err := AssessCandidate(context.Background(), candidate.ID, failing); err == nil || !strings.Contains(err.Error(), "fixture LLM unavailable") {
+		t.Fatalf("expected assessor failure, got %v", err)
 	}
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if candidate.AssessmentState != discovery.DiscoveryAssessmentDegraded || candidate.CurrentAssessmentID == nil || candidate.AssessmentError != "article-quality-v1+fixture: fixture LLM unavailable" || candidate.EligibilityState != discovery.DiscoveryEligibilityEligible {
-		t.Fatalf("fallback candidate = %#v", candidate)
+	if candidate.AssessmentState != discovery.DiscoveryAssessmentReview || candidate.CurrentAssessmentID != nil || candidate.EligibilityState != discovery.DiscoveryEligibilityReview {
+		t.Fatalf("failed candidate = %#v", candidate)
 	}
 	var rows []ArticleAssessment
 	if err := db.Where("candidate_id = ?", candidate.ID).Find(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].Assessor != RuleArticleAssessorName {
-		t.Fatalf("fallback assessments = %#v", rows)
+	if len(rows) != 0 {
+		t.Fatalf("failed assessment wrote rows = %#v", rows)
 	}
 
+	success := fixtureArticleAssessor{name: "optional_fixture", version: "ok", result: ArticleAssessmentResult{
+		Quality: .82, Depth: .74, Evergreen: .68, Confidence: 1, Reasons: []string{"clear evidence", "bounded limitation"},
+	}}
+	if err := AssessCandidate(context.Background(), candidate.ID, success); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&candidate, candidate.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if candidate.CurrentAssessmentID == nil {
+		t.Fatal("successful assessment missing pointer")
+	}
+	oldAssessmentID := *candidate.CurrentAssessmentID
 	if err := db.Exec(`CREATE TABLE recommendation_assessment_history_fixture (id INTEGER PRIMARY KEY, assessment_id INTEGER, snapshot_title TEXT)`).Error; err != nil {
 		t.Fatal(err)
 	}
-	oldAssessmentID := *candidate.CurrentAssessmentID
 	if err := db.Exec(`INSERT INTO recommendation_assessment_history_fixture(id, assessment_id, snapshot_title) VALUES(1, ?, 'Published assessment')`, oldAssessmentID).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -151,10 +163,10 @@ func TestOptionalAssessorFailureFallsBackAndVersionsRemainImmutable(t *testing.T
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := AssessCandidate(context.Background(), candidate.ID, nil); err != nil {
+	if err := AssessCandidate(context.Background(), candidate.ID, success); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Where("candidate_id = ? AND assessor = ?", candidate.ID, RuleArticleAssessorName).Order("content_version").Find(&rows).Error; err != nil {
+	if err := db.Where("candidate_id = ?", candidate.ID).Order("content_version").Find(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
 	if len(rows) != 2 || rows[0].ContentVersion != 1 || rows[1].ContentVersion != 2 || rows[0].ID == rows[1].ID {
@@ -217,7 +229,7 @@ func createAssessmentCandidate(t *testing.T, sourceName string, rawURL string, t
 	return candidate
 }
 
-func TestObserveAssessmentWritesSummaryWithoutActivatingModelScores(t *testing.T) {
+func TestModelAssessmentWritesSummaryAndActivatesScores(t *testing.T) {
 	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/observe-summary", "Observed summary", strings.Repeat("substance ", 80), now)
@@ -230,7 +242,7 @@ func TestObserveAssessmentWritesSummaryWithoutActivatingModelScores(t *testing.T
 		Summary:  "The article explains a durable method with measurements.",
 		Keywords: []string{"testing", "evidence", "methods"},
 	}
-	if err := AssessCandidate(context.Background(), candidate.ID, modeFixtureAssessor{active: false, result: result}); err != nil {
+	if err := AssessCandidate(context.Background(), candidate.ID, modeFixtureAssessor{result: result}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
@@ -240,35 +252,28 @@ func TestObserveAssessmentWritesSummaryWithoutActivatingModelScores(t *testing.T
 	if err := db.First(&active, *candidate.CurrentAssessmentID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if active.Assessor != RuleArticleAssessorName {
-		t.Fatalf("observe mode activated model scores: %#v", active)
+	if active.Assessor != "admin_fixture" || candidate.QualityScore != .82 {
+		t.Fatalf("model activation = %#v candidate=%#v", active, candidate)
 	}
 	if candidate.Summary != result.Summary || candidate.Topics != `["testing","evidence","methods"]` {
-		t.Fatalf("observe write-back = summary=%q topics=%s", candidate.Summary, candidate.Topics)
-	}
-	var modelRow ArticleAssessment
-	if err := db.Where("candidate_id = ? AND assessor = ?", candidate.ID, "admin_fixture").First(&modelRow).Error; err != nil {
-		t.Fatal(err)
-	}
-	if modelRow.Summary != result.Summary || modelRow.Keywords != `["testing","evidence","methods"]` {
-		t.Fatalf("persisted model metadata = %#v", modelRow)
+		t.Fatalf("write-back = summary=%q topics=%s", candidate.Summary, candidate.Topics)
 	}
 }
 
-func TestRuleAssessmentDoesNotOverwriteExistingSummary(t *testing.T) {
+func TestMissingAssessorDoesNotOverwriteExistingSummary(t *testing.T) {
 	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 17, 12, 30, 0, 0, time.UTC)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/keep-summary", "Keep summary", strings.Repeat("substance ", 80), now)
 	if err := db.Model(&candidate).Updates(map[string]interface{}{"summary": "keep-original-summary", "topics": `["original"]`}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := AssessCandidate(context.Background(), candidate.ID, nil); err != nil {
-		t.Fatal(err)
+	if err := AssessCandidate(context.Background(), candidate.ID, nil); err == nil {
+		t.Fatal("missing assessor should fail")
 	}
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if candidate.Summary != "keep-original-summary" || candidate.Topics != `["original"]` {
-		t.Fatalf("rule assessment overwrote metadata: %#v", candidate)
+	if candidate.Summary != "keep-original-summary" || candidate.Topics != `["original"]` || candidate.CurrentAssessmentID != nil {
+		t.Fatalf("missing assessor mutated candidate: %#v", candidate)
 	}
 }

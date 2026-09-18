@@ -2,7 +2,7 @@
 
 本文档描述 **当前运行中的 PostgreSQL 库**（Compose 服务 `database`，镜像 `pgvector/pgvector:pg17`）在 2026-08-27 的实际 schema，并对照代码里的权威来源。
 
-- 生产 schema **只**由 Goose 编号迁移定义：`api/migrations/000001`–`000030`。
+- 生产 schema **只**由 Goose 编号迁移定义：`api/migrations/000001`–`000031`。
 - 启动路径：`api/bootstrap.InitDB()` → `api/database.InitDB()` 连库 → `RunDatabaseMigrations()`（Goose `Up` + River migrator）。
 - GORM `AutoMigrate` **只给 SQLite 测试当方言替身**，不定义生产 schema。
 - 模型分散在 `api/auth`、`api/archive`、`api/discovery`、`api/assessment`、`api/assessmenteval`、`api/recommendation`。没有 `api/common/`。
@@ -346,7 +346,7 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
 ## 迁移账本
 
-`goose_db_version`：`id`、`version_id`、`is_applied`、`tstamp`。本实例最新已应用版本 **30**（`000030_assessment_llm_decode_timings`）。
+`goose_db_version`：`id`、`version_id`、`is_applied`、`tstamp`。本实例最新已应用版本 **31**（`000031_llm_only_demote_rule_assessments`）。
 
 多数 Down 是 **保留数据的 no-op**（`SELECT 1`），回滚 Goose 版本号不会删 v3 表。不要把 Down 当成可逆删表。
 
@@ -354,7 +354,7 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
 ## 运行库与纯 Goose 空库的差异
 
-本 Compose 库在 Goose 之前用 GORM AutoMigrate 建过基表，因此与「空库只跑 `000001`–`000030`」会有这些差别：
+本 Compose 库在 Goose 之前用 GORM AutoMigrate 建过基表，因此与「空库只跑 `000001`–`000031`」会有这些差别：
 
 | 现象 | 本运行库 | Goose 空库预期 |
 | --- | --- | --- |

@@ -17,6 +17,9 @@ func TestMainRunsStartupSequence(t *testing.T) {
 	oldDebug := config.DEBUG
 	oldLogDir := config.LOGDIR
 	oldLogRetentionDays := config.LOGRETENTIONDAYS
+	oldBase := config.LLMBASEURL
+	oldModel := config.LLMCHATMODEL
+	oldMode := config.ARTICLEASSESSMENTMODE
 	t.Cleanup(func() {
 		parseFlags = oldParseFlags
 		startWeb = oldStartWeb
@@ -24,6 +27,9 @@ func TestMainRunsStartupSequence(t *testing.T) {
 		config.DEBUG = oldDebug
 		config.LOGDIR = oldLogDir
 		config.LOGRETENTIONDAYS = oldLogRetentionDays
+		config.LLMBASEURL = oldBase
+		config.LLMCHATMODEL = oldModel
+		config.ARTICLEASSESSMENTMODE = oldMode
 	})
 
 	var calls []string
@@ -32,6 +38,9 @@ func TestMainRunsStartupSequence(t *testing.T) {
 		config.DEBUG = true
 		config.LOGDIR = "/fixture/logs"
 		config.LOGRETENTIONDAYS = 9
+		config.LLMBASEURL = "http://llm.example"
+		config.LLMCHATMODEL = "fixture-chat"
+		config.ARTICLEASSESSMENTMODE = "active"
 	}
 	configureLogging = func(dir string, retentionDays int) (io.Closer, error) {
 		if dir != "/fixture/logs" || retentionDays != 9 {
@@ -74,7 +83,11 @@ func TestRunStopsWhenLoggingInitializationFails(t *testing.T) {
 		configureLogging = oldConfigureLogging
 	})
 
-	parseFlags = func() {}
+	parseFlags = func() {
+		config.LLMBASEURL = "http://llm.example"
+		config.LLMCHATMODEL = "fixture-chat"
+		config.ARTICLEASSESSMENTMODE = "active"
+	}
 	configureLogging = func(string, int) (io.Closer, error) {
 		return nil, errors.New("permission denied")
 	}
@@ -84,7 +97,38 @@ func TestRunStopsWhenLoggingInitializationFails(t *testing.T) {
 	}
 }
 
-func TestDisplayBannerWritesBanner(t *testing.T) {
+func TestRunStopsWhenLLMConfigurationIsMissing(t *testing.T) {
+	oldParseFlags := parseFlags
+	oldStartWeb := startWeb
+	oldConfigureLogging := configureLogging
+	oldBase := config.LLMBASEURL
+	oldModel := config.LLMCHATMODEL
+	oldMode := config.ARTICLEASSESSMENTMODE
+	t.Cleanup(func() {
+		parseFlags = oldParseFlags
+		startWeb = oldStartWeb
+		configureLogging = oldConfigureLogging
+		config.LLMBASEURL = oldBase
+		config.LLMCHATMODEL = oldModel
+		config.ARTICLEASSESSMENTMODE = oldMode
+	})
+
+	parseFlags = func() {
+		config.LLMBASEURL = ""
+		config.LLMCHATMODEL = ""
+		config.ARTICLEASSESSMENTMODE = "observe"
+	}
+	configureLogging = func(string, int) (io.Closer, error) {
+		t.Fatal("logging should not start without LLM configuration")
+		return nil, nil
+	}
+	startWeb = func(bool) { t.Fatal("web service should not start") }
+	if err := run(); err == nil || !strings.Contains(err.Error(), "llm configuration") {
+		t.Fatalf("run error = %v", err)
+	}
+}
+
+func TestDisplayBanner(t *testing.T) {
 	output := captureStdout(t, display_banner)
 	if !strings.Contains(output, "____") || !strings.Contains(output, "| ____|") {
 		t.Fatalf("unexpected banner output: %q", output)

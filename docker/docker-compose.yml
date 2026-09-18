@@ -38,7 +38,7 @@ services:
       "-llm-chat-model", "${LLM_CHAT_MODEL}",
       "-llm-embedding-model", "${LLM_EMBEDDING_MODEL}",
       "-llm-timeout", "${LLM_TIMEOUT}",
-      "-article-assessment-mode", "${ARTICLE_ASSESSMENT_MODE:-observe}",
+      "-article-assessment-mode", "${ARTICLE_ASSESSMENT_MODE:-active}",
       "-article-assessment-concurrency", "${ARTICLE_ASSESSMENT_CONCURRENCY:-2}",
       "-embedding-dimension", "${EMBEDDING_DIMENSION}"
     ]

@@ -265,7 +265,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 30 || migrations[len(migrations)-1].Version != 30 {
+	if len(migrations) != 31 || migrations[len(migrations)-1].Version != 31 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	coreSchema, err := appmigrations.FS.ReadFile("000001_recommendation_v2.sql")
@@ -526,6 +526,15 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	for _, required := range []string{"predicted_tokens", "predicted_ms", "Data-preserving rollback"} {
 		if !strings.Contains(string(decodeTimings), required) {
 			t.Fatalf("assessment llm decode timings migration missing %q", required)
+		}
+	}
+	llmOnly, err := appmigrations.FS.ReadFile("000031_llm_only_demote_rule_assessments.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"deterministic_rules", "llm_only_requires_model_assessment", "Data-preserving rollback"} {
+		if !strings.Contains(string(llmOnly), required) {
+			t.Fatalf("llm-only demote migration missing %q", required)
 		}
 	}
 }

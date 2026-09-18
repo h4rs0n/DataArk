@@ -71,6 +71,10 @@ jobs:
               "-mkey", "masterkey",
               "-mdump", "/meili_dumps",
               "-dbhost", "database",
+              "-llm-base-url", "${LLM_BASE_URL}",
+              "-llm-api-key", "${LLM_API_KEY}",
+              "-llm-chat-model", "${LLM_CHAT_MODEL}",
+              "-article-assessment-mode", "active",
             ]
 
           meili:

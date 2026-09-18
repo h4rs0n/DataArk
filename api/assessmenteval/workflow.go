@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -926,12 +925,9 @@ func runWorkflowEvaluation(database *gorm.DB, runID uint, generation int, provid
 				if callErr != nil {
 					score.Error = compactEvaluationError(callErr)
 				} else {
-					capped := articlevalue.ApplyEvidenceCaps(articlevalue.Scores{
-						Quality: float64(result.QualityScore) / 100, Depth: float64(result.DepthScore) / 100, Evergreen: float64(result.EvergreenScore) / 100,
-					}, result.OriginalEvidenceTokens)
-					score.Quality = int(math.Round(capped.Quality * 100))
-					score.Depth = int(math.Round(capped.Depth * 100))
-					score.Evergreen = int(math.Round(capped.Evergreen * 100))
+					score.Quality = result.QualityScore
+					score.Depth = result.DepthScore
+					score.Evergreen = result.EvergreenScore
 					reasons, _ := json.Marshal(result.Reasons)
 					score.ReasonsJSON = string(reasons)
 					score.EvidenceTokens = result.EvidenceTokens

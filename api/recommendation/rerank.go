@@ -2,24 +2,31 @@ package recommendation
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sort"
 	"strings"
+
+	"DataArk/config"
 )
 
-// rerank.go 调用 reranker 并对候选列表排序裁剪。
+// rerank.go 强制调用 reranker，模型顺序就是最终名次。
 
-func applyRecommendationReranker(ctx context.Context, userID uint, requestedCount int, candidates []recommendationCandidateScore, profile *UserRecommendationProfile, reranker RerankProvider) ([]recommendationCandidateScore, string, string, string) {
+func applyRecommendationReranker(ctx context.Context, userID uint, requestedCount int, candidates []recommendationCandidateScore, profile *UserRecommendationProfile, reranker RerankProvider) ([]recommendationCandidateScore, string, string, error) {
 	if requestedCount <= 0 {
 		requestedCount = 10
 	}
 	if len(candidates) == 0 {
-		return []recommendationCandidateScore{}, "", "", ""
+		return []recommendationCandidateScore{}, "", "", nil
 	}
-	// 送模型前先截到 rerank 上限，避免把整池（常为 300 篇）打进有限上下文。
-	candidates = trimRecommendationCandidates(candidates, requestedCount)
 	if reranker == nil {
-		return candidates, "", "", ""
+		return nil, "", "", errors.New("recommendation reranker is required")
 	}
+	poolLimit := config.RECOMMENDATIONRERANKLIMIT
+	if poolLimit < requestedCount {
+		poolLimit = requestedCount
+	}
+	candidates = trimRecommendationCandidates(candidates, poolLimit)
 	input := RerankInput{
 		UserID:          userID,
 		RequestedCount:  requestedCount,
@@ -28,7 +35,7 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 	}
 	result, err := reranker.Rerank(ctx, input)
 	if err != nil {
-		return trimRecommendationCandidates(candidates, requestedCount), "", "", "reranker_unavailable: " + truncateError(err.Error(), 300)
+		return nil, "", "", fmt.Errorf("reranker_unavailable: %w", err)
 	}
 	byID := make(map[uint]recommendationCandidateScore, len(candidates))
 	for _, candidate := range candidates {
@@ -43,6 +50,10 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 	seen := make(map[uint]struct{})
 	reranked := make([]recommendationCandidateScore, 0, requestedCount)
 	for _, item := range result.Items {
+		reason := strings.TrimSpace(item.Reason)
+		if reason == "" {
+			continue
+		}
 		candidate, ok := byID[item.CandidateID]
 		if !ok {
 			continue
@@ -50,15 +61,13 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 		if _, ok := seen[item.CandidateID]; ok {
 			continue
 		}
-		if strings.TrimSpace(item.Reason) != "" {
-			candidate.Reason = strings.TrimSpace(item.Reason)
-		}
+		candidate.Reason = reason
 		candidate.RerankScore = clampScore(item.Confidence)
 		candidate.RerankRank = item.Rank
 		if candidate.RerankRank <= 0 {
 			candidate.RerankRank = len(reranked) + 1
 		}
-		candidate.FinalScore += candidate.RerankScore * 0.05
+		candidate.FinalScore = candidate.RerankScore
 		reranked = append(reranked, candidate)
 		seen[item.CandidateID] = struct{}{}
 		if len(reranked) >= requestedCount {
@@ -66,19 +75,9 @@ func applyRecommendationReranker(ctx context.Context, userID uint, requestedCoun
 		}
 	}
 	if len(reranked) == 0 {
-		return trimRecommendationCandidates(candidates, requestedCount), "", "", "reranker_invalid_output"
+		return nil, "", "", errors.New("reranker_invalid_output")
 	}
-	for _, candidate := range candidates {
-		if len(reranked) >= requestedCount {
-			break
-		}
-		if _, ok := seen[candidate.Candidate.ID]; ok {
-			continue
-		}
-		candidate.RerankRank = len(reranked) + 1
-		reranked = append(reranked, candidate)
-	}
-	return reranked, strings.TrimSpace(result.Model), strings.TrimSpace(result.PromptVersion), ""
+	return reranked, strings.TrimSpace(result.Model), strings.TrimSpace(result.PromptVersion), nil
 }
 
 func buildRerankCandidates(candidates []recommendationCandidateScore) []RerankCandidate {
@@ -100,11 +99,13 @@ func buildRerankCandidates(candidates []recommendationCandidateScore) []RerankCa
 
 func buildUserProfileHint(profile *UserRecommendationProfile) string {
 	if profile == nil {
-		return ""
+		return "Prefer source and topic diversity. Include some exploration when the user's history is concentrated. Every item needs a Chinese reason."
 	}
 	return strings.Join([]string{
 		"topics=" + strings.TrimSpace(profile.TopicWeights),
 		"styles=" + strings.TrimSpace(profile.StyleWeights),
+		fmt.Sprintf("explorationRate=%.2f", profile.ExplorationRate),
+		"Prefer source and topic diversity. Include some exploration when the user's history is concentrated. Every item needs a Chinese reason.",
 	}, "\n")
 }
 

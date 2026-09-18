@@ -4,6 +4,8 @@ passwd.txt
 bin
 web/node_modules
 web/dist
+# 镜像内会用 frontend-builder 的 dist 覆盖，排除宿主机产物以免打废 COPY api
+api/assets/web
 docker/archive
 docker/database
 docker/meili_data

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 )
@@ -129,29 +128,22 @@ func TestDigestSummaryGetDoesNotGenerate(t *testing.T) {
 	}
 }
 
-func TestDigestSummaryFallsBackToRuleGenerator(t *testing.T) {
+func TestDigestSummaryFailsWithoutPersisting(t *testing.T) {
 	seedDigestSummaryDay(t, 903, 2)
 	generator := &fakeDigestSummaryGenerator{err: errors.New("provider down")}
 	summary, err := GetRecommendationDaySummaryWithGenerator(context.Background(), 903, "2026-06-01", generator)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || summary != nil {
+		t.Fatalf("expected generator error, got summary=%#v err=%v", summary, err)
 	}
 	if generator.calls != 1 {
 		t.Fatalf("calls = %d", generator.calls)
 	}
-	if !summary.Available || summary.Model != RuleBasedProviderModel || !strings.Contains(summary.Overview, "共推荐 2 篇") {
-		t.Fatalf("summary = %#v", summary)
-	}
-
-	second, err := GetRecommendationDaySummaryWithGenerator(context.Background(), 903, "2026-06-01", generator)
+	read, err := GetRecommendationDaySummary(context.Background(), 903, "2026-06-01")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generator.calls != 1 {
-		t.Fatalf("degraded summary was not persisted, calls = %d", generator.calls)
-	}
-	if second.Model != RuleBasedProviderModel {
-		t.Fatalf("second summary = %#v", second)
+	if read.Available || read.Reason != "日报总结生成中" {
+		t.Fatalf("failed summary should not persist: %#v", read)
 	}
 }
 
@@ -180,39 +172,5 @@ func TestDigestSummaryRegeneratesAfterSupplement(t *testing.T) {
 	}
 	if generator.calls != 2 {
 		t.Fatalf("expected regeneration after count change, calls = %d", generator.calls)
-	}
-}
-
-func TestRuleBasedDigestSummaryGenerator(t *testing.T) {
-	input := DigestSummaryInput{
-		Date: "2026-06-01",
-		Items: []DigestSummaryItem{
-			{Rank: 1, Title: "Go concurrency", Source: "go.example", Topics: []string{"go", "systems"}},
-			{Rank: 2, Title: "Rust async", Source: "rust.example", Topics: []string{"rust"}},
-			{Rank: 3, Title: "Kernel notes", Source: "go.example", Topics: []string{"systems", "kernel"}},
-		},
-	}
-	first, err := RuleBasedDigestSummaryGenerator{}.GenerateDigestSummary(context.Background(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Model != RuleBasedProviderModel || first.PromptVersion == "" {
-		t.Fatalf("rule output identity = %#v", first)
-	}
-	if !strings.Contains(first.Overview, "共推荐 3 篇") || !strings.Contains(first.Overview, "覆盖 2 个来源") || !strings.Contains(first.Overview, "systems") {
-		t.Fatalf("overview = %q", first.Overview)
-	}
-	if len(first.Highlights) != 3 || !strings.Contains(first.Highlights[0], "《Go concurrency》") || !strings.Contains(first.Highlights[0], "go.example") {
-		t.Fatalf("highlights = %#v", first.Highlights)
-	}
-	if len(first.Topics) != 3 || first.Topics[0] != "systems" {
-		t.Fatalf("topics = %#v", first.Topics)
-	}
-	second, err := RuleBasedDigestSummaryGenerator{}.GenerateDigestSummary(context.Background(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.Overview != first.Overview {
-		t.Fatalf("rule generator not deterministic: %q vs %q", second.Overview, first.Overview)
 	}
 }

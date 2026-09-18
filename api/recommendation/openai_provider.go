@@ -50,7 +50,7 @@ func (provider OpenAICompatibleProvider) Rerank(ctx context.Context, input Reran
 	candidateBytes, _ := json.Marshal(input.Candidates)
 	var result RerankResult
 	if _, err := provider.ChatJSON(ctx, []map[string]string{
-		{"role": "system", "content": "Rerank only the supplied candidate IDs. Return compact JSON and never invent IDs. Do not infer source reputation or use source identity as a quality signal; source is present only for diversity."},
+		{"role": "system", "content": "Rerank only the supplied candidate IDs. Return compact JSON and never invent IDs. Prefer source and topic diversity and include some exploration when the user profile is concentrated. Every item must include a Chinese reason. Do not infer source reputation or use source identity as a quality signal; source is present only for diversity."},
 		{"role": "user", "content": fmt.Sprintf("Requested count: %d\nUser profile:\n%s\nCandidates:\n%s\nReturn JSON: {\"items\":[{\"candidateId\":1,\"rank\":1,\"reason\":\"...\",\"confidence\":0.8}]}", input.RequestedCount, input.UserProfileHint, string(candidateBytes))},
 	}, &result, llm.ChatOptions{
 		Stage: llm.StageRecommendationRerank, UserID: input.UserID,

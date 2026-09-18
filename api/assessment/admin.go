@@ -38,7 +38,6 @@ func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAsses
 		return result, errors.New("article assessment provider is not configured")
 	}
 	result.PolicyVersion = assessor.PolicyVersion()
-	activate := shouldActivateArticleAssessment(assessor)
 	if !options.DryRun && queue == nil {
 		return result, errors.New("article assessment queue is unavailable")
 	}
@@ -46,9 +45,8 @@ func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAsses
 	limit := normalizeArticleAssessmentBatchLimit(options.Limit)
 	query := db.WithContext(ctx).Model(&discovery.DiscoveryCandidate{}).
 		Where("processing_state = ? AND dedupe_state = ? AND content_version > 0", discovery.DiscoveryProcessingReady, discovery.DiscoveryDedupeReady).
-		Where("representative_id IS NULL OR representative_id = id")
-	if activate {
-		query = query.Where(`NOT EXISTS (
+		Where("representative_id IS NULL OR representative_id = id").
+		Where(`NOT EXISTS (
 SELECT 1 FROM discovery_article_assessments active
 WHERE active.id = discovery_candidates.current_assessment_id
   AND active.candidate_id = discovery_candidates.id
@@ -57,16 +55,6 @@ WHERE active.id = discovery_candidates.current_assessment_id
   AND active.assessor_version = ?
   AND active.policy_version = ?
 )`, assessor.Name(), assessor.Version(), assessor.PolicyVersion())
-	} else {
-		query = query.Where(`NOT EXISTS (
-SELECT 1 FROM discovery_article_assessments stored
-WHERE stored.candidate_id = discovery_candidates.id
-  AND stored.content_version = discovery_candidates.content_version
-  AND stored.assessor = ?
-  AND stored.assessor_version = ?
-  AND stored.policy_version = ?
-)`, assessor.Name(), assessor.Version(), assessor.PolicyVersion())
-	}
 	if !options.RetryFailures {
 		query = query.Where("assessment_error IS NULL OR assessment_error NOT LIKE ?", assessor.PolicyVersion()+":%")
 	}
@@ -87,18 +75,8 @@ WHERE stored.candidate_id = discovery_candidates.id
 				enqueueErrors = append(enqueueErrors, fmt.Errorf("validate candidate %d assessment: %w", candidate.ID, validationErr))
 				continue
 			}
-			if !activate {
-				if !options.DryRun {
-					if err := applyAssessmentArticleMetadata(candidate, storedResult); err != nil {
-						enqueueErrors = append(enqueueErrors, fmt.Errorf("write candidate %d assessment metadata: %w", candidate.ID, err))
-						continue
-					}
-				}
-				result.Skipped++
-				continue
-			}
 			if !options.DryRun {
-				if err := activateArticleAssessment(candidate, stored, storedResult, "", false); err != nil {
+				if err := activateArticleAssessment(candidate, stored, storedResult, ""); err != nil {
 					enqueueErrors = append(enqueueErrors, fmt.Errorf("reactivate candidate %d assessment: %w", candidate.ID, err))
 					continue
 				}
@@ -130,7 +108,7 @@ WHERE stored.candidate_id = discovery_candidates.id
 	return result, errors.Join(enqueueErrors...)
 }
 
-// RollbackArticleAssessment 把当前模型评估指针退回到更早的规则行或其它策略版本。
+// RollbackArticleAssessment 把当前模型评估指针退回到更早的非规则模型行。
 func RollbackArticleAssessment(ctx context.Context, assessor ArticleAssessor, options ArticleAssessmentBatchOptions) (ArticleAssessmentBatchResult, error) {
 	result := ArticleAssessmentBatchResult{DryRun: options.DryRun}
 	if db == nil {
@@ -152,7 +130,7 @@ func RollbackArticleAssessment(ctx context.Context, assessor ArticleAssessor, op
 	for _, candidate := range candidates {
 		var target ArticleAssessment
 		err := db.WithContext(ctx).
-			Where("candidate_id = ? AND content_version = ? AND id <> ? AND (policy_version <> ? OR assessor = ?)", candidate.ID, candidate.ContentVersion, *candidate.CurrentAssessmentID, assessor.PolicyVersion(), RuleArticleAssessorName).
+			Where("candidate_id = ? AND content_version = ? AND id <> ? AND assessor <> ?", candidate.ID, candidate.ContentVersion, *candidate.CurrentAssessmentID, RuleArticleAssessorName).
 			Order(clause.Expr{SQL: "CASE WHEN policy_version <> ? THEN 0 ELSE 1 END", Vars: []interface{}{assessor.PolicyVersion()}}).
 			Order("id DESC").
 			First(&target).Error
@@ -167,8 +145,7 @@ func RollbackArticleAssessment(ctx context.Context, assessor ArticleAssessor, op
 			result.Reactivated++
 			continue
 		}
-		degraded := target.Assessor == RuleArticleAssessorName
-		if err := activateArticleAssessment(candidate, target, assessmentResultFromRow(target), "", degraded); err != nil {
+		if err := activateArticleAssessment(candidate, target, assessmentResultFromRow(target), ""); err != nil {
 			return result, err
 		}
 		result.Reactivated++

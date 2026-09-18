@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -14,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const recommendationSelectionPolicyV3 = "v3-selection-4"
+const recommendationSelectionPolicyV3 = "v3-selection-llm-1"
 
 var recommendationClock discovery.Clock = discovery.SystemClock{}
 
@@ -34,28 +33,12 @@ type recommendationHistoryEntry struct {
 	MaxContentVersion uint
 }
 
-type recommendationScoreInput struct {
-	Quality         float64
-	Depth           float64
-	Evergreen       float64
-	PublishedAt     *time.Time
-	Topics          []string
-	ContentStyle    string
-	ContentType     string
-	TopicWeights    map[string]float64
-	StyleWeights    map[string]float64
-	DepthPreference float64
-	Now             time.Time
-}
-
 func selectDailyRecommendationCandidates(ctx context.Context, userID uint, settings RecommendationSettings, profile *UserRecommendationProfile, selectionLimit int) ([]recommendationCandidateScore, error) {
 	report, err := selectDailyRecommendationCandidatesV3(ctx, userID, settings, profile, selectionLimit)
 	if err != nil {
 		return nil, err
 	}
-	selected, relaxations := diversifyRecommendationCandidatesV3(report.Candidates, selectionLimit, settings.ExplorationRate)
-	report.SoftRelaxations = relaxations
-	return selected, nil
+	return trimRecommendationCandidates(report.Candidates, selectionLimit), nil
 }
 
 func selectDailyRecommendationCandidatesV3(ctx context.Context, userID uint, settings RecommendationSettings, profile *UserRecommendationProfile, selectionLimit int) (*recommendationSelectionReport, error) {
@@ -117,19 +100,16 @@ func selectRecommendationCandidatesV3(ctx context.Context, userID uint, settings
 	if err != nil {
 		return nil, err
 	}
-	vectorBoosts := make(map[uint]float64, len(vectorCandidateIDs))
-	for index, id := range vectorCandidateIDs {
-		vectorBoosts[id] = 0.25 * (1 - float64(index)/float64(len(vectorCandidateIDs)+1))
+	vectorSeen := make(map[uint]struct{}, len(vectorCandidateIDs))
+	for _, id := range vectorCandidateIDs {
+		vectorSeen[id] = struct{}{}
 	}
-	topicWeights := parseWeightMap(profile.TopicWeights)
-	styleWeights := parseWeightMap(profile.StyleWeights)
-	preferredLanguages := normalizedPreferenceSet(parseStringList(settings.PreferredLanguages))
-	favoriteSources := normalizedPreferenceSet(parseStringList(settings.FavoriteSources))
 	freshDays := settings.CandidateWindowDays
 	if freshDays <= 0 {
 		freshDays = 30
 	}
 	freshCutoff := now.AddDate(0, 0, -freshDays)
+	seenIdentity := make(map[string]struct{})
 	for _, candidate := range candidates {
 		state, hasState := states[candidate.ID]
 		historyEntry, hasHistory := recommendationHistoryForCandidate(history, candidate)
@@ -144,6 +124,11 @@ func selectRecommendationCandidatesV3(ctx context.Context, userID uint, settings
 			report.Excluded["user_block"]++
 			continue
 		}
+		identity := recommendationCandidateIdentity(candidate)
+		if _, exists := seenIdentity[identity]; exists {
+			report.Excluded["same_cluster_daily"]++
+			continue
+		}
 		assessment := assessments[candidate.ID]
 		poolTags := make([]string, 0, 3)
 		if candidate.PublishedAt != nil && !candidate.PublishedAt.Before(freshCutoff) {
@@ -156,63 +141,35 @@ func selectRecommendationCandidatesV3(ctx context.Context, userID uint, settings
 		if exploration {
 			poolTags = append(poolTags, "exploration")
 		}
+		if _, ok := vectorSeen[candidate.ID]; ok {
+			poolTags = append(poolTags, "vector")
+		}
 		quality := candidate.QualityScore
-		depth := candidate.DepthScore
 		if assessment.ID != 0 {
 			quality = assessment.OverallQuality
-			depth = assessment.Depth
-		}
-		score := scoreRecommendationCandidateV3(recommendationScoreInput{
-			Quality: quality, Depth: depth, Evergreen: assessment.EvergreenValue, PublishedAt: candidate.PublishedAt,
-			Topics: topics, ContentStyle: candidate.ContentStyle, ContentType: candidate.ContentType,
-			TopicWeights: topicWeights, StyleWeights: styleWeights, DepthPreference: profile.DepthPreference, Now: now,
-		})
-		score += vectorBoosts[candidate.ID]
-		if _, ok := preferredLanguages[strings.ToLower(strings.TrimSpace(candidate.Language))]; ok {
-			score += 0.05
-		}
-		switch settings.PreferredLength {
-		case "short":
-			if candidate.WordCount > 0 && candidate.WordCount <= 1200 {
-				score += 0.05
-			}
-		case "long":
-			if candidate.WordCount >= 1800 {
-				score += 0.05
-			}
-		}
-		if explicitSourcePreferenceMatches(candidate, host, favoriteSources) {
-			score += 0.08
-		}
-		if exploration {
-			score += 0.02
 		}
 		poolType := primaryPoolType(poolTags)
+		seenIdentity[identity] = struct{}{}
 		report.Candidates = append(report.Candidates, recommendationCandidateScore{
 			Candidate: candidate, Topics: topics, SourceHost: host, Author: strings.TrimSpace(candidate.Author),
 			PoolTags: poolTags, PoolType: poolType, Exploration: exploration, ExplorationReason: explorationReason,
 			ContentUpdated: contentUpdated, CooldownRepeat: cooldownRepeat,
-			RetrievalScore: score, FinalScore: score, Reason: recommendationReasonV3(candidate, topics, poolType, explorationReason, contentUpdated),
+			RetrievalScore: quality, FinalScore: quality, Reason: "",
 		})
 	}
 	sort.SliceStable(report.Candidates, func(i, j int) bool {
 		if report.Candidates[i].FinalScore != report.Candidates[j].FinalScore {
 			return report.Candidates[i].FinalScore > report.Candidates[j].FinalScore
 		}
+		leftSeen := report.Candidates[i].Candidate.LastSeenAt
+		rightSeen := report.Candidates[j].Candidate.LastSeenAt
+		if !leftSeen.Equal(rightSeen) {
+			return leftSeen.After(rightSeen)
+		}
 		return report.Candidates[i].Candidate.ID < report.Candidates[j].Candidate.ID
 	})
 	report.EligibleAfterHard = len(report.Candidates)
 	return report, nil
-}
-
-func normalizedPreferenceSet(values []string) map[string]struct{} {
-	result := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		if value = strings.ToLower(strings.TrimSpace(value)); value != "" {
-			result[value] = struct{}{}
-		}
-	}
-	return result
 }
 
 // collectHardEligibleSelectionPool 按质量排序分页扫描，直到凑满 poolSize 篇通过硬过滤的候选。
@@ -314,19 +271,7 @@ WHERE prior_item.user_id = ?
 	}
 	return query.Where("discovery_candidates.processing_state = ? AND discovery_candidates.eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
 		Where("discovery_candidates.dedupe_state = ? AND (discovery_candidates.representative_id IS NULL OR discovery_candidates.representative_id = discovery_candidates.id)", discovery.DiscoveryDedupeReady).
-		Order("discovery_candidates.quality_score desc, discovery_candidates.depth_score desc, discovery_candidates.score desc, discovery_candidates.last_seen_at desc, discovery_candidates.id asc")
-}
-
-func explicitSourcePreferenceMatches(candidate DiscoveryCandidate, host string, favorites map[string]struct{}) bool {
-	if len(favorites) == 0 {
-		return false
-	}
-	for _, value := range []string{candidate.SourceName, host} {
-		if _, ok := favorites[strings.ToLower(strings.TrimSpace(value))]; ok {
-			return true
-		}
-	}
-	return false
+		Order("discovery_candidates.quality_score desc, discovery_candidates.last_seen_at desc, discovery_candidates.id asc")
 }
 
 func populateGlobalSelectionExclusions(excluded map[string]int) error {
@@ -487,37 +432,6 @@ func candidateExplorationReason(candidate DiscoveryCandidate, topics []string, s
 	return false, ""
 }
 
-func scoreRecommendationCandidateV3(input recommendationScoreInput) float64 {
-	score := 0.12 + clampScore(input.Quality)*0.35 + clampScore(input.Depth)*0.15 + freshnessScoreAt(input.PublishedAt, input.Now)*0.13 + clampScore(input.Evergreen)*0.08
-	for _, topic := range input.Topics {
-		score += boundedWeight(input.TopicWeights[topic]) * 0.16
-	}
-	for _, style := range []string{input.ContentStyle, input.ContentType} {
-		score += boundedWeight(input.StyleWeights[style]) * 0.07
-	}
-	if input.DepthPreference > 0.5 {
-		score += clampScore(input.Depth) * (input.DepthPreference - 0.5) * 0.2
-	}
-	return score
-}
-
-func freshnessScoreAt(publishedAt *time.Time, now time.Time) float64 {
-	if publishedAt == nil {
-		return 0.35
-	}
-	age := now.Sub(*publishedAt)
-	switch {
-	case age <= 24*time.Hour:
-		return 1
-	case age <= 7*24*time.Hour:
-		return 0.75
-	case age <= 30*24*time.Hour:
-		return 0.45
-	default:
-		return 0.15
-	}
-}
-
 func primaryPoolType(tags []string) string {
 	for _, preferred := range []string{"fresh", "evergreen", "exploration"} {
 		for _, tag := range tags {
@@ -529,151 +443,6 @@ func primaryPoolType(tags []string) string {
 	return "eligible"
 }
 
-func recommendationReasonV3(candidate DiscoveryCandidate, topics []string, poolType string, explorationReason string, updated bool) string {
-	if updated {
-		return "文章正文有实质更新，可重新阅读"
-	}
-	if explorationReason != "" {
-		return "探索推荐：" + explorationReason
-	}
-	if len(topics) > 0 {
-		return "基于文章质量、" + poolType + " 属性和主题 " + topics[0] + " 推荐"
-	}
-	return "基于文章质量和 " + poolType + " 属性推荐"
-}
-
-func diversifyRecommendationCandidatesV3(candidates []recommendationCandidateScore, limit int, explorationRate float64) ([]recommendationCandidateScore, []string) {
-	return diversifyRecommendationCandidatesV3WithReserved(candidates, limit, explorationRate, nil)
-}
-
-func diversifyRecommendationCandidatesV3WithReserved(candidates []recommendationCandidateScore, limit int, explorationRate float64, reservedSources map[string]int) ([]recommendationCandidateScore, []string) {
-	if limit <= 0 || len(candidates) == 0 {
-		return []recommendationCandidateScore{}, []string{}
-	}
-	if explorationRate < 0 {
-		explorationRate = 0
-	}
-	if explorationRate > 1 {
-		explorationRate = 1
-	}
-	explorationAvailable := 0
-	for _, candidate := range candidates {
-		if candidate.Exploration {
-			explorationAvailable++
-		}
-	}
-	explorationTarget := int(math.Ceil(float64(limit) * explorationRate))
-	if limit >= 5 && explorationAvailable > 0 && explorationTarget < 1 {
-		explorationTarget = 1
-	}
-	if explorationTarget > explorationAvailable {
-		explorationTarget = explorationAvailable
-	}
-	if explorationTarget > limit {
-		explorationTarget = limit
-	}
-	// 每个来源先只选一篇；来源不足以填满目标条数时，再放宽允许同一来源多篇。
-	maxSource := 1
-	maxTopic := maxInt(1, int(math.Ceil(float64(limit)*0.4)))
-	maxAuthor := maxInt(1, int(math.Ceil(float64(limit)*0.2)))
-	selected := make([]recommendationCandidateScore, 0, limit)
-	used := make(map[int]bool)
-	usedIdentity := make(map[string]bool)
-	sourceCounts := make(map[string]int)
-	for source, count := range reservedSources {
-		if count > 0 {
-			sourceCounts[source] = count
-		}
-	}
-	topicCounts := make(map[string]int)
-	authorCounts := make(map[string]int)
-	poolCounts := make(map[string]int)
-	selectedExploration := 0
-	relaxAuthor, relaxTopic, relaxSource := false, false, false
-	relaxations := make([]string, 0, 3)
-	for len(selected) < limit {
-		remaining := limit - len(selected)
-		needExploration := selectedExploration < explorationTarget && remaining <= explorationTarget-selectedExploration
-		bestIndex := -1
-		bestScore := -math.MaxFloat64
-		for index, candidate := range candidates {
-			if used[index] || usedIdentity[recommendationCandidateIdentity(candidate.Candidate)] || (needExploration && !candidate.Exploration) {
-				continue
-			}
-			source := recommendationSourceKeyFromScore(candidate)
-			author := strings.ToLower(candidate.Author)
-			if !relaxSource && sourceCounts[source] >= maxSource {
-				continue
-			}
-			if !relaxTopic && dominantTopicCount(candidate.Topics, topicCounts) >= maxTopic {
-				continue
-			}
-			if !relaxAuthor && author != "" && authorCounts[author] >= maxAuthor {
-				continue
-			}
-			score := candidateSelectionScore(candidate) - maxSimilarityPenalty(candidate, selected)
-			if poolCounts[candidate.PoolType] >= maxInt(1, limit/2) {
-				score -= 0.03
-			}
-			if bestIndex == -1 || score > bestScore || (score == bestScore && candidate.Candidate.ID < candidates[bestIndex].Candidate.ID) {
-				bestIndex, bestScore = index, score
-			}
-		}
-		if bestIndex == -1 {
-			canRelaxAuthor, canRelaxTopic, canRelaxSource := false, false, false
-			for index, candidate := range candidates {
-				if used[index] || usedIdentity[recommendationCandidateIdentity(candidate.Candidate)] {
-					continue
-				}
-				sourceBlocked := !relaxSource && sourceCounts[recommendationSourceKeyFromScore(candidate)] >= maxSource
-				if sourceBlocked {
-					canRelaxSource = true
-					continue
-				}
-				author := strings.ToLower(candidate.Author)
-				if !relaxAuthor && author != "" && authorCounts[author] >= maxAuthor {
-					canRelaxAuthor = true
-				}
-				if !relaxTopic && dominantTopicCount(candidate.Topics, topicCounts) >= maxTopic {
-					canRelaxTopic = true
-				}
-			}
-			switch {
-			case !relaxAuthor && canRelaxAuthor:
-				relaxAuthor = true
-				relaxations = append(relaxations, "author_limit")
-			case !relaxTopic && canRelaxTopic:
-				relaxTopic = true
-				relaxations = append(relaxations, "topic_limit")
-			case !relaxSource && canRelaxSource:
-				relaxSource = true
-				relaxations = append(relaxations, "source_limit")
-			default:
-				return selected, relaxations
-			}
-			continue
-		}
-		chosen := candidates[bestIndex]
-		chosen.FinalScore = bestScore
-		if chosen.Exploration {
-			selectedExploration++
-			chosen.PoolType = "exploration"
-		}
-		selected = append(selected, chosen)
-		used[bestIndex] = true
-		usedIdentity[recommendationCandidateIdentity(chosen.Candidate)] = true
-		sourceCounts[recommendationSourceKeyFromScore(chosen)]++
-		for _, topic := range chosen.Topics {
-			topicCounts[topic]++
-		}
-		if author := strings.ToLower(chosen.Author); author != "" {
-			authorCounts[author]++
-		}
-		poolCounts[chosen.PoolType]++
-	}
-	return selected, relaxations
-}
-
 // recommendationSourceKey 用卡片上展示的来源名（或 URL 主机）标识来源，优先保证每批同一来源只出现一次。
 func recommendationSourceKey(candidate DiscoveryCandidate, host string) string {
 	key := strings.ToLower(strings.TrimSpace(firstNonEmpty(candidate.SourceName, host)))
@@ -681,10 +450,6 @@ func recommendationSourceKey(candidate DiscoveryCandidate, host string) string {
 		return key
 	}
 	return fmt.Sprintf("candidate:%d", candidate.ID)
-}
-
-func recommendationSourceKeyFromScore(candidate recommendationCandidateScore) string {
-	return recommendationSourceKey(candidate.Candidate, firstNonEmpty(candidate.SourceHost, candidate.Candidate.CrawlHost))
 }
 
 func recommendationSourceKeyFromCandidate(candidate DiscoveryCandidate) string {
@@ -695,22 +460,6 @@ func recommendationSourceKeyFromItem(item RecommendationItem) string {
 	host := sourceHost(firstNonEmpty(item.SnapshotURL, item.Candidate.URL))
 	name := firstNonEmpty(item.SnapshotSource, item.Candidate.SourceName)
 	return recommendationSourceKey(DiscoveryCandidate{ID: item.CandidateID, SourceName: name}, host)
-}
-
-// recommendationSourceCountsFromItems 统计当前推荐里各来源已占用的篇数，补篇时用来优先选尚未出现的来源。
-func recommendationSourceCountsFromItems(items []RecommendationItem) map[string]int {
-	counts := make(map[string]int, len(items))
-	for _, item := range items {
-		counts[recommendationSourceKeyFromItem(item)]++
-	}
-	return counts
-}
-
-func candidateSelectionScore(candidate recommendationCandidateScore) float64 {
-	if candidate.RerankRank > 0 {
-		return 1000 - float64(candidate.RerankRank) + candidate.FinalScore/100
-	}
-	return candidate.FinalScore
 }
 
 func recommendationCandidateIdentity(candidate DiscoveryCandidate) string {

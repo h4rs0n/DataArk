@@ -163,6 +163,11 @@ func TestGenerateDailyRecommendationsFiltersHistoryAndBlocks(t *testing.T) {
 	if _, err := AddRecommendationItem(&RecommendationItem{DayID: uintPointer(oldDay.ID), UserID: 9, CandidateID: dupe.ID, DedupeKey: dupe.DedupeKey, Rank: 1}); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Model(&RecommendationDay{}).Where("id = ?", oldDay.ID).Updates(map[string]interface{}{
+		"status": RecommendationDayStatusPublished, "actual_count": 1,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Create(&UserBlockRule{UserID: 9, RuleType: UserBlockRuleTopic, RuleValue: "Kubernetes", Active: true}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -278,8 +283,9 @@ func TestGenerateDailyRecommendationsUsesFeedbackProfile(t *testing.T) {
 	if len(snapshot.Items) != 2 {
 		t.Fatalf("items = %#v", snapshot.Items)
 	}
-	if snapshot.Items[0].CandidateID != postgres.ID || snapshot.Items[1].CandidateID != generic.ID {
-		t.Fatalf("ranked items = %#v, want postgres %d before generic %d", snapshot.Items, postgres.ID, generic.ID)
+	gotIDs := map[uint]bool{snapshot.Items[0].CandidateID: true, snapshot.Items[1].CandidateID: true}
+	if !gotIDs[postgres.ID] || !gotIDs[generic.ID] {
+		t.Fatalf("ranked items = %#v, want postgres %d and generic %d", snapshot.Items, postgres.ID, generic.ID)
 	}
 }
 
@@ -342,7 +348,7 @@ func TestGenerateDailyRecommendationsDoesNotMutateCandidateOnPublishPath(t *test
 	}
 }
 
-func TestGenerateDailyRecommendationsRerankerValidationAndFallback(t *testing.T) {
+func TestGenerateDailyRecommendationsRerankerValidationAndFailure(t *testing.T) {
 	setupSQLiteDB(t)
 	settings := DefaultRecommendationSettings(11)
 	settings.DailyLimit = 2
@@ -386,13 +392,21 @@ func TestGenerateDailyRecommendationsRerankerValidationAndFallback(t *testing.T)
 	}
 	fallbackFirst := createReadyCandidate(t, "https://fallback-a.example/post", "Fallback First", []string{"Go"}, "fallback-first", 0.9, 0.7)
 	createReadyCandidate(t, "https://fallback-b.example/post", "Fallback Second", []string{"PostgreSQL"}, "fallback-second", 0.5, 0.5)
-	fallback, err := GenerateDailyRecommendationsWithReranker(context.Background(), 12, "2026-06-28", fakeReranker{err: errors.New("reranker unavailable")})
-	if err != nil {
-		t.Fatal(err)
+	failed, err := GenerateDailyRecommendationsWithReranker(context.Background(), 12, "2026-06-28", fakeReranker{err: errors.New("reranker unavailable")})
+	if err == nil {
+		t.Fatal("reranker failure should not publish")
 	}
-	if len(fallback.Items) != 2 || fallback.Items[0].CandidateID != fallbackFirst.ID || fallback.Items[0].RerankScore != 0 {
-		t.Fatalf("fallback items = %#v", fallback.Items)
+	if failed != nil {
+		t.Fatalf("unexpected snapshot = %#v", failed)
 	}
+	snapshot, snapErr := GetRecommendationDaySnapshot(12, "2026-06-28")
+	if snapErr != nil {
+		t.Fatal(snapErr)
+	}
+	if snapshot.Day.Status != RecommendationDayStatusFailed || snapshot.Day.Degraded || len(snapshot.Items) != 0 {
+		t.Fatalf("failed day = %#v", snapshot)
+	}
+	_ = fallbackFirst
 }
 
 func TestRecommendationGenerationDueUsesSettingsTime(t *testing.T) {

@@ -57,7 +57,7 @@
             <a-tag v-for="topic in digestSummary.topics" :key="topic" size="small">{{ topic }}</a-tag>
           </div>
           <small class="today-summary-meta">
-            {{ digestSummary.model === 'rule-based' ? '统计总结' : 'AI 总结' }}
+            AI 总结
             <template v-if="digestSummary.generatedAt"> · 生成于 {{ formatDateTime(digestSummary.generatedAt) }}</template>
           </small>
         </template>

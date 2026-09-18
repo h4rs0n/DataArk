@@ -29,6 +29,7 @@ const (
 	StageArticleAssessment    = "article_assessment"
 	StageRecommendationRerank = "recommendation_rerank"
 	StageDigestSummary        = "digest_summary"
+	StageArchiveRecommend     = "archive_recommend"
 	CallEventName             = "llm_call"
 )
 

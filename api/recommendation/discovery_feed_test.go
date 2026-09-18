@@ -3,6 +3,7 @@ package recommendation
 import (
 	"DataArk/discovery"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -298,88 +299,67 @@ func TestDiscoveryFeedItemSupportsFeedbackAndContext(t *testing.T) {
 	}
 }
 
-func TestDiscoveryFeedRefreshKeepsDominantSourceToOneWhenOthersExist(t *testing.T) {
+func TestDiscoveryFeedRefreshUsesRerankOrder(t *testing.T) {
 	setupSQLiteDB(t)
 	now := time.Now()
-	for index := 0; index < 100; index++ {
-		candidate := DiscoveryCandidate{
-			SourceID: 1, SourceName: "Security Lab",
-			URL: fmt.Sprintf("https://securitylab.example/post-%d", index), Title: fmt.Sprintf("Lab %02d", index),
-			QualityScore: 1, DepthScore: 1, Status: discovery.DiscoveryCandidateStatusNew,
-			ProcessingState: discovery.DiscoveryProcessingReady, EligibilityState: discovery.DiscoveryEligibilityEligible,
-			DedupeState: discovery.DiscoveryDedupeReady, DedupeKey: fmt.Sprintf("lab-%d", index),
-			PublishedAt: &now, LastSeenAt: now,
-		}
-		if err := db.Create(&candidate).Error; err != nil {
-			t.Fatal(err)
-		}
+	lab := DiscoveryCandidate{
+		SourceID: 1, SourceName: "Security Lab",
+		URL: "https://securitylab.example/post-1", Title: "Lab high",
+		QualityScore: 1, DepthScore: 1, Status: discovery.DiscoveryCandidateStatusNew,
+		ProcessingState: discovery.DiscoveryProcessingReady, EligibilityState: discovery.DiscoveryEligibilityEligible,
+		DedupeState: discovery.DiscoveryDedupeReady, DedupeKey: "lab-1",
+		PublishedAt: &now, LastSeenAt: now,
 	}
-	for index := 0; index < 12; index++ {
-		candidate := DiscoveryCandidate{
-			SourceID: uint(index + 2), SourceName: fmt.Sprintf("other-%d", index),
-			URL: fmt.Sprintf("https://other-%d.example/post", index), Title: fmt.Sprintf("Other %d", index),
-			QualityScore: 0.4, DepthScore: 0.4, Status: discovery.DiscoveryCandidateStatusNew,
-			ProcessingState: discovery.DiscoveryProcessingReady, EligibilityState: discovery.DiscoveryEligibilityEligible,
-			DedupeState: discovery.DiscoveryDedupeReady, DedupeKey: fmt.Sprintf("other-%d", index),
-			PublishedAt: &now, LastSeenAt: now,
-		}
-		if err := db.Create(&candidate).Error; err != nil {
-			t.Fatal(err)
-		}
+	other := DiscoveryCandidate{
+		SourceID: 2, SourceName: "other-0",
+		URL: "https://other-0.example/post", Title: "Other",
+		QualityScore: 0.4, DepthScore: 0.4, Status: discovery.DiscoveryCandidateStatusNew,
+		ProcessingState: discovery.DiscoveryProcessingReady, EligibilityState: discovery.DiscoveryEligibilityEligible,
+		DedupeState: discovery.DiscoveryDedupeReady, DedupeKey: "other-0",
+		PublishedAt: &now, LastSeenAt: now,
 	}
+	if err := db.Create(&lab).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	old := configuredReranker
+	configuredReranker = func() RerankProvider {
+		return fakeReranker{result: RerankResult{
+			Model: "feed-order", PromptVersion: "v1",
+			Items: []RerankItem{
+				{CandidateID: other.ID, Rank: 1, Reason: "模型选择其他来源", Confidence: 0.9},
+				{CandidateID: lab.ID, Rank: 2, Reason: "模型把高分放到第二", Confidence: 0.2},
+			},
+		}}
+	}
+	t.Cleanup(func() { configuredReranker = old })
 
-	snapshot, err := RefreshDiscoveryFeed(context.Background(), 7001, 10)
+	snapshot, err := RefreshDiscoveryFeed(context.Background(), 7001, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Batch == nil || snapshot.Batch.ActualCount != 10 || len(snapshot.Items) != 10 {
-		t.Fatalf("diversified snapshot = %#v", snapshot)
-	}
-	assertUniqueRecommendationSources(t, snapshot.Items)
-	labCount := 0
-	for _, item := range snapshot.Items {
-		if recommendationSourceKeyFromItem(item) == recommendationSourceKey(DiscoveryCandidate{SourceName: "Security Lab"}, "securitylab.example") {
-			labCount++
-		}
-	}
-	if labCount != 1 {
-		t.Fatalf("Security Lab count = %d, want 1 even though it dominates the quality ranking", labCount)
-	}
-	if strings.Contains(snapshot.Batch.ShortageReasons, `"source_limit"`) {
-		t.Fatalf("should not relax source when other sources exist: %s", snapshot.Batch.ShortageReasons)
+	if snapshot.Batch == nil || len(snapshot.Items) != 2 || snapshot.Items[0].CandidateID != other.ID {
+		t.Fatalf("rerank order was rewritten: %#v", snapshot)
 	}
 }
 
-func TestDiscoveryFeedRefreshRepeatsDominantSourceOnlyAfterUniqueSourcesRunOut(t *testing.T) {
+func TestDiscoveryFeedRefreshFailsWithoutWritingBatch(t *testing.T) {
 	setupSQLiteDB(t)
-	now := time.Now()
-	for index := 0; index < 15; index++ {
-		candidate := DiscoveryCandidate{
-			SourceID: 1, SourceName: "Security Lab",
-			URL: fmt.Sprintf("https://securitylab.example/only-%d", index), Title: fmt.Sprintf("Only %02d", index),
-			QualityScore: 1, DepthScore: 1, Status: discovery.DiscoveryCandidateStatusNew,
-			ProcessingState: discovery.DiscoveryProcessingReady, EligibilityState: discovery.DiscoveryEligibilityEligible,
-			DedupeState: discovery.DiscoveryDedupeReady, DedupeKey: fmt.Sprintf("only-lab-%d", index),
-			PublishedAt: &now, LastSeenAt: now,
-		}
-		if err := db.Create(&candidate).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
+	createDiscoveryFeedCandidates(t, 3)
+	old := configuredReranker
+	configuredReranker = func() RerankProvider { return fakeReranker{err: errors.New("reranker down")} }
+	t.Cleanup(func() { configuredReranker = old })
 
-	snapshot, err := RefreshDiscoveryFeed(context.Background(), 7002, 10)
+	if _, err := RefreshDiscoveryFeed(context.Background(), 7002, 10); err == nil {
+		t.Fatal("rerank failure should not write a feed batch")
+	}
+	current, err := GetCurrentDiscoveryFeed(7002)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Batch == nil || snapshot.Batch.ActualCount != 10 || len(snapshot.Items) != 10 {
-		t.Fatalf("shortage-fill snapshot = %#v", snapshot)
-	}
-	for _, item := range snapshot.Items {
-		if recommendationSourceKeyFromItem(item) != recommendationSourceKey(DiscoveryCandidate{SourceName: "Security Lab"}, "securitylab.example") {
-			t.Fatalf("unexpected source %q", recommendationSourceKeyFromItem(item))
-		}
-	}
-	if !strings.Contains(snapshot.Batch.ShortageReasons, `"source_limit"`) {
-		t.Fatalf("should relax source after unique sources run out: %s", snapshot.Batch.ShortageReasons)
+	if current.Batch != nil || len(current.Items) != 0 {
+		t.Fatalf("failed refresh wrote a batch: %#v", current)
 	}
 }

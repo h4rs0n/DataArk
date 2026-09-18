@@ -114,14 +114,16 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 		t.Fatalf("full digest = %#v", userOneDay.Day)
 	}
 	assertUniqueRecommendationSources(t, userOneDay.Items)
-	explorationItems := 0
+	identities := make(map[string]bool)
 	for _, item := range userOneDay.Items {
-		if item.PoolType == "exploration" {
-			explorationItems++
+		if item.Reason == "" {
+			t.Fatalf("rerank reason missing: %#v", item)
 		}
-	}
-	if explorationItems < 2 {
-		t.Fatalf("exploration items = %d, want ceil(10*0.15)=2", explorationItems)
+		identity := recommendationCandidateIdentity(item.Candidate)
+		if identities[identity] {
+			t.Fatalf("duplicate identity selected: %s", identity)
+		}
+		identities[identity] = true
 	}
 	bItem := m17ItemForCandidate(t, userOneDay, bCandidates[1].ID)
 	if _, _, err := RecordRecommendationFeedback(1701, bItem.ID, RecommendationFeedbackNotInterested, nil); err != nil {
@@ -181,7 +183,7 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 	}
 
 	// Published display values survive candidate mutation and a compatibility
-	// retry. A separate user proves a failed optional reranker still publishes.
+	// retry. A separate user proves a failed reranker does not publish.
 	originalTitle := bItem.SnapshotTitle
 	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", bItem.CandidateID).Updates(map[string]interface{}{"title": "mutated after publication", "eligibility_state": discovery.DiscoveryEligibilityIneligible}).Error; err != nil {
 		t.Fatal(err)
@@ -194,12 +196,19 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 	if retriedItem.SnapshotTitle != originalTitle || retriedItem.Candidate.Title != originalTitle || len(retried.Items) != len(userOneDay.Items) {
 		t.Fatalf("published snapshot changed after retry: %#v", retriedItem)
 	}
-	fallback, err := GenerateDailyRecommendationsWithReranker(context.Background(), 1703, "2026-07-16", fakeReranker{err: errors.New("fixture model unavailable")})
+	failed, err := GenerateDailyRecommendationsWithReranker(context.Background(), 1703, "2026-07-16", fakeReranker{err: errors.New("fixture model unavailable")})
+	if err == nil {
+		t.Fatal("reranker failure should not publish")
+	}
+	if failed != nil {
+		t.Fatalf("unexpected snapshot = %#v", failed)
+	}
+	failedDay, err := GetRecommendationDaySnapshot(1703, "2026-07-16")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fallback.Day.Status != RecommendationDayStatusPublished || !fallback.Day.Degraded || len(fallback.Items) == 0 {
-		t.Fatalf("rule fallback digest = %#v", fallback)
+	if failedDay.Day.Status != RecommendationDayStatusFailed || failedDay.Day.Degraded || len(failedDay.Items) != 0 {
+		t.Fatalf("failed digest = %#v", failedDay)
 	}
 
 	metrics, err := GetAdminProductMetrics(clock.Now())

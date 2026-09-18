@@ -83,7 +83,11 @@ func RefreshDiscoveryFeed(ctx context.Context, userID uint, limit int) (*Recomme
 	if err != nil {
 		return nil, err
 	}
-	selected, relaxations := diversifyRecommendationCandidatesV3(report.Candidates, limit, settings.ExplorationRate)
+	reranked, rerankModel, rerankPrompt, err := applyRecommendationReranker(ctx, userID, limit, report.Candidates, profile, configuredReranker())
+	if err != nil {
+		return nil, err
+	}
+	selected := trimRecommendationCandidates(reranked, limit)
 
 	now := recommendationClock.Now()
 	items := buildRecommendationItems(1, userID, selected, 1, profile.ProfileVersion, false, now)
@@ -91,8 +95,10 @@ func RefreshDiscoveryFeed(ctx context.Context, userID uint, limit int) (*Recomme
 		items[index].DayID = nil
 	}
 	shortage, _ := json.Marshal(map[string]interface{}{
-		"target": limit, "actual": len(items), "softRelaxations": relaxations,
+		"target": limit, "actual": len(items),
 		"newInventoryShortage": len(items) < limit,
+		"llmModel":             rerankModel,
+		"promptVersion":        rerankPrompt,
 	})
 	batch := RecommendationFeedBatch{
 		UserID: userID, Status: RecommendationFeedBatchStatusActive,

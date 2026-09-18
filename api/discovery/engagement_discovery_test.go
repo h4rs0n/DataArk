@@ -4,6 +4,7 @@ import (
 	"DataArk/archive"
 	"DataArk/config"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -53,11 +54,22 @@ func TestKeywordStatsAndArchiveRecommendations(t *testing.T) {
 	if len(rankings) != 1 || rankings[0].ClickCount != 1 || rankings[0].Title != "Go Archive" {
 		t.Fatalf("rankings = %#v", rankings)
 	}
-	recommendations, err := archive.GetArchiveRecommendations("7d", 10)
+
+	oldRecommender := archive.SwapArchiveRecommenderForTest(archive.ArchiveRecommenderFunc(func(_ context.Context, request archive.ArchiveRecommendRequest) (archive.ArchiveRecommendResponse, error) {
+		if len(request.Documents) == 0 {
+			return archive.ArchiveRecommendResponse{}, errors.New("empty pool")
+		}
+		return archive.ArchiveRecommendResponse{
+			Items: []archive.ArchiveRecommendPick{{Path: request.Documents[0].Path, Reason: "测试归档推荐", Score: 0.8}},
+			Model: "test-archive",
+		}, nil
+	}))
+	t.Cleanup(oldRecommender)
+	recommendations, err := archive.GetArchiveRecommendations(context.Background(), "7d", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(recommendations) != 1 || recommendations[0].Score <= 0 {
+	if len(recommendations) != 1 || recommendations[0].Reason != "测试归档推荐" {
 		t.Fatalf("recommendations = %#v", recommendations)
 	}
 }

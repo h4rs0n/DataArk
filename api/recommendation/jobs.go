@@ -18,7 +18,7 @@ type DailyJobEnqueuer interface {
 }
 
 func RunGenerateDailyRecommendationJob(ctx context.Context, userID uint, localDate string) error {
-	_, err := GenerateDailyRecommendationsWithReranker(ctx, userID, localDate, ConfiguredRecommendationReranker())
+	_, err := GenerateDailyRecommendationsWithReranker(ctx, userID, localDate, configuredReranker())
 	return err
 }
 

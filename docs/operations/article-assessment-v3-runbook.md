@@ -4,22 +4,24 @@ This runbook is the release gate for `article-value-v4`, which extends the v3 re
 
 ## Rollout modes and configuration
 
-Keep the initial deployment in observe mode:
+Assessment mode is `active` only. `-llm-chat-model` and `-llm-base-url` are required at process start; an empty API key is still allowed for a local gateway. Missing chat configuration refuses startup. There is no observe mode and no deterministic-rule fallback.
 
 ```text
-ARTICLE_ASSESSMENT_MODE=observe
+ARTICLE_ASSESSMENT_MODE=active
 ARTICLE_ASSESSMENT_CONCURRENCY=2
+LLM_BASE_URL=http://llm-gateway:11434
+LLM_CHAT_MODEL=your-chat-model
 ```
 
-`observe` persists a valid model row but leaves the current assessment pointer unchanged. `active` atomically activates valid model rows. A model failure retains an existing active row; a new article with no previous score activates the conservative deterministic row with state `degraded`. After existing article-validity gates, only semantic quality below 20/100 is ineligible. Confidence does not independently reject an article.
+A model failure retains an existing **model** assessment pointer and records the error. A new article with no previous model row stays `pending`/`review` and does not receive rule scores or enter eligible inventory. After existing article-validity gates, only semantic quality below 20/100 is ineligible. Confidence comes from the model output (or 1.0) and does not independently reject an article.
 
 The structured response has three integer scores from 0 through 100, exactly two short reasons, one summary, and 3–8 keywords: `qualityScore`, `depthScore`, `evergreenScore`, `reasons`, `summary`, and `keywords`. Summary is 1–200 characters in the article's primary language. Each keyword is 1–20 characters. A missing or invalid summary or keyword list fails that attempt. The provider then appends only the concrete parser or validator error (missing field names, unknown keys, length limits) onto the original messages and retries `json_schema` up to five times. It does not replay previous model completions. After those retries, or after a later non-retryable error such as rate limit, timeout, or context-length rejection once a retryable schema failure has already occurred, it makes one `json_object` call with the original messages plus that latest validator error. HTTP 400/404/415/422 responses that reject structured output skip remaining schema retries, fall back to `json_object` immediately, and cache that mode for the process lifetime of that endpoint and model. Invalid JSON from a schema-capable endpoint is not cached as `json_object`. A first-attempt authentication, rate-limit, or timeout failure is not format-retried.
 
-Successful model assessments write `summary` and `keywords` onto the live `discovery_candidates` row even in observe mode. Those fields are display metadata and do not change eligibility or ranking. Recommendation cards that already exist keep their frozen snapshots until a new personalized feed or daily digest is generated.
+Successful model assessments write `summary` and `keywords` onto the live `discovery_candidates` row. Those fields are display metadata and do not change eligibility or ranking. Recommendation cards that already exist keep their frozen snapshots until a new personalized feed or daily digest is generated.
 
-## Summary and keyword backfill in observe mode
+## Summary and keyword backfill
 
-Stock inventory still has v3 assessment rows without summaries. Owner backfill now works while `ARTICLE_ASSESSMENT_MODE=observe`: it enqueues at most 250 `assessment_assess_article` jobs on the paused `article_assessment` queue for articles that lack a v4 model row and does not activate model scores. After switching to `active`, the same endpoint activates stored v4 rows or enqueues missing ones as before. Discovery crawl runs automatically on `discovery_crawl`. LLM assessment still requires **推荐中心 → 评估 → 执行 LLM 评估**.
+Stock inventory still has v3 assessment rows without summaries. Owner backfill enqueues at most 250 `assessment_assess_article` jobs on the paused `article_assessment` queue for articles that lack a model row. Goose `000031` demotes any current `deterministic_rules` pointer to `assessment_state=pending` so those articles wait for LLM re-assessment. Discovery crawl runs automatically on `discovery_crawl`. LLM assessment still requires **推荐中心 → 评估 → 执行 LLM 评估**.
 
 ```text
 POST /api/admin/discovery/article-assessments/backfill
@@ -33,7 +35,7 @@ POST /api/admin/discovery/article-assessments/backfill
 
 Sign in as the owner and open **推荐中心 → 评估**. The metrics panel shows pending-queue depth, 24-hour complete-job success/failure, articles/hour, token totals, p50/p95 latency, schema retry rate, output token/s, and estimated time to drain the paused assessment queue from `GET /api/admin/assessment/metrics` plus the queue snapshot. The human-labelling workflow and bounded backfill/rollback live on the same page. The page and all corresponding APIs are owner-only. A new run selects the gold set from the current PostgreSQL inventory, specifically each representative candidate's immutable current `discovery_article_content_versions` row. Labels never come from BlogClaw, public benchmarks, site reputation, or an LLM.
 
-Click **创建标注批次** once. The server persists a frozen 120-item manifest in `article_assessment_workflow_runs` and `article_assessment_workflow_items`; it references immutable content-version rows rather than placing full article bodies in downloadable files. Sampling is deterministic for the stored seed, deduplicates content hashes, permits at most two articles per host, and contains 80 Chinese/English core articles across five body-length buckets plus 40 stress articles: eight each for low active score, quality boundary, saturated high score, model/rule disagreement, and overlong body.
+Click **创建标注批次** once. The server persists a frozen 120-item manifest in `article_assessment_workflow_runs` and `article_assessment_workflow_items`; it references immutable content-version rows rather than placing full article bodies in downloadable files. Sampling is deterministic for the stored seed, deduplicates content hashes, permits at most two articles per host, and contains 80 Chinese/English core articles across five body-length buckets plus 40 stress articles: eight each for low active score, quality boundary, saturated high score, quality/depth disagreement, and overlong body.
 
 The browser requests one current article at a time. Its response contains title, clean body text, language, character count, anonymous sample ID, and the current human label only. It does not contain host, source, stratum, baseline score, rule score, or model score. Responses use `Cache-Control: no-store`.
 
@@ -55,7 +57,7 @@ The old `api/cmd/article-assessment-eval` executable, self-contained HTML genera
 
 ## Activate, backfill, and recover
 
-After the page reports `activationReady=true`, deploy `ARTICLE_ASSESSMENT_MODE=active` and observe new articles for 48 hours. Confirm `llm_call` reasoning tokens remain zero, output validity and latency are stable, and eligibility/ranking distributions are not saturated. Then use the owner-only endpoints, always previewing first:
+After the page reports `activationReady=true`, keep `ARTICLE_ASSESSMENT_MODE=active` and watch new articles for 48 hours. Confirm `llm_call` reasoning tokens remain zero, output validity and latency are stable, and eligibility/ranking distributions are not saturated. Then use the owner-only endpoints, always previewing first:
 
 ```text
 POST /api/admin/discovery/article-assessments/backfill
@@ -65,9 +67,9 @@ POST /api/admin/discovery/article-assessments/backfill
 {"limit":250,"dryRun":false,"retryFailures":false}
 ```
 
-The hard maximum is 250. In `active` mode, a stored observe-mode v4 row is activated without another model call and its summary/keywords are written back to the candidate. Otherwise the candidate is marked assessment-pending and the paused `article_assessment` queue is used; the owner must click **执行 LLM 评估** before those jobs call the model. The old current pointer remains valid until success. Queue insertion failure leaves durable pending state for startup recovery. A v4 failure is skipped by later ordinary batches; set `retryFailures:true` only after its cause is corrected.
+The hard maximum is 250. A stored model row is activated without another model call and its summary/keywords are written back to the candidate. Otherwise the candidate is marked assessment-pending and the paused `article_assessment` queue is used; the owner must click **执行 LLM 评估** before those jobs call the model. The old current pointer remains valid until success only when it is a model row. Queue insertion failure leaves durable pending state for startup recovery. A later failure is skipped by ordinary batches; set `retryFailures:true` only after its cause is corrected.
 
-Rollback never deletes assessments or edits published recommendation snapshots. Preview and then reactivate the latest prior same-content assessment, or the v3 deterministic row, with:
+Rollback never deletes assessments or edits published recommendation snapshots. Preview and then reactivate the latest prior same-content **model** assessment with:
 
 ```text
 POST /api/admin/discovery/article-assessments/rollback
@@ -77,4 +79,4 @@ POST /api/admin/discovery/article-assessments/rollback
 {"limit":250,"dryRun":false}
 ```
 
-If model quality degrades during rollout, first return the service to observe mode so new model rows cannot become active, then run bounded rollback batches. Preserve assessment rows, workflow rows, and logs for diagnosis.
+If model quality degrades, stop the paused assessment queue, repair the model configuration, then run bounded rollback batches onto other model rows. Do not switch to observe mode or activate `deterministic_rules`. Preserve assessment rows, workflow rows, and logs for diagnosis.
