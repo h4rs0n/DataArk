@@ -48,6 +48,12 @@ func ResolveCandidateDuplicates(ctx context.Context, candidateID uint) error {
 		if target.ProcessingState != DiscoveryProcessingReady || strings.TrimSpace(target.ContentHash) == "" {
 			return nil
 		}
+		if _, err := bindCandidateMaterialIdentities(tx, target); err != nil {
+			return err
+		}
+		if err := tx.First(&target, candidateID).Error; err != nil {
+			return err
+		}
 
 		matches, strongest, maximumSimilarity, err := duplicateMatches(tx, target)
 		if err != nil {
@@ -66,7 +72,7 @@ func ResolveCandidateDuplicates(ctx context.Context, candidateID uint) error {
 		clusterIDs = uniqueSortedStrings(clusterIDs)
 		if len(clusterIDs) > 0 {
 			var clustered []DiscoveryCandidate
-			if err := tx.Where("duplicate_cluster_id IN ?", clusterIDs).Find(&clustered).Error; err != nil {
+			if err := Candidates(tx).Where("duplicate_cluster_id IN ?", clusterIDs).Find(&clustered).Error; err != nil {
 				return err
 			}
 			for _, member := range clustered {
@@ -102,28 +108,17 @@ func ResolveCandidateDuplicates(ctx context.Context, candidateID uint) error {
 					updates["eligibility_state"] = DiscoveryEligibilityUnknown
 					updates["eligibility_reasons"] = "assessment_pending"
 				}
-			} else {
+			} else if member.MaterialID != representative.MaterialID {
 				updates["eligibility_state"] = DiscoveryEligibilityIneligible
 				updates["eligibility_reasons"] = "duplicate_non_representative"
 			}
-			if err := tx.Model(&DiscoveryCandidate{}).Where("id = ?", member.ID).Updates(updates).Error; err != nil {
+			if err := UpdateCandidate(tx, member.ID, updates).Error; err != nil {
 				return err
 			}
 		}
 
-		nonRepresentativeIDs := make([]uint, 0, len(members)-1)
-		for _, member := range members {
-			if member.ID != representative.ID {
-				nonRepresentativeIDs = append(nonRepresentativeIDs, member.ID)
-			}
-		}
-		if len(nonRepresentativeIDs) > 0 {
-			if err := tx.Model(&DiscoveryCandidateProvenance{}).
-				Where("candidate_id IN ?", nonRepresentativeIDs).
-				Updates(map[string]interface{}{"candidate_id": representative.ID, "updated_at": now}).Error; err != nil {
-				return err
-			}
-		}
+		// Provenance remains attached to its observed candidate and material.
+		// Near-duplicate representatives never acquire another work's sources.
 
 		cluster := DiscoveryDuplicateCluster{
 			ClusterID: clusterID, RepresentativeID: representative.ID, MatchMethod: strongest,
@@ -163,7 +158,7 @@ func duplicateMatches(tx *gorm.DB, target DiscoveryCandidate) ([]candidateDuplic
 	maximumSimilarity := 0.0
 	var exactCandidates []DiscoveryCandidate
 	urlValues := candidateURLValues(target)
-	query := tx.Where("id <> ? AND processing_state = ?", target.ID, DiscoveryProcessingReady).
+	query := Candidates(tx).Where("id <> ? AND processing_state = ?", target.ID, DiscoveryProcessingReady).
 		Where("content_hash = ? OR canonical_url IN ? OR final_url IN ? OR normalized_url IN ? OR url IN ?", target.ContentHash, urlValues, urlValues, urlValues, urlValues)
 	if err := query.Find(&exactCandidates).Error; err != nil {
 		return nil, strongest, maximumSimilarity, err
@@ -188,7 +183,7 @@ func duplicateMatches(tx *gorm.DB, target DiscoveryCandidate) ([]candidateDuplic
 	}
 	var nearCandidates []DiscoveryCandidate
 	if target.WordCount >= 20 {
-		if err := tx.Where("id <> ? AND processing_state = ? AND language = ? AND word_count BETWEEN ? AND ?", target.ID, DiscoveryProcessingReady, target.Language, minimumWords, maximumWords).
+		if err := Candidates(tx).Where("id <> ? AND processing_state = ? AND language = ? AND word_count BETWEEN ? AND ?", target.ID, DiscoveryProcessingReady, target.Language, minimumWords, maximumWords).
 			Order("id").Limit(500).Find(&nearCandidates).Error; err != nil {
 			return nil, strongest, maximumSimilarity, err
 		}

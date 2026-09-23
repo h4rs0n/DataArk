@@ -1,0 +1,82 @@
+-- +goose Up
+-- The compatibility view is read-only; writes use the material repository.
+ALTER TABLE discovery_candidates
+    DROP COLUMN IF EXISTS title,
+    DROP COLUMN IF EXISTS summary,
+    DROP COLUMN IF EXISTS language,
+    DROP COLUMN IF EXISTS published_at,
+    DROP COLUMN IF EXISTS topics,
+    DROP COLUMN IF EXISTS entities,
+    DROP COLUMN IF EXISTS content_version,
+    DROP COLUMN IF EXISTS body_changed_at,
+    DROP COLUMN IF EXISTS content_type,
+    DROP COLUMN IF EXISTS content_style,
+    DROP COLUMN IF EXISTS quality_score,
+    DROP COLUMN IF EXISTS depth_score,
+    DROP COLUMN IF EXISTS assessment_state,
+    DROP COLUMN IF EXISTS current_assessment_id,
+    DROP COLUMN IF EXISTS assessment_error,
+    DROP COLUMN IF EXISTS eligibility_state,
+    DROP COLUMN IF EXISTS eligibility_reasons,
+    DROP COLUMN IF EXISTS enrichment_status,
+    DROP COLUMN IF EXISTS enrichment_error,
+    DROP COLUMN IF EXISTS llm_model,
+    DROP COLUMN IF EXISTS prompt_version,
+    DROP COLUMN IF EXISTS enriched_at,
+    DROP COLUMN IF EXISTS score,
+    DROP COLUMN IF EXISTS source_id,
+    DROP COLUMN IF EXISTS source_name,
+    DROP COLUMN IF EXISTS metadata_confidence,
+    DROP COLUMN IF EXISTS published_confidence,
+    DROP COLUMN IF EXISTS author,
+    DROP COLUMN IF EXISTS body_text,
+    DROP COLUMN IF EXISTS word_count,
+    DROP COLUMN IF EXISTS content_hash,
+    DROP COLUMN IF EXISTS archived_task_id,
+    DROP COLUMN IF EXISTS embedding_model,
+    DROP COLUMN IF EXISTS embedding;
+CREATE VIEW discovery_candidate_details AS
+SELECT c.*,
+       m.title,
+       m.summary,
+       m.language,
+       m.published_at,
+       m.topics,
+       m.entities,
+       s.content_version,
+       s.body_changed_at,
+       s.content_type,
+       s.content_style,
+       s.quality_score,
+       s.depth_score,
+       s.assessment_state,
+       s.current_assessment_id,
+       s.assessment_error,
+       s.eligibility_state,
+       s.eligibility_reasons,
+       s.enrichment_status,
+       s.enrichment_error,
+       s.llm_model,
+       s.prompt_version,
+       s.enriched_at,
+       s.score,
+       COALESCE(m.authors->>0, '') AS author,
+       r.text AS body_text,
+       r.content_hash,
+       COALESCE(r.word_count, 0) AS word_count,
+       COALESCE((SELECT e.model FROM material_embeddings e WHERE e.representation_id = r.id ORDER BY e.updated_at DESC LIMIT 1), '') AS embedding_model,
+       COALESCE((SELECT p.source_id FROM material_provenances p WHERE p.material_id = c.material_id ORDER BY p.first_seen_at, p.id LIMIT 1), 0) AS source_id,
+       COALESCE((SELECT p.source_name FROM material_provenances p WHERE p.material_id = c.material_id ORDER BY p.first_seen_at, p.id LIMIT 1), '') AS source_name,
+       COALESCE((SELECT p.metadata_confidence FROM material_provenances p WHERE p.material_id = c.material_id ORDER BY p.first_seen_at, p.id LIMIT 1), 0) AS metadata_confidence,
+       COALESCE((SELECT p.published_confidence FROM material_provenances p WHERE p.material_id = c.material_id ORDER BY p.first_seen_at, p.id LIMIT 1), '') AS published_confidence,
+       COALESCE((SELECT l.task_id FROM material_archive_links l WHERE l.material_id = c.material_id ORDER BY l.task_id LIMIT 1), '') AS archived_task_id,
+       (SELECT COUNT(DISTINCT p.domain_key) FROM material_provenances p WHERE p.material_id = c.material_id AND p.domain_key <> '') AS independent_source_count
+FROM discovery_candidates c
+JOIN material m ON m.id = c.material_id
+LEFT JOIN material_article_states s ON s.material_id = m.id
+LEFT JOIN material_representations r ON r.version_id = m.current_version_id AND r.kind = 'text' AND r.role = 'body';
+
+-- +goose Down
+-- +goose StatementBegin
+DO $$ BEGIN RAISE EXCEPTION 'Restore the pre-material backup and binary; this migration cannot be reversed losslessly'; END $$;
+-- +goose StatementEnd

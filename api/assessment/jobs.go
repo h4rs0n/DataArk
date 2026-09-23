@@ -18,7 +18,7 @@ func RecoverDueJobs(ctx context.Context, queue ArticleJobEnqueuer, now time.Time
 	if db == nil || queue == nil {
 		return nil
 	}
-	query := db.Where("processing_state = ? AND dedupe_state = ? AND assessment_state = ? AND (next_processing_at IS NULL OR next_processing_at <= ?)", discovery.DiscoveryProcessingReady, discovery.DiscoveryDedupeReady, discovery.DiscoveryAssessmentPending, now)
+	query := discovery.Candidates(db).Where("processing_state = ? AND dedupe_state = ? AND assessment_state = ? AND (next_processing_at IS NULL OR next_processing_at <= ?)", discovery.DiscoveryProcessingReady, discovery.DiscoveryDedupeReady, discovery.DiscoveryAssessmentPending, now)
 	query = discovery.ExcludeBlacklistedCandidateDomains(query, "")
 	var pending []discovery.DiscoveryCandidate
 	if err := query.Order("id").Find(&pending).Error; err != nil {
@@ -26,7 +26,7 @@ func RecoverDueJobs(ctx context.Context, queue ArticleJobEnqueuer, now time.Time
 	}
 	var recoverErr error
 	for _, candidate := range pending {
-		if err := queue.EnqueueAssessArticle(ctx, candidate.ID, strconv.FormatUint(uint64(candidate.ContentVersion), 10)); err != nil {
+		if err := queue.EnqueueAssessArticle(ctx, candidate.MaterialID, strconv.FormatUint(uint64(candidate.ContentVersion), 10)); err != nil {
 			recoverErr = errors.Join(recoverErr, err)
 		}
 	}
@@ -45,5 +45,5 @@ func EnqueuePending(ctx context.Context, queue ArticleJobEnqueuer, candidateID u
 	if candidate.AssessmentState != discovery.DiscoveryAssessmentPending {
 		return nil
 	}
-	return queue.EnqueueAssessArticle(ctx, candidate.ID, strconv.FormatUint(uint64(candidate.ContentVersion), 10))
+	return queue.EnqueueAssessArticle(ctx, candidate.MaterialID, strconv.FormatUint(uint64(candidate.ContentVersion), 10))
 }

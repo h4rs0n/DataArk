@@ -48,6 +48,7 @@ type Handlers struct {
 	BackfillSite          func(context.Context, uint) error
 	ProcessCandidate      func(context.Context, uint, string) error
 	AssessArticle         func(context.Context, uint, string) error
+	AssessLegacyCandidate func(context.Context, uint, string) error
 	GenerateDaily         func(context.Context, uint, string) error
 	GenerateDigestSummary func(context.Context, uint, string) error
 }
@@ -117,6 +118,7 @@ func (GenerateDigestSummaryArgs) InsertOpts() river.InsertOpts {
 }
 
 type AssessArticleArgs struct {
+	MaterialID     uint   `json:"material_id,omitempty"`
 	CandidateID    uint   `json:"candidate_id"`
 	ContentVersion string `json:"content_version"`
 }
@@ -319,8 +321,8 @@ func (queue *riverQueue) EnqueueProcessCandidate(ctx context.Context, candidateI
 	return err
 }
 
-func (queue *riverQueue) EnqueueAssessArticle(ctx context.Context, candidateID uint, contentVersion string) error {
-	_, err := queue.client.Insert(ctx, AssessArticleArgs{CandidateID: candidateID, ContentVersion: contentVersion}, nil)
+func (queue *riverQueue) EnqueueAssessArticle(ctx context.Context, materialID uint, contentVersion string) error {
+	_, err := queue.client.Insert(ctx, AssessArticleArgs{MaterialID: materialID, ContentVersion: contentVersion}, nil)
 	return err
 }
 
@@ -723,7 +725,8 @@ func (worker *processCandidateWorker) Work(ctx context.Context, job *river.Job[P
 
 type assessArticleWorker struct {
 	river.WorkerDefaults[AssessArticleArgs]
-	handler func(context.Context, uint, string) error
+	handler       func(context.Context, uint, string) error
+	legacyHandler func(context.Context, uint, string) error
 }
 
 // Timeout 评估作业跟随 LLM_TIMEOUT，避免模型返回前被 River 默认一分钟限制取消。
@@ -743,7 +746,14 @@ func (worker *assessArticleWorker) Work(ctx context.Context, job *river.Job[Asse
 	if worker.handler == nil {
 		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, AssessArticleJobKind)
 	}
-	err := worker.handler(ctx, job.Args.CandidateID, job.Args.ContentVersion)
+	id, handler := job.Args.MaterialID, worker.handler
+	if id == 0 {
+		id = job.Args.CandidateID
+		if worker.legacyHandler != nil {
+			handler = worker.legacyHandler
+		}
+	}
+	err := handler(ctx, id, job.Args.ContentVersion)
 	logWorkerEvent("assess_article", fmt.Sprint(job.ID), observability.Event{CandidateID: job.Args.CandidateID}, err)
 	return err
 }
@@ -799,7 +809,7 @@ func registerWorkers(workers *river.Workers, handlers Handlers) {
 	river.AddWorker(workers, &scanBlogrollWorker{handler: handlers.ScanBlogroll})
 	river.AddWorker(workers, &backfillSiteWorker{handler: handlers.BackfillSite})
 	river.AddWorker(workers, &processCandidateWorker{handler: handlers.ProcessCandidate})
-	river.AddWorker(workers, &assessArticleWorker{handler: handlers.AssessArticle})
+	river.AddWorker(workers, &assessArticleWorker{handler: handlers.AssessArticle, legacyHandler: handlers.AssessLegacyCandidate})
 	river.AddWorker(workers, &generateDailyWorker{handler: handlers.GenerateDaily})
 	river.AddWorker(workers, &generateDigestSummaryWorker{handler: handlers.GenerateDigestSummary})
 }

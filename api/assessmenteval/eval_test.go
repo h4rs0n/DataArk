@@ -21,6 +21,9 @@ func TestLoadCandidateRecordsUsesImmutableCurrentContentVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 10, 7, 0, 0, 0, time.UTC)
+	if err := discovery.MigrateMaterialTestSchema(database); err != nil {
+		t.Fatal(err)
+	}
 	candidate := discovery.DiscoveryCandidate{SourceID: 1, URL: "https://fixture.example/article", CrawlHost: "fixture.example", FinalURL: "https://fixture.example/article", ContentVersion: 2, ProcessingState: discovery.DiscoveryProcessingReady, DedupeState: discovery.DiscoveryDedupeReady, LastSeenAt: now, CreatedAt: now, UpdatedAt: now}
 	if err := database.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
@@ -41,7 +44,7 @@ func TestLoadCandidateRecordsUsesImmutableCurrentContentVersion(t *testing.T) {
 	if err := database.Create(&active).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Model(&candidate).Update("current_assessment_id", active.ID).Error; err != nil {
+	if err := discovery.UpdateCandidates(database.Model(&candidate), map[string]interface{}{"current_assessment_id": active.ID}).Error; err != nil {
 		t.Fatal(err)
 	}
 	records, err := LoadCandidateRecords(database)

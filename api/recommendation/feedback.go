@@ -174,7 +174,7 @@ func RevertRecommendationFeedback(userID uint, recommendationItemID uint) error 
 		}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&discovery.UserCandidateState{}).Where("user_id = ? AND candidate_id = ?", userID, item.CandidateID).Updates(map[string]interface{}{
+		return tx.Model(&discovery.UserCandidateState{}).Where("user_id = ? AND material_id = (SELECT material_id FROM discovery_candidates WHERE id = ?)", userID, item.CandidateID).Updates(map[string]interface{}{
 			"current_feedback": "", "feedback_revoked": now, "updated_at": now,
 		}).Error
 	})
@@ -231,7 +231,7 @@ func normalizeFeedbackTargets(targets []RecommendationBlockTarget) []Recommendat
 func syncUserCandidateFeedbackState(tx *gorm.DB, userID uint, candidateID uint, action string, now time.Time) error {
 	state := discovery.UserCandidateState{UserID: userID, CandidateID: candidateID, CreatedAt: now, UpdatedAt: now}
 	if err := tx.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "user_id"}, {Name: "candidate_id"}}, DoNothing: true,
+		Columns: []clause.Column{{Name: "user_id"}, {Name: "material_id"}}, DoNothing: true,
 	}).Create(&state).Error; err != nil {
 		return err
 	}
@@ -248,7 +248,7 @@ func syncUserCandidateFeedbackState(tx *gorm.DB, userID uint, candidateID uint, 
 	default:
 		return nil
 	}
-	return tx.Model(&discovery.UserCandidateState{}).Where("user_id = ? AND candidate_id = ?", userID, candidateID).Updates(updates).Error
+	return tx.Model(&discovery.UserCandidateState{}).Where("user_id = ? AND material_id = (SELECT material_id FROM discovery_candidates WHERE id = ?)", userID, candidateID).Updates(updates).Error
 }
 
 // ListUserBlockRules 列出用户屏蔽规则。

@@ -1,6 +1,7 @@
 package recommendation
 
 import (
+	"DataArk/discovery"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -63,7 +64,7 @@ func TestDailyDigestM14PublishedSnapshotIsImmutableAndByteStable(t *testing.T) {
 	if first.Day.Status != RecommendationDayStatusPublished || first.Day.PublishedAt == nil || len(first.Items) != 1 {
 		t.Fatalf("published snapshot = %#v", first)
 	}
-	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", candidate.ID).Updates(map[string]interface{}{
+	if err := discovery.UpdateCandidates(db.Model(&DiscoveryCandidate{}).Where("id = ?", candidate.ID), map[string]interface{}{
 		"title": "Changed live title", "summary": "Changed live summary", "source_name": "changed.example", "quality_score": 0.1,
 	}).Error; err != nil {
 		t.Fatal(err)

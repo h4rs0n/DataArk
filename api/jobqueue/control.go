@@ -134,7 +134,7 @@ func decodeSafeCrawlTarget(task *CrawlQueueTask, encoded []byte) {
 		}
 		var assessArgs AssessArticleArgs
 		if json.Unmarshal(encoded, &assessArgs) == nil {
-			task.TargetType, task.TargetID, task.ContentVersion = "candidate", assessArgs.CandidateID, assessArgs.ContentVersion
+			task.TargetType, task.TargetID, task.ContentVersion = "material", assessArgs.MaterialID, assessArgs.ContentVersion
 		}
 	}
 }

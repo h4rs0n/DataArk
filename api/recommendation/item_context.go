@@ -34,7 +34,7 @@ func GetRecommendationItemContext(userID uint, itemID uint) (*RecommendationItem
 	result := &RecommendationItemContext{Item: item, Provenance: make([]RecommendationProvenanceContext, 0)}
 	result.Feedback, _ = GetCurrentRecommendationFeedback(userID, itemID)
 	var state discovery.UserCandidateState
-	if query := db.Where("user_id = ? AND candidate_id = ?", userID, item.CandidateID).Limit(1).Find(&state); query.Error != nil {
+	if query := db.Where("user_id = ? AND material_id = ?", userID, item.MaterialID).Limit(1).Find(&state); query.Error != nil {
 		return nil, query.Error
 	} else if query.RowsAffected > 0 {
 		result.UserState = &state
@@ -48,13 +48,15 @@ func GetRecommendationItemContext(userID uint, itemID uint) (*RecommendationItem
 		}
 	}
 	var rows []discovery.DiscoveryCandidateProvenance
-	if err := db.Where("candidate_id = ?", item.CandidateID).Order("first_seen_at asc, id asc").Find(&rows).Error; err != nil {
+	if err := db.Where("material_id = ?", item.MaterialID).Order("first_seen_at asc, id asc").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
 		entry := RecommendationProvenanceContext{Provenance: row}
-		if err := db.First(&entry.Site, row.SiteID).Error; err != nil {
-			return nil, err
+		if row.SiteID != 0 {
+			if err := db.First(&entry.Site, row.SiteID).Error; err != nil {
+				return nil, err
+			}
 		}
 		if row.SourceID != nil {
 			var source discovery.DiscoverySource

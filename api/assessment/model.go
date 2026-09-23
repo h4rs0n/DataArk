@@ -2,15 +2,19 @@ package assessment
 
 import (
 	"DataArk/discovery"
+	"DataArk/material"
 	"DataArk/observability"
+	"gorm.io/gorm"
 	"time"
 )
 
 // ArticleAssessment 是一篇候选在某一内容版本、评估器与策略下的不可变行。
 // 表名保持 discovery_article_assessments，避免迁表与外键抖动。
 type ArticleAssessment struct {
+	MaterialID         uint                          `json:"materialId" gorm:"uniqueIndex:idx_assessment_version"`
+	MaterialVersionID  *uint                         `json:"materialVersionId"`
 	ID                 uint                          `json:"id" gorm:"primaryKey"`
-	CandidateID        uint                          `json:"candidateId" gorm:"uniqueIndex:idx_assessment_version;not null"`
+	CandidateID        uint                          `json:"candidateId" gorm:"index;default:null"`
 	ContentVersion     uint                          `json:"contentVersion" gorm:"uniqueIndex:idx_assessment_version;not null"`
 	Assessor           string                        `json:"assessor" gorm:"uniqueIndex:idx_assessment_version;not null;size:64"`
 	AssessorVersion    string                        `json:"assessorVersion" gorm:"uniqueIndex:idx_assessment_version;not null;size:64"`
@@ -28,13 +32,14 @@ type ArticleAssessment struct {
 	Summary            string                        `json:"summary" gorm:"type:text"`
 	Keywords           string                        `json:"keywords" gorm:"type:text"`
 	CreatedAt          time.Time                     `json:"createdAt"`
-	Candidate          *discovery.DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
+	Candidate          *discovery.DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:SET NULL"`
 }
 
 func (ArticleAssessment) TableName() string { return "discovery_article_assessments" }
 
 // LLMCall 只存安全观测字段，禁止写入 prompt 或模型正文。
 type LLMCall struct {
+	MaterialID       *uint     `json:"materialId,omitempty" gorm:"index"`
 	ID               uint      `json:"id" gorm:"primaryKey"`
 	CandidateID      uint      `json:"candidateId" gorm:"index;not null;default:0"`
 	Stage            string    `json:"stage" gorm:"index;not null;size:64"`
@@ -81,5 +86,31 @@ func persistLLMCallEvent(event observability.Event) {
 	if row.CreatedAt.IsZero() {
 		row.CreatedAt = time.Now().UTC()
 	}
+	if event.CandidateID != 0 {
+		var candidate struct{ MaterialID *uint }
+		if db.Table("discovery_candidates").Select("material_id").Where("id = ?", event.CandidateID).Limit(1).Scan(&candidate).Error == nil {
+			row.MaterialID = candidate.MaterialID
+		}
+	}
 	_ = db.Create(&row).Error
+}
+
+func (row *ArticleAssessment) BeforeCreate(tx *gorm.DB) error {
+	if row.MaterialID != 0 {
+		if row.MaterialVersionID != nil {
+			return nil
+		}
+		var version material.Version
+		result := tx.Where("material_id = ? AND version = ?", row.MaterialID, row.ContentVersion).Limit(1).Find(&version)
+		if result.RowsAffected != 0 {
+			row.MaterialVersionID = &version.ID
+		}
+		return result.Error
+	}
+	id, _, err := material.CandidateReference(tx, row.CandidateID)
+	if err != nil {
+		return err
+	}
+	row.MaterialID = id
+	return row.BeforeCreate(tx)
 }

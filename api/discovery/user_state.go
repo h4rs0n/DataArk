@@ -47,16 +47,16 @@ func ListDiscoveryCandidatesForUser(userID uint, status string, limit int) ([]Us
 	states := make(map[uint]UserCandidateState)
 	if len(ids) > 0 {
 		var userStates []UserCandidateState
-		if err := db.Where("user_id = ? AND candidate_id IN ?", userID, ids).Find(&userStates).Error; err != nil {
+		if err := db.Where("user_id = ? AND material_id IN (SELECT material_id FROM discovery_candidates WHERE id IN ?)", userID, ids).Find(&userStates).Error; err != nil {
 			return views, err
 		}
 		for _, state := range userStates {
-			states[state.CandidateID] = state
+			states[state.MaterialID] = state
 		}
 	}
 	for _, candidate := range candidates {
 		view := UserDiscoveryCandidate{DiscoveryCandidate: candidate}
-		if state, ok := states[candidate.ID]; ok {
+		if state, ok := states[candidate.MaterialID]; ok {
 			copy := state
 			view.UserState = &copy
 		}
@@ -100,7 +100,7 @@ func MarkUserCandidateArchived(userID uint, candidateID uint, taskID string) (*U
 		return nil, err
 	}
 	if strings.TrimSpace(taskID) != "" {
-		if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", candidateID).Updates(map[string]interface{}{"archived_task_id": strings.TrimSpace(taskID), "updated_at": now}).Error; err != nil {
+		if err := UpdateCandidate(db, candidateID, map[string]interface{}{"archived_task_id": strings.TrimSpace(taskID), "updated_at": now}).Error; err != nil {
 			return nil, err
 		}
 		candidate.ArchivedTaskID = strings.TrimSpace(taskID)
@@ -113,7 +113,7 @@ func GetUserCandidateState(userID uint, candidateID uint) (*UserCandidateState, 
 		return nil, gorm.ErrRecordNotFound
 	}
 	var state UserCandidateState
-	if err := db.Where("user_id = ? AND candidate_id = ?", userID, candidateID).First(&state).Error; err != nil {
+	if err := db.Where("user_id = ? AND material_id = (SELECT material_id FROM discovery_candidates WHERE id = ?)", userID, candidateID).First(&state).Error; err != nil {
 		return nil, err
 	}
 	return &state, nil
@@ -132,15 +132,15 @@ func updateUserCandidateState(userID uint, candidateID uint, updates map[string]
 		now := discoveryClock.Now()
 		state = UserCandidateState{UserID: userID, CandidateID: candidateID, CreatedAt: now, UpdatedAt: now}
 		if err := tx.Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "user_id"}, {Name: "candidate_id"}}, DoNothing: true,
+			Columns: []clause.Column{{Name: "user_id"}, {Name: "material_id"}}, DoNothing: true,
 		}).Create(&state).Error; err != nil {
 			return err
 		}
 		updates["updated_at"] = now
-		if err := tx.Model(&UserCandidateState{}).Where("user_id = ? AND candidate_id = ?", userID, candidateID).Updates(updates).Error; err != nil {
+		if err := tx.Model(&UserCandidateState{}).Where("user_id = ? AND material_id = (SELECT material_id FROM discovery_candidates WHERE id = ?)", userID, candidateID).Updates(updates).Error; err != nil {
 			return err
 		}
-		return tx.Where("user_id = ? AND candidate_id = ?", userID, candidateID).First(&state).Error
+		return tx.Where("user_id = ? AND material_id = (SELECT material_id FROM discovery_candidates WHERE id = ?)", userID, candidateID).First(&state).Error
 	})
 	return state, candidate, err
 }
@@ -175,9 +175,9 @@ func RecordUserCandidateExposure(tx *gorm.DB, userID uint, candidateID uint, exp
 	}
 	state := UserCandidateState{UserID: userID, CandidateID: candidateID, FirstExposedAt: &exposedAt, LastExposedAt: &exposedAt, ExposureCount: 1, CreatedAt: exposedAt, UpdatedAt: exposedAt}
 	return tx.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "user_id"}, {Name: "candidate_id"}},
+		Columns: []clause.Column{{Name: "user_id"}, {Name: "material_id"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{
-			"last_exposed_at": exposedAt, "exposure_count": gorm.Expr("user_candidate_states.exposure_count + 1"), "updated_at": exposedAt,
+			"last_exposed_at": exposedAt, "exposure_count": gorm.Expr("user_material_states.exposure_count + 1"), "updated_at": exposedAt,
 		}),
 	}).Create(&state).Error
 }

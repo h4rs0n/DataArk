@@ -65,7 +65,7 @@ func TestEndpointDiscoveryCreatesHomepageAndFeedButLeavesSitemapDisabled(t *test
 		t.Fatalf("homepage ingestion = %#v, %v", fetchResult, err)
 	}
 	var homepageCandidate DiscoveryCandidate
-	if err := db.Where("source_id = ?", homepage.ID).First(&homepageCandidate).Error; err != nil {
+	if err := Candidates(db).Where("source_id = ?", homepage.ID).First(&homepageCandidate).Error; err != nil {
 		t.Fatal(err)
 	}
 	if homepageCandidate.Title != "A careful field guide" || homepageCandidate.ProcessingState != DiscoveryProcessingFetchPending {

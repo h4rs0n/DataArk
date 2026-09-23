@@ -1,11 +1,11 @@
 # 数据库设计
 
-本文档描述 **当前运行中的 PostgreSQL 库**（Compose 服务 `database`，镜像 `pgvector/pgvector:pg17`）在 2026-08-27 的实际 schema，并对照代码里的权威来源。
+本文档描述仓库的 PostgreSQL schema，内容模型更新至 Goose `000035`。文中标注的运行库类型与数量是 2026-08-27 的历史快照，不能据此推断生产库已经升级。
 
-- 生产 schema **只**由 Goose 编号迁移定义：`api/migrations/000001`–`000031`。
+- 生产 schema **只**由 Goose 编号迁移定义：`api/migrations/000001`–`000035`。
 - 启动路径：`api/bootstrap.InitDB()` → `api/database.InitDB()` 连库 → `RunDatabaseMigrations()`（Goose `Up` + River migrator）。
 - GORM `AutoMigrate` **只给 SQLite 测试当方言替身**，不定义生产 schema。
-- 模型分散在 `api/auth`、`api/archive`、`api/discovery`、`api/assessment`、`api/assessmenteval`、`api/recommendation`。没有 `api/common/`。
+- 模型分散在 `api/material`、`api/auth`、`api/archive`、`api/discovery`、`api/assessment`、`api/assessmenteval`、`api/recommendation`。没有 `api/common/`。
 - 改列/建表必须新增编号 Goose 文件；不要假设改 GORM tag 就会改生产库。
 
 本实例快照：`goose_db_version.version_id = 30`；扩展 `vector 0.8.3`、`pgcrypto 1.3`、`plpgsql`；`public` 下 **44** 张表（含 Goose 账本与 River）。
@@ -15,54 +15,57 @@
 ## 总体约定
 
 - ORM：GORM；生产方言：PostgreSQL。
-- 表名：GORM 默认复数，`User` → `users`。评估行故意表名为 `discovery_article_assessments`。
+- 表名通常使用复数；核心内容表明确命名为单数 `material`，评估行继续使用 `discovery_article_assessments`。
 - 主键：业务表多为 `BIGSERIAL`；`archive_tasks.id` 是 `varchar(36)`（UUID）；`archive_stats.source` 是域名主键；`discovery_duplicate_clusters.cluster_id` 是字符串主键。
 - 时间：DSN 带 `TimeZone=Asia/Shanghai`；时间列多为 `timestamptz`。
 - 外键：归档/用户/搜索事件之间仍无 FK。发现图、评估、推荐、金标工作流、River 客户端队列有显式 `REFERENCES`。
-- JSON：推荐反馈 `metadata`、条目 `reason_metadata`、用户画像向量权重为 `jsonb`。候选 `topics`/`entities`、源 `crawl_config` 在 **本运行库** 仍是 `text`（Goose `000001` 意图是 `jsonb`）。
-- 向量：`discovery_candidates.embedding` 类型为无维度 `vector`。本实例 71845 行候选中 **0** 行已写入向量。
-- HTML 本体与 Meilisearch 索引不在 Postgres 里；库只存元数据与事件。
+- JSON：`material.authors/topics/entities` 使用 JSONB；迁移兼容原候选的 JSON 文本列。
+- 向量：`material_embeddings` 按 `(representation_id, model)` 保存，与具体内容表示关联。
+- 原始物理文件与 Meilisearch 索引在 Postgres 外；抽取正文存入 `material_representations`。
 
 ## 领域关系
 
 ```text
-users
-  ├── user_candidate_states ──────────── discovery_candidates
-  ├── recommendation_settings
-  ├── recommendation_days ── recommendation_items ──┬── discovery_candidates
-  ├── recommendation_feed_batches ── recommendation_items
-  ├── recommendation_feedbacks ─────────────────────┘
-  ├── user_block_rules
-  └── user_recommendation_profiles
+discovery_sites ── discovery_sources
+                         │
+                  material_provenances ────── material
+                         │                      ├── material_versions ── material_representations ── material_embeddings
+                  discovery_candidates ─────────┤
+                                                ├── material_identities / material_redirects
+                                                ├── material_article_states ── discovery_article_assessments
+users ─────────── user_material_states ──────────┤
+recommendation_days / feed_batches ── items ─────┤
+archive_documents / material_archive_links ─────┘
 
-discovery_sites
-  ├── discovery_sources ── discovery_fetch_runs
-  │                    └── discovery_source_schedule_decisions
-  ├── discovery_site_edges (from/to)
-  ├── discovery_site_operational_stats
-  ├── discovery_backfill_states
-  └── discovery_candidate_provenances ── discovery_candidates
-
-discovery_candidates
-  ├── discovery_article_content_versions
-  ├── discovery_article_assessments ◄── current_assessment_id
-  ├── discovery_candidate_identities
-  ├── discovery_duplicate_clusters (representative)
-  ├── discovery_duplicate_review_signals
-  ├── discovery_candidate_feedbacks          (历史全局反馈)
-  └── discovery_legacy_candidate_state_reviews
-
-assessment_llm_calls                         (观测，无 FK)
-article_assessment_workflow_*                (owner 金标，挂 candidate / content_version)
-
-archive_tasks / archive_documents / archive_stats / search_events / archive_click_events
-  （彼此无 FK；候选 archived_task_id 只是字符串引用）
-
-river_job / river_queue / river_client / …   (River 自管)
-goose_db_version                             (Goose 账本)
+discovery_article_content_versions / material_candidate_versions
+  保留历史抽取 ID 和旧候选版本映射，供金标与旧队列任务使用。
+river_* / goose_db_version：队列与迁移账本。
 ```
 
-当前产品流：发现自动爬取 → 候选 `assessment_state=pending` → 人工开启的评估队列写不可变评估行 → 推荐只读 ready/eligible 库存生成每日 digest 与发现 feed。
+当前产品流：自动发现并记录来源 → 候选抓取/抽取 → material 内容版本 → 人工评估队列 → 推荐读取 ready/eligible 内容。
+
+## 核心内容模型（`000032`–`000035`）
+
+`material` 仅保存跨媒介共有的内容属性：标题、摘要、作者列表、语言、发布时间、主题、实体、当前版本指针、创建/更新时间。不保存 URL、文件名、路径、MIME、文件大小、正文、时长或文章专属评分。
+
+| 表 | 职责与约束 |
+| --- | --- |
+| `material_versions` | 内容版本，唯一 `(material_id, version)`；当前版本复合 FK 保证属于同一 material |
+| `material_representations` | 抽取结果，唯一 `(version_id, kind, role)`；目前写 `text/body`，可扩展转录、字幕等表示 |
+| `material_identities` | 强身份，唯一 `(kind, identity_key)`；规范化 URL、带算法标识的正文哈希 |
+| `material_redirects` | 合并后旧 material ID 到保留 ID 的重定向 |
+| `material_provenances` | 来源与内容的多对多关联；保留发现入口、来源页、元数据与首次/最近发现时间 |
+| `material_article_states` | 文章评估状态、资格、评分、模型版本等文章专属投影 |
+| `material_embeddings` | 内容表示与 embedding 模型对应的向量 |
+| `material_archive_links` | 内容到历史归档任务的关联；物理文件详情仍在 archive 领域 |
+
+独立来源数为 `COUNT(DISTINCT domain_key)`，空域名不计数。同一站点的 feed、首页等入口保留多条证据，但只算一个独立来源。域名取发现来源并保存快照，删除来源端点不会丢失计数。HTTP 兼容投影 `discovery_candidate_details` 暴露 `materialId` 和 `independentSourceCount`；尚未修改排名权重。
+
+强身份合并保留版本、评估、推荐快照和来源证据；相似正文只形成去重簇，不合并 material 或转移来源。用户状态按 material 合并，曝光计数累加，反馈取最新事件。历史同日重复推荐标记 `legacy_duplicate`，新推荐由 material 唯一索引防重。
+
+当前只实现网页/归档 HTML 的文本抽取。PDF、DOCX、音视频可复用核心内容、版本、来源关系，并增加专用表示与处理器；本次不包含这些格式的解析器。
+
+升级需在停止旧 API/worker 写入后备份数据库和归档目录。Goose 搬迁数据并删除候选正文列，启动再执行可重入的强身份归并与归档内容回填。缺失归档文件记入 `material_ingestion_issues`；检查该表后修复文件。迁移的 Down 主动拒绝有损回滚，应恢复升级前备份及匹配的旧二进制。参见 `docs/operations/material-migration-runbook.md`。
 
 ---
 
@@ -122,6 +125,7 @@ HTML 文件在归档目录；Postgres 只存任务、按域名的文件计数、
 | 列 | 类型 | 约束 |
 | --- | --- | --- |
 | `id` | `bigint` | PK |
+| `material_id` | `bigint` | 非空 FK → `material`，内容身份 |
 | `domain` | `varchar(255)` | 非空；与 `file_name` 组成唯一索引 `idx_archive_documents_identity` |
 | `file_name` | `varchar(1024)` | 非空 |
 | `source_url` | `text` | 原文链接 |
@@ -186,25 +190,25 @@ RSS/Atom 或同站入口。`url` 唯一。`site_id` → `discovery_sites` `ON DE
 
 ### `discovery_candidates`
 
-管道中心。`url` 唯一。`representative_id` 自引用 `ON DELETE SET NULL`；`current_assessment_id` → `discovery_article_assessments` `ON DELETE SET NULL`。
+抓取入口与处理状态。`url` 唯一，`material_id` 非空；多个入口可对应同一 material。`representative_id` 自引用 `ON DELETE SET NULL`。正文和评估属性通过只读视图 `discovery_candidate_details` 联查；Go 写入使用 `discovery.UpdateCandidate(s)`。
 
 **状态机（不要只看 `status`）：**
 
 | 字段 | 含义 | 典型值 |
 | --- | --- | --- |
-| `status` | 遗留全局态；个人态已拆到 `user_candidate_states` | `new` / `read` / `ignored` / `archived` |
+| `status` | 遗留全局态；个人态已拆到 `user_material_states` | `new` / `read` / `ignored` / `archived` |
 | `processing_state` | 抓取/抽取管道 | `discovered`（遗留）、`fetch_pending`、`fetching`、`ready`、`review`、`failed`、`ineligible`、`domain_blocked` |
 | `dedupe_state` | 去重 | `pending` / `ready` |
-| `assessment_state` | 评估；discovery 只写 `pending` | `pending` / `ready` / `review` / `degraded` |
-| `eligibility_state` | 推荐资格 | `unknown` / `eligible` / `review` / `ineligible` |
+| `assessment_state` | 位于 `material_article_states`；discovery 写 `pending` | `pending` / `ready` / `review` / `degraded` |
+| `eligibility_state` | 位于 `material_article_states`；推荐资格 | `unknown` / `eligible` / `review` / `ineligible` |
 
-正文与模型列（本库类型）：`canonical_url`、`normalized_url`、`final_url`、`title`、`summary`、`author`、`body_text`、`language`、`word_count`（bigint）、`content_hash`、`content_version`、`body_changed_at`、`topics`/`entities`（text，存 JSON 文本）、`content_type`/`content_style`、`metadata_confidence`、`quality_score`/`depth_score`/`score`（numeric）、`enrichment_status`/`enrichment_error`/`embedding_model`/`llm_model`/`prompt_version`/`enriched_at`、`embedding`（`vector`）、`duplicate_cluster_id`/`dedupe_key`、`processing_attempts`/`processing_error`/`processing_error_type`/`next_processing_at`/`fetched_at`/`extracted_at`、`assessment_error`、`eligibility_reasons`、`published_at`/`published_confidence`、`first_seen_at`/`last_seen_at`、`crawl_host`、`archived_task_id`（见文末差异）、`source_id`/`source_name`。
+候选实体保留 URL/规范化 URL/最终 URL、crawl host、去重簇/代表、抓取尝试/错误/调度、抓取与发现时间。`000034` 删除标题、摘要、正文、作者、字数、向量、模型状态、评分及单一来源字段。
 
 主题/摘要的权威写回在评估成功之后，不要再加独立 enrichment hop。
 
 ### `discovery_candidate_provenances`
 
-候选如何被发现。`provenance_key` 唯一。FK：`candidate_id` CASCADE、`site_id` CASCADE、`source_id` SET NULL。
+迁移前来源证据表，保留为历史审计。新读写全部使用 `material_provenances`，其中 candidate/site/source FK 均为 `ON DELETE SET NULL`，material FK 为 RESTRICT。
 
 ### `discovery_fetch_runs`
 
@@ -220,19 +224,19 @@ Blogroll 图。`edge_key` 唯一。`from_site_id`/`to_site_id` CASCADE。CHECK�
 
 ### `discovery_article_content_versions`
 
-不可变抽取版本。`(candidate_id, content_version)` 唯一；`candidate_id` CASCADE。
+保留旧抽取版本及其 ID，新增 `material_id`/`material_version_id` 对应核心版本。`(candidate_id, content_version)` 唯一；金标引用继续有效。
 
 ### `discovery_duplicate_clusters` / `discovery_candidate_identities` / `discovery_duplicate_review_signals`
 
 去重簇（代表 `ON DELETE RESTRICT`）、身份别名 `(candidate_id, kind, identity_key)` 唯一、用户报重复信号（无指向 `recommendation_items` 的 FK）。
 
-### `user_candidate_states`
+### `user_material_states`
 
-每用户每候选一行，`(user_id, candidate_id)` 唯一。FK 到 `users`、`discovery_candidates` 均为 CASCADE。记录曝光、打开、阅读、归档与当前反馈。列表过滤 `read`/`ignored`/`archived` 走这里，而不是改全局 `discovery_candidates.status`。
+由 `user_candidate_states` 重命名，每用户每内容一行，`(user_id, material_id)` 唯一。candidate 只保留历史入口，可空、删除时 SET NULL。记录曝光、打开、阅读、归档与当前反馈；同一内容的不同 URL 共享状态。
 
 ### `discovery_candidate_feedbacks`
 
-早期全局反馈（`candidate_id` + `action`）。无 FK。新路径以 `user_candidate_states` 与 `recommendation_feedbacks` 为准。
+早期全局反馈（`candidate_id` + `action`）。无 FK。新路径以 `user_material_states` 与 `recommendation_feedbacks` 为准。
 
 ### `discovery_legacy_candidate_state_reviews`
 
@@ -248,7 +252,7 @@ Blogroll 图。`edge_key` 唯一。`from_site_id`/`to_site_id` CASCADE。CHECK�
 
 ### `discovery_article_assessments`
 
-不可变评估行。唯一键 `(candidate_id, content_version, assessor, assessor_version, policy_version)`。`candidate_id` CASCADE。`000027` 增加 `summary`、`keywords`（article-value-v4）。轴分：`information_density`、`originality`、`completeness`、`evidence`、`readability`、`depth`、`evergreen_value`、`overall_quality`、`confidence`、`reasons`。
+评估行归属 material；唯一键 `(material_id, content_version, assessor, assessor_version, policy_version)`，并指向 `material_version_id`。candidate 仅作历史入口，删除时 SET NULL。原有分数、摘要和关键词保留。评估任务使用 material ID；旧 candidate 参数通过版本映射兼容。
 
 Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
@@ -304,7 +308,8 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
 - `day_id` → `recommendation_days` CASCADE；`(day_id, candidate_id)` 唯一。
 - `feed_batch_id` → `recommendation_feed_batches` CASCADE；部分唯一 `(feed_batch_id, candidate_id) WHERE feed_batch_id IS NOT NULL`。
-- `candidate_id` CASCADE；`assessment_id` SET NULL。
+- `material_id` / `material_version_id` 指向内容及版本；`candidate_id` 为可空历史入口，删除时 SET NULL；`assessment_id` SET NULL。
+- `(day_id, material_id)` / `(feed_batch_id, material_id)` 在 `NOT legacy_duplicate` 范围唯一；迁移合并造成的已发布重复条目标记例外并保留快照。
 
 发布时冻结 snapshot_* 列（`000003`/`000016`/`000017`）。`000013` 增加 `content_version`、`content_updated`、`cooldown_repeat`。跨日去重靠 cooldown 与版本，**没有**永久的 `(user_id, candidate_id)` 唯一约束。
 
@@ -346,7 +351,7 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
 ## 迁移账本
 
-`goose_db_version`：`id`、`version_id`、`is_applied`、`tstamp`。本实例最新已应用版本 **31**（`000031_llm_only_demote_rule_assessments`）。
+`goose_db_version`：`id`、`version_id`、`is_applied`、`tstamp`。仓库当前最新迁移为 **35**（`000035_material_relations`），部署版本须查询实际数据库确认。
 
 多数 Down 是 **保留数据的 no-op**（`SELECT 1`），回滚 Goose 版本号不会删 v3 表。不要把 Down 当成可逆删表。
 
@@ -354,7 +359,7 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
 ## 运行库与纯 Goose 空库的差异
 
-本 Compose 库在 Goose 之前用 GORM AutoMigrate 建过基表，因此与「空库只跑 `000001`–`000031`」会有这些差别：
+以下是拆表前历史 Compose 库与「空库只跑 `000001`–`000031`」的差别；`000032`–`000035` 会搬迁其中的内容字段：
 
 | 现象 | 本运行库 | Goose 空库预期 |
 | --- | --- | --- |
@@ -365,7 +370,7 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 | `archive_stats.file_count`、若干计数/word_count | `bigint` | 部分迁移写的是 `integer` |
 | 部分 GORM `index` 标签对应的索引（如 `content_type`、`enrichment_status`、`dedupe_key`） | 存在 | 对应 Goose 文件未必建了同名索引 |
 
-读本库数据、写运维 SQL 时以 **本表实际类型** 为准。给新环境写迁移时仍以 `api/migrations/*.sql` 为准；若要让空库也有 `archived_task_id`，需要单独加编号迁移，而不是依赖 AutoMigrate。
+读取历史库时以实际类型为准。`000033` 检测可选的旧 `archived_task_id` 并搬迁到 `material_archive_links`；新代码不再向候选表写该字段。
 
 ---
 

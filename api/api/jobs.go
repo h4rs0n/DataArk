@@ -5,9 +5,11 @@ import (
 	"DataArk/database"
 	"DataArk/discovery"
 	"DataArk/jobqueue"
+	"DataArk/material"
 	"DataArk/recommendation"
 	"context"
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -41,8 +43,23 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 			}
 			return ignoreBlacklisted(assessment.EnqueuePending(ctx, queue, candidateID))
 		},
-		AssessArticle: func(ctx context.Context, candidateID uint, contentVersion string) error {
-			return ignoreBlacklisted(assessment.AssessCandidate(ctx, candidateID, assessment.ConfiguredArticleAssessor()))
+		AssessArticle: func(ctx context.Context, materialID uint, contentVersion string) error {
+			return ignoreBlacklisted(assessment.AssessMaterial(ctx, materialID, contentVersion, assessment.ConfiguredArticleAssessor()))
+		},
+		AssessLegacyCandidate: func(ctx context.Context, candidateID uint, contentVersion string) error {
+			var mapping material.CandidateVersion
+			result := database.DB().Where("candidate_id = ? AND content_version = ?", candidateID, contentVersion).Limit(1).Find(&mapping)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return nil
+			}
+			var version material.Version
+			if err := database.DB().First(&version, mapping.VersionID).Error; err != nil {
+				return err
+			}
+			return assessment.AssessMaterial(ctx, version.MaterialID, strconv.FormatUint(uint64(version.Version), 10), assessment.ConfiguredArticleAssessor())
 		},
 		GenerateDaily:         recommendation.RunGenerateDailyRecommendationJob,
 		GenerateDigestSummary: recommendation.RunGenerateDigestSummaryJob,

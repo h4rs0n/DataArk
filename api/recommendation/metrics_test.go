@@ -105,7 +105,7 @@ func TestObservabilityM16IntegrityUsesPublicationEvidence(t *testing.T) {
 	if _, err := GenerateDailyRecommendations(context.Background(), 931, "2026-06-02"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", candidate.ID).Updates(map[string]interface{}{"processing_state": discovery.DiscoveryProcessingFailed, "eligibility_state": discovery.DiscoveryEligibilityIneligible}).Error; err != nil {
+	if err := discovery.UpdateCandidates(db.Model(&DiscoveryCandidate{}).Where("id = ?", candidate.ID), map[string]interface{}{"processing_state": discovery.DiscoveryProcessingFailed, "eligibility_state": discovery.DiscoveryEligibilityIneligible}).Error; err != nil {
 		t.Fatal(err)
 	}
 	metrics, err := GetAdminProductMetrics(time.Now())

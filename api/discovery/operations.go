@@ -89,7 +89,7 @@ func countSiteFetchRuns(siteID uint, stats *DiscoverySiteOperationalStats) error
 
 func countSiteCandidates(siteID uint, stats *DiscoverySiteOperationalStats) error {
 	base := func() *gorm.DB {
-		return db.Table("discovery_candidates AS candidates").Joins("JOIN discovery_candidate_provenances AS provenance ON provenance.candidate_id = candidates.id").Where("provenance.site_id = ?", siteID)
+		return db.Table("discovery_candidate_details AS candidates").Joins("JOIN material_provenances AS provenance ON provenance.candidate_id = candidates.id").Where("provenance.site_id = ?", siteID)
 	}
 	queries := []struct {
 		target *uint
@@ -113,7 +113,7 @@ func countSiteCandidates(siteID uint, stats *DiscoverySiteOperationalStats) erro
 		*query.target = uint(count)
 	}
 	var positive int64
-	if err := base().Joins("JOIN user_candidate_states AS user_state ON user_state.candidate_id = candidates.id").Where("user_state.current_feedback IN ?", []string{UserCandidateFeedbackValuable, UserCandidateFeedbackDeepRead}).Distinct("candidates.id").Count(&positive).Error; err != nil {
+	if err := base().Joins("JOIN user_material_states AS user_state ON user_state.candidate_id = candidates.id").Where("user_state.current_feedback IN ?", []string{UserCandidateFeedbackValuable, UserCandidateFeedbackDeepRead}).Distinct("candidates.id").Count(&positive).Error; err != nil {
 		return err
 	}
 	stats.PositiveFeedbackArticles = uint(positive)

@@ -2,6 +2,7 @@ package recommendation
 
 import (
 	"DataArk/discovery"
+	"DataArk/material"
 	"time"
 
 	"gorm.io/gorm"
@@ -68,6 +69,9 @@ type RecommendationDay struct {
 }
 
 type RecommendationItem struct {
+	MaterialID               uint                         `json:"materialId" gorm:"index"`
+	MaterialVersionID        *uint                        `json:"materialVersionId"`
+	LegacyDuplicate          bool                         `json:"-"`
 	ID                       uint                         `json:"id" gorm:"primaryKey"`
 	DayID                    *uint                        `json:"dayId" gorm:"uniqueIndex:idx_recommendation_items_day_candidate;index;check:recommendation_items_exactly_one_parent,(day_id IS NOT NULL AND feed_batch_id IS NULL) OR (day_id IS NULL AND feed_batch_id IS NOT NULL)"`
 	FeedBatchID              *uint                        `json:"feedBatchId" gorm:"uniqueIndex:idx_recommendation_items_feed_candidate;index"`
@@ -127,6 +131,7 @@ type RecommendationFeedBatch struct {
 }
 
 type RecommendationFeedback struct {
+	MaterialID           uint       `json:"materialId" gorm:"index"`
 	ID                   uint       `json:"id" gorm:"primaryKey"`
 	UserID               uint       `json:"userId" gorm:"index;not null"`
 	RecommendationItemID uint       `json:"recommendationItemId" gorm:"index;not null"`
@@ -172,4 +177,43 @@ func SetDB(database *gorm.DB) *gorm.DB {
 	oldDB := db
 	db = database
 	return oldDB
+}
+
+func (row *RecommendationItem) BeforeCreate(tx *gorm.DB) error {
+	if row.MaterialID != 0 {
+		if row.MaterialVersionID != nil {
+			return nil
+		}
+		var version material.Version
+		query := tx.Where("material_id = ?", row.MaterialID)
+		if row.ContentVersion != 0 {
+			query = query.Where("version = ?", row.ContentVersion)
+		} else {
+			query = query.Where("id = (SELECT current_version_id FROM material WHERE id = ?)", row.MaterialID)
+		}
+		result := query.Limit(1).Find(&version)
+		if result.RowsAffected > 0 {
+			row.MaterialVersionID = &version.ID
+			row.ContentVersion = version.Version
+		}
+		return result.Error
+	}
+	id, version, err := material.CandidateReference(tx, row.CandidateID)
+	row.MaterialID, row.MaterialVersionID = id, version
+	if err == nil && row.ContentVersion == 0 && version != nil {
+		var current material.Version
+		if err := tx.First(&current, *version).Error; err != nil {
+			return err
+		}
+		row.ContentVersion = current.Version
+	}
+	return err
+}
+func (row *RecommendationFeedback) BeforeCreate(tx *gorm.DB) error {
+	if row.MaterialID != 0 {
+		return nil
+	}
+	id, _, err := material.CandidateReference(tx, row.CandidateID)
+	row.MaterialID = id
+	return err
 }

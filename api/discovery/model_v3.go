@@ -1,6 +1,10 @@
 package discovery
 
-import "time"
+import (
+	"DataArk/material"
+	"gorm.io/gorm"
+	"time"
+)
 
 const (
 	DiscoverySiteStatusSeed      = "seed"
@@ -22,7 +26,7 @@ const (
 	DiscoveryEligibilityReview       = "review"
 	DiscoveryEligibilityIneligible   = "ineligible"
 
-	// 评估状态写在 discovery_candidates 上；discovery 只写 pending，其余由 assessment 包推进。
+	// 评估状态写在 material_article_states；discovery 只写 pending，其余由 assessment 包推进。
 	DiscoveryAssessmentReady    = "ready"
 	DiscoveryAssessmentReview   = "review"
 	DiscoveryAssessmentDegraded = "degraded"
@@ -88,6 +92,9 @@ type DiscoverySiteEdge struct {
 }
 
 type DiscoveryCandidateProvenance struct {
+	MaterialID      uint                `json:"materialId" gorm:"index"`
+	DomainKey       string              `json:"domainKey"`
+	SourceName      string              `json:"sourceName"`
 	ID              uint                `json:"id" gorm:"primaryKey"`
 	ProvenanceKey   string              `json:"provenanceKey" gorm:"uniqueIndex;not null;size:64"`
 	CandidateID     uint                `json:"candidateId" gorm:"index;not null"`
@@ -155,22 +162,24 @@ type DiscoveryBackfillState struct {
 }
 
 type DiscoveryArticleContentVersion struct {
-	ID             uint                `json:"id" gorm:"primaryKey"`
-	CandidateID    uint                `json:"candidateId" gorm:"uniqueIndex:idx_candidate_content_version;not null"`
-	ContentVersion uint                `json:"contentVersion" gorm:"uniqueIndex:idx_candidate_content_version;not null"`
-	ContentHash    string              `json:"contentHash" gorm:"index;not null;size:128"`
-	FinalURL       string              `json:"finalUrl" gorm:"size:2048"`
-	CanonicalURL   string              `json:"canonicalUrl" gorm:"size:2048"`
-	Title          string              `json:"title" gorm:"size:1024"`
-	Summary        string              `json:"summary" gorm:"type:text"`
-	Author         string              `json:"author" gorm:"size:255"`
-	BodyText       string              `json:"bodyText" gorm:"type:text"`
-	Language       string              `json:"language" gorm:"size:32"`
-	WordCount      int                 `json:"wordCount" gorm:"not null;default:0"`
-	PublishedAt    *time.Time          `json:"publishedAt"`
-	FetchedAt      time.Time           `json:"fetchedAt" gorm:"not null"`
-	CreatedAt      time.Time           `json:"createdAt"`
-	Candidate      *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
+	MaterialID        uint                `json:"materialId" gorm:"index;default:null"`
+	MaterialVersionID *uint               `json:"materialVersionId" gorm:"index"`
+	ID                uint                `json:"id" gorm:"primaryKey"`
+	CandidateID       uint                `json:"candidateId" gorm:"uniqueIndex:idx_candidate_content_version;not null"`
+	ContentVersion    uint                `json:"contentVersion" gorm:"uniqueIndex:idx_candidate_content_version;not null"`
+	ContentHash       string              `json:"contentHash" gorm:"index;not null;size:128"`
+	FinalURL          string              `json:"finalUrl" gorm:"size:2048"`
+	CanonicalURL      string              `json:"canonicalUrl" gorm:"size:2048"`
+	Title             string              `json:"title" gorm:"size:1024"`
+	Summary           string              `json:"summary" gorm:"type:text"`
+	Author            string              `json:"author" gorm:"size:255"`
+	BodyText          string              `json:"bodyText" gorm:"type:text"`
+	Language          string              `json:"language" gorm:"size:32"`
+	WordCount         int                 `json:"wordCount" gorm:"not null;default:0"`
+	PublishedAt       *time.Time          `json:"publishedAt"`
+	FetchedAt         time.Time           `json:"fetchedAt" gorm:"not null"`
+	CreatedAt         time.Time           `json:"createdAt"`
+	Candidate         *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
 }
 
 type DiscoveryDuplicateCluster struct {
@@ -206,25 +215,8 @@ type DiscoveryDuplicateReviewSignal struct {
 	Candidate            *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
 }
 
-type UserCandidateState struct {
-	ID              uint                `json:"id" gorm:"primaryKey"`
-	UserID          uint                `json:"userId" gorm:"uniqueIndex:idx_user_candidate_state;not null"`
-	CandidateID     uint                `json:"candidateId" gorm:"uniqueIndex:idx_user_candidate_state;not null"`
-	FirstExposedAt  *time.Time          `json:"firstExposedAt"`
-	LastExposedAt   *time.Time          `json:"lastExposedAt" gorm:"index"`
-	ExposureCount   uint                `json:"exposureCount" gorm:"not null;default:0"`
-	OpenedAt        *time.Time          `json:"openedAt"`
-	ReadAt          *time.Time          `json:"readAt"`
-	DeepReadAt      *time.Time          `json:"deepReadAt"`
-	ArchivedAt      *time.Time          `json:"archivedAt"`
-	CurrentFeedback string              `json:"currentFeedback" gorm:"index;size:32"`
-	FeedbackSetAt   *time.Time          `json:"feedbackSetAt"`
-	FeedbackRevoked *time.Time          `json:"feedbackRevoked"`
-	MigratedFrom    string              `json:"migratedFrom" gorm:"size:64"`
-	CreatedAt       time.Time           `json:"createdAt"`
-	UpdatedAt       time.Time           `json:"updatedAt"`
-	Candidate       *DiscoveryCandidate `json:"-" gorm:"foreignKey:CandidateID;constraint:OnDelete:CASCADE"`
-}
+// UserCandidateState is the legacy HTTP name for material-owned user state.
+type UserCandidateState = material.UserState
 
 type DiscoveryLegacyCandidateStateReview struct {
 	ID           uint                `json:"id" gorm:"primaryKey"`
@@ -292,4 +284,23 @@ func V3Models() []interface{} {
 		&DiscoverySiteOperationalStats{},
 		&DiscoverySourceScheduleDecision{},
 	}
+}
+
+func (DiscoveryCandidateProvenance) TableName() string { return "material_provenances" }
+func (row *DiscoveryCandidateProvenance) BeforeCreate(tx *gorm.DB) error {
+	if row.MaterialID == 0 {
+		id, _, err := material.CandidateReference(tx, row.CandidateID)
+		if err != nil {
+			return err
+		}
+		row.MaterialID = id
+	}
+	if row.SiteID != 0 {
+		var site DiscoverySite
+		if err := tx.First(&site, row.SiteID).Error; err != nil {
+			return err
+		}
+		row.DomainKey = siteDomainKey(site)
+	}
+	return nil
 }

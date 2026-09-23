@@ -27,6 +27,7 @@ const (
 	maxDiscoveryPriorityBoost  = 999
 	defaultGraphRescanInterval = 7 * 24 * time.Hour
 	failedGraphRescanInterval  = 24 * time.Hour
+	graphDeadlockAttempts      = 3
 )
 
 type SiteClassifier struct{}
@@ -81,137 +82,180 @@ func (service SiteGraphService) ApplyLinks(ctx context.Context, fromSite Discove
 	perSiteLimit := positiveOr(config.DISCOVERYMAXBLOGROLLTARGETS, 50)
 	dailyLimit := positiveOr(config.DISCOVERYDAILYOBSERVINGLIMIT, 100)
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	var activatedToday int64
-	if err := db.Model(&DiscoverySite{}).
-		Where("discovery_method = ? AND activated_at >= ?", DiscoveryMethodBlogroll, dayStart).
-		Count(&activatedToday).Error; err != nil {
-		return GraphApplyResult{}, err
-	}
-
 	unique := dedupeBlogrollLinks(links)
-	result := GraphApplyResult{}
-	work := make([]graphWork, 0)
-	activatedThisScan := 0
-	err := db.Transaction(func(tx *gorm.DB) error {
-		for _, link := range unique {
-			rootURL, hostKey, err := canonicalLegacySite(link.TargetURL)
-			domainKey, domainErr := domainKeyForURL(link.TargetURL)
-			if err != nil || domainErr != nil || domainKey == siteDomainKey(fromSite) {
-				continue
-			}
-			target, created, err := findOrCreateGraphTarget(tx, rootURL, hostKey, domainKey, link, fromSite.GraphDepth+1, now, service.Classifier)
-			if err != nil {
-				return err
-			}
-			if created {
-				result.SitesCreated++
-			}
-			domainBlocked, err := isDiscoveryHostBlacklistedDB(tx, hostKey)
-			if err != nil {
-				return err
-			}
-			pendingReason := ""
-			needsActivation := created || isGraphLimitPause(target.OperationalPause)
-			if target.Status == DiscoverySiteStatusNonBlog {
-				pendingReason = DiscoveryPauseNonBlog
-				if created {
-					result.NonBlogTargets++
-				}
-			} else if needsActivation {
-				switch {
-				case fromSite.GraphDepth+1 > maxDepth:
-					pendingReason = DiscoveryPauseDepthLimit
-				case activatedThisScan >= perSiteLimit:
-					pendingReason = DiscoveryPausePerSiteLimit
-				case activatedToday >= int64(dailyLimit):
-					pendingReason = DiscoveryPauseDailyLimit
+	lockKeys := graphTargetLockKeys(unique, fromSite)
+	for attempt := 0; attempt < graphDeadlockAttempts; attempt++ {
+		result := GraphApplyResult{}
+		work := make([]graphWork, 0)
+		activatedThisScan := 0
+		err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if tx.Dialector.Name() == "postgres" {
+				for _, domainKey := range lockKeys {
+					if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('dataark:site-graph'), hashtext(?))", domainKey).Error; err != nil {
+						return err
+					}
 				}
 			}
-
-			activate := pendingReason == "" && target.Status != DiscoverySiteStatusNonBlog && needsActivation
-			if activate {
-				activatedToday++
-				activatedThisScan++
-				result.SitesActivated++
-				target.OperationalPause = ""
-				target.OperationalDetails = ""
-				target.CrawlAllowed = true
-				target.NextGraphScanAt = &now
-				target.ActivatedAt = &now
-				if err := tx.Model(&target).Updates(map[string]interface{}{
-					"operational_pause": "", "operational_details": "", "crawl_allowed": true,
-					"next_graph_scan_at": &now, "activated_at": &now,
-				}).Error; err != nil {
-					return err
-				}
-			}
-			if pendingReason != "" && pendingReason != DiscoveryPauseNonBlog {
-				result.TargetsPending++
-				target.OperationalPause = pendingReason
-				target.OperationalDetails = "blogroll target retained for a later bounded graph pass"
-				target.CrawlAllowed = false
-				if err := tx.Model(&target).Updates(map[string]interface{}{
-					"operational_pause":   pendingReason,
-					"operational_details": target.OperationalDetails,
-					"crawl_allowed":       false,
-				}).Error; err != nil {
-					return err
-				}
-			}
-
-			edge := DiscoverySiteEdge{
-				EdgeKey:    stableMigrationKey("graph-v1", fromSite.ID, target.ID, link.SourcePageURL, link.RelationType),
-				FromSiteID: fromSite.ID, ToSiteID: target.ID, SourcePageURL: link.SourcePageURL,
-				AnchorText: link.AnchorText, RelationType: link.RelationType, DetectionRule: link.DetectionRule,
-				ContextSummary: link.ContextSummary, EvidenceSummary: compactGraphEvidence(link), Confidence: link.Confidence,
-				FirstSeenAt: now, LastSeenAt: now, Active: true, GraphDepth: fromSite.GraphDepth + 1,
-				PendingReason: pendingReason,
-			}
-			if err := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{{Name: "edge_key"}},
-				DoUpdates: clause.Assignments(map[string]interface{}{
-					"anchor_text": edge.AnchorText, "detection_rule": edge.DetectionRule,
-					"context_summary": edge.ContextSummary, "evidence_summary": edge.EvidenceSummary,
-					"confidence": edge.Confidence, "last_seen_at": now, "active": true,
-					"pending_reason": pendingReason, "updated_at": now,
-				}),
-			}).Create(&edge).Error; err != nil {
+			var activatedToday int64
+			if err := tx.Model(&DiscoverySite{}).
+				Where("discovery_method = ? AND activated_at >= ?", DiscoveryMethodBlogroll, dayStart).
+				Count(&activatedToday).Error; err != nil {
 				return err
 			}
-			result.EdgesSeen++
-			if err := tx.Model(&target).Update("last_referenced_at", &now).Error; err != nil {
-				return err
-			}
-			if pendingReason == "" && target.Status != DiscoverySiteStatusNonBlog {
-				source, err := ensureHomepageEndpoint(tx, target, now)
+			for _, link := range unique {
+				rootURL, hostKey, err := canonicalLegacySite(link.TargetURL)
+				domainKey, domainErr := domainKeyForURL(link.TargetURL)
+				if err != nil || domainErr != nil || domainKey == siteDomainKey(fromSite) {
+					continue
+				}
+				target, created, err := findOrCreateGraphTarget(tx, rootURL, hostKey, domainKey, link, fromSite.GraphDepth+1, now, service.Classifier)
 				if err != nil {
 					return err
 				}
-				if activate && !domainBlocked {
-					work = append(work, graphWork{siteID: target.ID, sourceID: source.ID})
+				if created {
+					result.SitesCreated++
+				}
+				domainBlocked, err := isDiscoveryHostBlacklistedDB(tx, hostKey)
+				if err != nil {
+					return err
+				}
+				pendingReason := ""
+				needsActivation := created || isGraphLimitPause(target.OperationalPause)
+				if target.Status == DiscoverySiteStatusNonBlog {
+					pendingReason = DiscoveryPauseNonBlog
+					if created {
+						result.NonBlogTargets++
+					}
+				} else if needsActivation {
+					switch {
+					case fromSite.GraphDepth+1 > maxDepth:
+						pendingReason = DiscoveryPauseDepthLimit
+					case activatedThisScan >= perSiteLimit:
+						pendingReason = DiscoveryPausePerSiteLimit
+					case activatedToday >= int64(dailyLimit):
+						pendingReason = DiscoveryPauseDailyLimit
+					}
+				}
+
+				activate := pendingReason == "" && target.Status != DiscoverySiteStatusNonBlog && needsActivation
+				if activate {
+					activatedToday++
+					activatedThisScan++
+					result.SitesActivated++
+					target.OperationalPause = ""
+					target.OperationalDetails = ""
+					target.CrawlAllowed = true
+					target.NextGraphScanAt = &now
+					target.ActivatedAt = &now
+					if err := tx.Model(&target).Updates(map[string]interface{}{
+						"operational_pause": "", "operational_details": "", "crawl_allowed": true,
+						"next_graph_scan_at": &now, "activated_at": &now,
+					}).Error; err != nil {
+						return err
+					}
+				}
+				if pendingReason != "" && pendingReason != DiscoveryPauseNonBlog {
+					result.TargetsPending++
+					target.OperationalPause = pendingReason
+					target.OperationalDetails = "blogroll target retained for a later bounded graph pass"
+					target.CrawlAllowed = false
+					if err := tx.Model(&target).Updates(map[string]interface{}{
+						"operational_pause":   pendingReason,
+						"operational_details": target.OperationalDetails,
+						"crawl_allowed":       false,
+					}).Error; err != nil {
+						return err
+					}
+				}
+
+				edge := DiscoverySiteEdge{
+					EdgeKey:    stableMigrationKey("graph-v1", fromSite.ID, target.ID, link.SourcePageURL, link.RelationType),
+					FromSiteID: fromSite.ID, ToSiteID: target.ID, SourcePageURL: link.SourcePageURL,
+					AnchorText: link.AnchorText, RelationType: link.RelationType, DetectionRule: link.DetectionRule,
+					ContextSummary: link.ContextSummary, EvidenceSummary: compactGraphEvidence(link), Confidence: link.Confidence,
+					FirstSeenAt: now, LastSeenAt: now, Active: true, GraphDepth: fromSite.GraphDepth + 1,
+					PendingReason: pendingReason,
+				}
+				if err := tx.Clauses(clause.OnConflict{
+					Columns: []clause.Column{{Name: "edge_key"}},
+					DoUpdates: clause.Assignments(map[string]interface{}{
+						"anchor_text": edge.AnchorText, "detection_rule": edge.DetectionRule,
+						"context_summary": edge.ContextSummary, "evidence_summary": edge.EvidenceSummary,
+						"confidence": edge.Confidence, "last_seen_at": now, "active": true,
+						"pending_reason": pendingReason, "updated_at": now,
+					}),
+				}).Create(&edge).Error; err != nil {
+					return err
+				}
+				result.EdgesSeen++
+				if err := tx.Model(&target).Update("last_referenced_at", &now).Error; err != nil {
+					return err
+				}
+				if pendingReason == "" && target.Status != DiscoverySiteStatusNonBlog {
+					source, err := ensureHomepageEndpoint(tx, target, now)
+					if err != nil {
+						return err
+					}
+					if activate && !domainBlocked {
+						work = append(work, graphWork{siteID: target.ID, sourceID: source.ID})
+					}
+				}
+				if err := updateGraphPriority(tx, target.ID); err != nil {
+					return err
 				}
 			}
-			if err := updateGraphPriority(tx, target.ID); err != nil {
-				return err
+			return nil
+		})
+		if err == nil {
+			var enqueueErrors []error
+			if service.Queue != nil {
+				seen := make(map[uint]struct{})
+				for _, item := range work {
+					if _, exists := seen[item.siteID]; exists {
+						continue
+					}
+					seen[item.siteID] = struct{}{}
+					enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueFetchSource(ctx, item.sourceID))
+				}
 			}
+			return result, errors.Join(enqueueErrors...)
 		}
-		return nil
-	})
-	if err != nil {
-		return result, err
-	}
-	var enqueueErrors []error
-	if service.Queue != nil {
-		seen := make(map[uint]struct{})
-		for _, item := range work {
-			if _, exists := seen[item.siteID]; exists {
-				continue
-			}
-			seen[item.siteID] = struct{}{}
-			enqueueErrors = appendIfError(enqueueErrors, service.Queue.EnqueueFetchSource(ctx, item.sourceID))
+		if attempt == graphDeadlockAttempts-1 || !isGraphDeadlock(err) {
+			return GraphApplyResult{}, err
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return GraphApplyResult{}, ctx.Err()
+		case <-timer.C:
 		}
 	}
-	return result, errors.Join(enqueueErrors...)
+	return GraphApplyResult{}, nil
+}
+
+func graphTargetLockKeys(links []BlogrollLink, fromSite DiscoverySite) []string {
+	keys := make(map[string]struct{}, len(links))
+	for _, link := range links {
+		if _, _, err := canonicalLegacySite(link.TargetURL); err != nil {
+			continue
+		}
+		domainKey, err := domainKeyForURL(link.TargetURL)
+		if err == nil && domainKey != siteDomainKey(fromSite) {
+			keys[domainKey] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(keys))
+	for key := range keys {
+		result = append(result, key)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func isGraphDeadlock(err error) bool {
+	var sqlErr interface{ SQLState() string }
+	return errors.As(err, &sqlErr) && sqlErr.SQLState() == "40P01"
 }
 
 func findOrCreateGraphTarget(tx *gorm.DB, rootURL string, hostKey string, domainKey string, link BlogrollLink, depth int, now time.Time, classifier SiteClassifier) (DiscoverySite, bool, error) {
@@ -367,10 +411,7 @@ func dedupeBlogrollLinks(links []BlogrollLink) []BlogrollLink {
 
 func compactGraphEvidence(link BlogrollLink) string {
 	evidence := strings.TrimSpace(strings.Join([]string{link.DetectionRule, link.AnchorText}, ": "))
-	if len(evidence) > 240 {
-		evidence = evidence[:240]
-	}
-	return evidence
+	return truncateValidUTF8Bytes(evidence, 240)
 }
 
 func positiveOr(value int, fallback int) int {

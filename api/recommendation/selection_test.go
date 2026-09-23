@@ -37,7 +37,7 @@ func TestRecommendationV3SelectsTargetAndDedupesIdentity(t *testing.T) {
 	for index := 0; index < 16; index++ {
 		host := fmt.Sprintf("source-%d.example", index)
 		candidate := createReadyCandidate(t, fmt.Sprintf("https://%s/post-%d", host, index), fmt.Sprintf("Post %d", index), []string{topics[index%len(topics)]}, fmt.Sprintf("key-%d", index), 0.95-float64(index)*0.01, 0.7)
-		if err := db.Model(&candidate).Updates(map[string]interface{}{"author": fmt.Sprintf("Author %d", index%8), "content_version": 1, "published_at": &now}).Error; err != nil {
+		if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{"author": fmt.Sprintf("Author %d", index%8), "content_version": 1, "published_at": &now}).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -79,7 +79,7 @@ func TestRecommendationV3PublishesOnlyEligibleMAndExplainsShortage(t *testing.T)
 		createReadyCandidate(t, fmt.Sprintf("https://eligible-%d.example/post", index), fmt.Sprintf("Eligible %d", index), []string{fmt.Sprintf("Topic %d", index)}, fmt.Sprintf("eligible-%d", index), 0.8, 0.7)
 	}
 	ineligible := createReadyCandidate(t, "https://invalid.example/post", "Invalid", []string{"Invalid"}, "invalid", 0.99, 0.9)
-	if err := db.Model(&ineligible).Updates(map[string]interface{}{"eligibility_state": discovery.DiscoveryEligibilityIneligible, "eligibility_reasons": "article_quality_below_threshold"}).Error; err != nil {
+	if err := discovery.UpdateCandidate(db, ineligible.ID, map[string]interface{}{"eligibility_state": discovery.DiscoveryEligibilityIneligible, "eligibility_reasons": "article_quality_below_threshold"}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -163,7 +163,7 @@ func TestRecommendationV3CooldownUpdateAndExplicitFeedbackRecurrence(t *testing.
 	}
 	updatedCandidate := createReadyCandidate(t, "https://updates.example/post", "Updates", []string{"Go"}, "updates", 0.9, 0.8)
 	cooldownCandidate := createReadyCandidate(t, "https://cooldown.example/post", "Cooldown", []string{"Rust"}, "cooldown", 0.85, 0.8)
-	if err := db.Model(&DiscoveryCandidate{}).Where("id IN ?", []uint{updatedCandidate.ID, cooldownCandidate.ID}).Update("content_version", 1).Error; err != nil {
+	if err := discovery.UpdateCandidates(db.Model(&DiscoveryCandidate{}).Where("id IN ?", []uint{updatedCandidate.ID, cooldownCandidate.ID}), map[string]interface{}{"content_version": 1}).Error; err != nil {
 		t.Fatal(err)
 	}
 	first, err := GenerateDailyRecommendations(context.Background(), 403, "2026-01-01")
@@ -172,7 +172,7 @@ func TestRecommendationV3CooldownUpdateAndExplicitFeedbackRecurrence(t *testing.
 	}
 
 	clock.Advance(24 * time.Hour)
-	if err := db.Model(&updatedCandidate).Update("content_version", 2).Error; err != nil {
+	if err := discovery.UpdateCandidate(db, updatedCandidate.ID, map[string]interface{}{"content_version": 2}).Error; err != nil {
 		t.Fatal(err)
 	}
 	second, err := GenerateDailyRecommendations(context.Background(), 403, "2026-01-02")
@@ -202,7 +202,7 @@ func TestRecommendationV3HardIdentityIsDedupedInPool(t *testing.T) {
 	useRecommendationTestClock(t, now)
 	duplicateA := createReadyCandidate(t, "https://dup-a.example/post", "Duplicate A", []string{"A"}, "duplicate-a", 0.99, 0.9)
 	duplicateB := createReadyCandidate(t, "https://dup-b.example/post", "Duplicate B", []string{"B"}, "duplicate-b", 0.98, 0.9)
-	if err := db.Model(&DiscoveryCandidate{}).Where("id IN ?", []uint{duplicateA.ID, duplicateB.ID}).Update("duplicate_cluster_id", "hard-cluster").Error; err != nil {
+	if err := discovery.UpdateCandidates(db.Model(&DiscoveryCandidate{}).Where("id IN ?", []uint{duplicateA.ID, duplicateB.ID}), map[string]interface{}{"duplicate_cluster_id": "hard-cluster"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	selected, err := selectDailyRecommendationCandidates(context.Background(), 405, DefaultRecommendationSettings(405), &UserRecommendationProfile{UserID: 405}, 10)

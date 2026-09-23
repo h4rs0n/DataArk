@@ -116,7 +116,7 @@ func AddRecommendationItem(item *RecommendationItem) (*RecommendationItem, error
 		return nil, ErrRecommendationDayImmutable
 	}
 	var duplicate RecommendationItem
-	result := db.Where("day_id = ? AND user_id = ? AND candidate_id = ?", item.DayID, item.UserID, item.CandidateID).Limit(1).Find(&duplicate)
+	result := db.Where("day_id = ? AND user_id = ? AND material_id = (SELECT material_id FROM discovery_candidates WHERE id = ?)", item.DayID, item.UserID, item.CandidateID).Limit(1).Find(&duplicate)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -172,6 +172,7 @@ func attachRecommendationItemCandidates(items []RecommendationItem, dayStatus st
 		live := byID[items[index].CandidateID]
 		if dayStatus == RecommendationDayStatusPublished || dayStatus == RecommendationDayStatusSupplemented || items[index].SnapshotURL != "" {
 			items[index].Candidate = DiscoveryCandidate{
+				MaterialID: items[index].MaterialID, IndependentSourceCount: live.IndependentSourceCount,
 				ID: items[index].CandidateID, URL: items[index].SnapshotURL, Title: items[index].SnapshotTitle,
 				Summary: items[index].SnapshotSummary, Author: items[index].SnapshotAuthor,
 				SourceName: items[index].SnapshotSource, PublishedAt: items[index].SnapshotPublishedAt,

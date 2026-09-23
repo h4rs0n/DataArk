@@ -231,7 +231,7 @@ func TestDiscoveryFeedRefreshAllowsMaterialContentUpdate(t *testing.T) {
 	if len(first.Items) != 1 {
 		t.Fatalf("first feed items = %#v", first.Items)
 	}
-	if err := db.Model(&candidate).Update("content_version", 1).Error; err != nil {
+	if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{"content_version": 1}).Error; err != nil {
 		t.Fatal(err)
 	}
 

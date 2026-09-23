@@ -59,12 +59,16 @@ func AssessCandidate(ctx context.Context, candidateID uint, assessor ArticleAsse
 	if err := db.First(&candidate, candidateID).Error; err != nil {
 		return err
 	}
+	return assessMaterialRecord(ctx, candidate, assessor)
+}
+
+func assessMaterialRecord(ctx context.Context, candidate discovery.DiscoveryCandidate, assessor ArticleAssessor) error {
 	if candidate.ProcessingState != discovery.DiscoveryProcessingReady || candidate.DedupeState != discovery.DiscoveryDedupeReady || candidate.ContentVersion == 0 {
 		return nil
 	}
 	isRepresentative := candidate.RepresentativeID == nil || *candidate.RepresentativeID == candidate.ID
-	if !isRepresentative {
-		return db.Model(&candidate).Updates(map[string]interface{}{
+	if !isRepresentative && candidate.EligibilityReasons == "duplicate_non_representative" {
+		return updateAssessmentMaterial(candidate, map[string]interface{}{
 			"assessment_state": discovery.DiscoveryAssessmentReady, "assessment_error": "",
 			"eligibility_state":   discovery.DiscoveryEligibilityIneligible,
 			"eligibility_reasons": "duplicate_non_representative", "updated_at": discovery.Timestamp(),
@@ -117,7 +121,7 @@ func loadCurrentAssessment(candidate discovery.DiscoveryCandidate) (ArticleAsses
 		return ArticleAssessment{}, false
 	}
 	var row ArticleAssessment
-	if err := db.First(&row, *candidate.CurrentAssessmentID).Error; err != nil || row.CandidateID != candidate.ID || row.ContentVersion != candidate.ContentVersion {
+	if err := db.First(&row, *candidate.CurrentAssessmentID).Error; err != nil || row.MaterialID != candidate.MaterialID || row.ContentVersion != candidate.ContentVersion {
 		return ArticleAssessment{}, false
 	}
 	return row, true
@@ -125,7 +129,7 @@ func loadCurrentAssessment(candidate discovery.DiscoveryCandidate) (ArticleAsses
 
 func loadPersistedAssessment(candidate discovery.DiscoveryCandidate, assessor ArticleAssessor) (ArticleAssessmentResult, ArticleAssessment, bool, error) {
 	var row ArticleAssessment
-	err := db.Where("candidate_id = ? AND content_version = ? AND assessor = ? AND assessor_version = ? AND policy_version = ?", candidate.ID, candidate.ContentVersion, assessor.Name(), assessor.Version(), assessor.PolicyVersion()).First(&row).Error
+	err := db.Where("material_id = ? AND content_version = ? AND assessor = ? AND assessor_version = ? AND policy_version = ?", candidate.MaterialID, candidate.ContentVersion, assessor.Name(), assessor.Version(), assessor.PolicyVersion()).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ArticleAssessmentResult{}, row, false, nil
 	}
@@ -159,7 +163,7 @@ func retainCurrentModelOrFail(candidate discovery.DiscoveryCandidate, current Ar
 }
 
 func updateAssessmentStatus(candidate discovery.DiscoveryCandidate, state string, assessmentError string) error {
-	return db.Model(&candidate).Updates(map[string]interface{}{
+	return updateAssessmentMaterial(candidate, map[string]interface{}{
 		"assessment_state": state, "assessment_error": assessmentError, "updated_at": discovery.Timestamp(),
 	}).Error
 }
@@ -172,21 +176,21 @@ func persistArticleAssessment(candidate discovery.DiscoveryCandidate, assessor A
 		keywordsJSON = string(encoded)
 	}
 	row := ArticleAssessment{
-		CandidateID: candidate.ID, ContentVersion: candidate.ContentVersion,
+		CandidateID: candidate.ID, MaterialID: candidate.MaterialID, ContentVersion: candidate.ContentVersion,
 		Assessor: assessor.Name(), AssessorVersion: assessor.Version(), PolicyVersion: assessor.PolicyVersion(),
 		Depth: clampAssessment(result.Depth), EvergreenValue: clampAssessment(result.Evergreen), OverallQuality: clampAssessment(result.Quality),
 		Confidence: clampAssessment(result.Confidence), Reasons: string(reasons), Summary: strings.TrimSpace(result.Summary),
 		Keywords: keywordsJSON, CreatedAt: discovery.Timestamp(),
 	}
 	err := db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "candidate_id"}, {Name: "content_version"}, {Name: "assessor"}, {Name: "assessor_version"}, {Name: "policy_version"}},
+		Columns:   []clause.Column{{Name: "material_id"}, {Name: "content_version"}, {Name: "assessor"}, {Name: "assessor_version"}, {Name: "policy_version"}},
 		DoNothing: true,
 	}).Create(&row).Error
 	if err != nil {
 		return row, err
 	}
 	if row.ID == 0 {
-		err = db.Where("candidate_id = ? AND content_version = ? AND assessor = ? AND assessor_version = ? AND policy_version = ?", candidate.ID, candidate.ContentVersion, assessor.Name(), assessor.Version(), assessor.PolicyVersion()).First(&row).Error
+		err = db.Where("material_id = ? AND content_version = ? AND assessor = ? AND assessor_version = ? AND policy_version = ?", candidate.MaterialID, candidate.ContentVersion, assessor.Name(), assessor.Version(), assessor.PolicyVersion()).First(&row).Error
 	}
 	return row, err
 }
@@ -204,7 +208,7 @@ func activateArticleAssessment(candidate discovery.DiscoveryCandidate, row Artic
 		reason = "article_quality_below_threshold"
 	}
 	now := discovery.Timestamp()
-	return db.Model(&candidate).Updates(map[string]interface{}{
+	return updateAssessmentMaterial(candidate, map[string]interface{}{
 		"current_assessment_id": row.ID, "assessment_state": discovery.DiscoveryAssessmentReady,
 		"assessment_error": assessmentError, "quality_score": clampAssessment(result.Quality),
 		"depth_score": clampAssessment(result.Depth), "eligibility_state": eligibility,
@@ -213,7 +217,7 @@ func activateArticleAssessment(candidate discovery.DiscoveryCandidate, row Artic
 }
 
 func markAssessmentReview(candidate discovery.DiscoveryCandidate, assessmentErr error) error {
-	return db.Model(&candidate).Updates(map[string]interface{}{
+	return updateAssessmentMaterial(candidate, map[string]interface{}{
 		"assessment_state": discovery.DiscoveryAssessmentReview, "assessment_error": compactAssessmentError(assessmentErr.Error()),
 		"eligibility_state": discovery.DiscoveryEligibilityReview, "eligibility_reasons": "article_assessment_failed",
 		"updated_at": discovery.Timestamp(),
@@ -250,7 +254,7 @@ func applyAssessmentArticleMetadata(candidate discovery.DiscoveryCandidate, resu
 		}
 		updates["topics"] = string(topics)
 	}
-	return db.Model(&candidate).Updates(updates).Error
+	return updateAssessmentMaterial(candidate, updates).Error
 }
 
 func clampAssessment(value float64) float64 {

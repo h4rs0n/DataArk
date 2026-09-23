@@ -78,7 +78,12 @@ func GetCandidateInventory(userID uint) (*CandidateInventory, error) {
 	if result.CriticalThresholdDays <= 0 {
 		result.CriticalThresholdDays = 3
 	}
+	seenMaterials := make(map[uint]bool)
 	for _, candidate := range candidates {
+		if candidate.MaterialID != 0 && seenMaterials[candidate.MaterialID] {
+			continue
+		}
+		seenMaterials[candidate.MaterialID] = true
 		fresh := candidate.PublishedAt != nil && !candidate.PublishedAt.Before(freshCutoff)
 		evergreen := false
 		if row, ok := assessments[candidate.ID]; ok {
@@ -137,7 +142,7 @@ func explorationCandidateIDs(candidates []DiscoveryCandidate) (map[uint]bool, er
 	}
 	type row struct{ CandidateID uint }
 	var rows []row
-	if err := db.Table("discovery_candidate_provenances AS provenance").Select("DISTINCT provenance.candidate_id").
+	if err := db.Table("material_provenances AS provenance").Select("DISTINCT provenance.candidate_id").
 		Joins("JOIN discovery_sites AS site ON site.id = provenance.site_id").
 		Where("provenance.candidate_id IN ? AND (site.status = ? OR site.graph_depth > ?)", ids, discovery.DiscoverySiteStatusObserving, 0).Scan(&rows).Error; err != nil {
 		return nil, err
@@ -187,11 +192,15 @@ func inventoryUserStates(userID uint, candidates []DiscoveryCandidate) (map[uint
 		ids = append(ids, candidate.ID)
 	}
 	var states []discovery.UserCandidateState
-	if err := db.Where("user_id = ? AND candidate_id IN ?", userID, ids).Find(&states).Error; err != nil {
+	if err := db.Where("user_id = ? AND material_id IN (SELECT material_id FROM discovery_candidates WHERE id IN ?)", userID, ids).Find(&states).Error; err != nil {
 		return nil, err
 	}
 	for _, state := range states {
-		result[state.CandidateID] = state
+		for _, candidate := range candidates {
+			if candidate.MaterialID == state.MaterialID {
+				result[candidate.ID] = state
+			}
+		}
 	}
 	return result, nil
 }

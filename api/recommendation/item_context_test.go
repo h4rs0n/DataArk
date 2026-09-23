@@ -49,7 +49,7 @@ func TestRecommendationExperienceM15ContextIsTraceableAndUserScoped(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if context.Feedback == nil || context.Assessment == nil || context.UserState == nil || len(context.Provenance) != 1 || context.Provenance[0].Site.ID != site.ID || context.Provenance[0].Graph == nil {
+	if context.Feedback == nil || context.Assessment == nil || context.UserState == nil || len(context.Provenance) != 2 || context.Provenance[0].Site.ID != site.ID || context.Provenance[0].Graph == nil {
 		t.Fatalf("context = %#v", context)
 	}
 	if _, err := GetRecommendationItemContext(911, item.ID); !errors.Is(err, gorm.ErrRecordNotFound) {

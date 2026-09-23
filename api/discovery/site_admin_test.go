@@ -36,7 +36,7 @@ func TestOwnerPausePreservesCandidatesAndStopsSiteWork(t *testing.T) {
 		t.Fatalf("paused site = %#v", paused)
 	}
 	var candidateCount int64
-	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", candidate.ID).Count(&candidateCount).Error; err != nil {
+	if err := Candidates(db).Model(&DiscoveryCandidate{}).Where("id = ?", candidate.ID).Count(&candidateCount).Error; err != nil {
 		t.Fatal(err)
 	}
 	if candidateCount != 1 {

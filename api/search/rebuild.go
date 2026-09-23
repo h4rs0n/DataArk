@@ -190,12 +190,20 @@ func buildDocumentFromHTML(htmlPath string, domain string, fileName string) (map
 		return nil, err
 	}
 
+	materialID, err := archive.EnsureContentMaterial(domain, fileName, sourceURL, title, pureText)
+	if err != nil {
+		return nil, err
+	}
+	if err := archive.SaveArchiveDocumentDetails(domain, fileName, sourceURL, title, archive.BuildSummary(pureText, 220)); err != nil {
+		return nil, err
+	}
 	return map[string]interface{}{
-		"id":       uuid.New().String(),
-		"title":    title,
-		"filename": fileName,
-		"domain":   domain,
-		"link":     sourceURL,
-		"content":  pureText,
+		"id":         uuid.New().String(),
+		"title":      title,
+		"filename":   fileName,
+		"domain":     domain,
+		"link":       sourceURL,
+		"content":    pureText,
+		"materialId": materialID,
 	}, nil
 }

@@ -49,6 +49,9 @@ func ExcludeBlacklistedCandidateDomains(query *gorm.DB, candidateAlias string) *
 		_ = query.AddError(err)
 		return query
 	}
+	if candidateAlias == "" {
+		query = Candidates(query)
+	}
 	return query.Where("NOT " + predicate)
 }
 
@@ -61,6 +64,9 @@ func OnlyBlacklistedCandidateDomains(query *gorm.DB, candidateAlias string) *gor
 	if err != nil {
 		_ = query.AddError(err)
 		return query
+	}
+	if candidateAlias == "" {
+		query = Candidates(query)
 	}
 	return query.Where(predicate)
 }
@@ -171,10 +177,10 @@ func CreateDiscoveryDomainBlacklist(domain string, reason string) (*DiscoveryDom
 		if err := tx.Create(&entry).Error; err != nil {
 			return err
 		}
-		result := tx.Model(&DiscoveryCandidate{}).
+		result := UpdateCandidates(tx.Model(&DiscoveryCandidate{}).
 			Where("crawl_host = ? OR crawl_host LIKE ?", normalized, "%."+normalized).
-			Where("processing_state IN ?", []string{DiscoveryProcessingDiscovered, DiscoveryProcessingFetchPending, DiscoveryProcessingFetching, "extract_pending"}).
-			Updates(map[string]interface{}{
+			Where("processing_state IN ?", []string{DiscoveryProcessingDiscovered, DiscoveryProcessingFetchPending, DiscoveryProcessingFetching, "extract_pending"}),
+			map[string]interface{}{
 				"processing_state":      DiscoveryProcessingDomainBlocked,
 				"processing_error_type": processingErrorDomainBlacklist,
 				"processing_error":      fmt.Sprintf("crawl domain is blacklisted: %s", normalized),
@@ -235,7 +241,7 @@ func DeleteDiscoveryDomainBlacklist(id uint) (*DiscoveryDomainBlacklistMutation,
 			return nil
 		}
 		now := time.Now()
-		result := tx.Model(&DiscoveryCandidate{}).Where("id IN ?", resumable).Updates(map[string]interface{}{
+		result := UpdateCandidates(tx.Model(&DiscoveryCandidate{}).Where("id IN ?", resumable), map[string]interface{}{
 			"processing_state":      DiscoveryProcessingFetchPending,
 			"processing_error_type": "",
 			"processing_error":      "",

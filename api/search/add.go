@@ -388,14 +388,19 @@ func addDocFileByPath(htmlFilePath string, fileName string, originDomain string,
 		return err
 	}
 
+	materialID, err := archive.EnsureContentMaterial(originDomain, fileName, sourceURL, title, HTMLPureText)
+	if err != nil {
+		return err
+	}
 	documents := []map[string]interface{}{
 		{
-			"id":       uuid.New().String(),
-			"title":    title,
-			"filename": fileName,
-			"domain":   originDomain,
-			"link":     strings.TrimSpace(sourceURL),
-			"content":  HTMLPureText,
+			"id":         uuid.New().String(),
+			"title":      title,
+			"filename":   fileName,
+			"domain":     originDomain,
+			"link":       strings.TrimSpace(sourceURL),
+			"content":    HTMLPureText,
+			"materialId": materialID,
 		},
 	}
 	client := meilisearch.New(config.MEILIHOST, meilisearch.WithAPIKey(config.MEILIAPIKey))

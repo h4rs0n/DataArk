@@ -52,7 +52,7 @@ func TestFeedConditionalFetchPersistsValidatorsAndSkipsUnchangedWork(t *testing.
 		t.Fatalf("second fetch = %#v, %v", second, err)
 	}
 	var candidates int64
-	if err := db.Model(&DiscoveryCandidate{}).Count(&candidates).Error; err != nil || candidates != 1 {
+	if err := Candidates(db).Model(&DiscoveryCandidate{}).Count(&candidates).Error; err != nil || candidates != 1 {
 		t.Fatalf("candidate count = %d, %v", candidates, err)
 	}
 	var runs []DiscoveryFetchRun

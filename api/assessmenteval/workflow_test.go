@@ -178,6 +178,9 @@ func workflowTestDatabase(t *testing.T) *gorm.DB {
 	if err := database.AutoMigrate(models...); err != nil {
 		t.Fatal(err)
 	}
+	if err := discovery.MigrateMaterialTestSchema(database); err != nil {
+		t.Fatal(err)
+	}
 	return database
 }
 

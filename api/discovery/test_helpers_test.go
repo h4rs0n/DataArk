@@ -40,6 +40,9 @@ func setupSQLiteDB(t *testing.T) {
 	); err != nil {
 		t.Fatalf("failed to migrate sqlite db: %v", err)
 	}
+	if err := MigrateMaterialTestSchema(sqliteDB); err != nil {
+		t.Fatal(err)
+	}
 	oldArchive := archive.SetDB(sqliteDB)
 	oldDiscovery := SetDB(sqliteDB)
 	t.Cleanup(func() {

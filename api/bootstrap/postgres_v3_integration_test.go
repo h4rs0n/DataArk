@@ -75,16 +75,20 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 		EndpointType: discovery.DiscoveryEndpointSitemap, SiteID: &legacySite.ID, UserManaged: true, Enabled: true,
 		NextDueAt: &legacyNow, NextFetchAt: &legacyNow,
 	}
-	if err := database.Create(&legacySitemap).Error; err != nil {
+	if err := database.Omit("crawl_host").Create(&legacySitemap).Error; err != nil {
 		t.Fatalf("create pre-migration sitemap endpoint: %v", err)
 	}
 	legacyBackfill := discovery.DiscoveryBackfillState{
 		SiteID: legacySite.ID, Strategy: discovery.BackfillStrategySitemap, Cursor: `{\"pending\":[\"https://legacy-sitemap.invalid/sitemap.xml\"],\"visited\":[]}`,
 		Status: discovery.BackfillStatusPending, NextBatchAt: &legacyNow,
 	}
-	if err := database.Create(&legacyBackfill).Error; err != nil {
+	if err := database.Omit("owner_requested_at").Create(&legacyBackfill).Error; err != nil {
 		t.Fatalf("create pre-migration sitemap backfill: %v", err)
 	}
+	if err := goose.UpTo(sqlDB, ".", 31); err != nil {
+		t.Fatal(err)
+	}
+	seedPostgresMaterialHistory(t, database, legacySitemap.ID)
 	for attempt := 1; attempt <= 2; attempt++ {
 		if err := appdatabase.RunDatabaseMigrations(database); err != nil {
 			t.Fatalf("production migrations attempt %d: %v", attempt, err)
@@ -93,9 +97,11 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 			t.Fatalf("compatibility backfill attempt %d: %v", attempt, err)
 		}
 	}
+	verifyPostgresMaterialHistory(t, database)
+	verifyPostgresConcurrentGraph(t, database)
 
 	assertPostgresScalar(t, database,
-		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "30")
+		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "35")
 	assertPostgresScalar(t, database,
 		"SELECT extname FROM pg_extension WHERE extname = 'vector'", "vector")
 	assertPostgresScalar(t, database,
@@ -134,6 +140,7 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 		CanonicalURL:     longCandidateURL,
 		DedupeKey:        "url:" + discovery.ContentHash(longCandidateURL),
 		Title:            "Synthetic pgvector fixture",
+		BodyText:         "Synthetic extracted content for PostgreSQL vector verification.",
 		Status:           discovery.DiscoveryCandidateStatusNew,
 		ProcessingState:  discovery.DiscoveryProcessingReady,
 		EligibilityState: discovery.DiscoveryEligibilityEligible,
@@ -151,10 +158,10 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 		t.Fatalf("store candidate embedding: %v", err)
 	}
 	assertPostgresScalar(t, database,
-		fmt.Sprintf("SELECT embedding::text FROM discovery_candidates WHERE id = %d", candidate.ID),
+		fmt.Sprintf("SELECT e.embedding::text FROM material_embeddings e JOIN material_representations r ON r.id = e.representation_id JOIN material m ON m.current_version_id = r.version_id WHERE m.id = %d", candidate.MaterialID),
 		"[0.25,0.5,0.75]")
 	assertPostgresScalar(t, database,
-		fmt.Sprintf("SELECT topics::text || '|' || entities::text FROM discovery_candidates WHERE id = %d", candidate.ID),
+		fmt.Sprintf("SELECT topics::text || '|' || entities::text FROM material WHERE id = %d", candidate.MaterialID),
 		"[]|[]")
 
 	var executions atomic.Int32

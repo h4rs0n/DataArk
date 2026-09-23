@@ -2,10 +2,12 @@ package recommendation
 
 import (
 	"DataArk/discovery"
+	"DataArk/material"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"gorm.io/gorm/clause"
 	"math"
 	"strconv"
 	"strings"
@@ -48,7 +50,7 @@ func EmbedReadyDiscoveryCandidates(ctx context.Context, limit int, provider Embe
 	}
 	// 只给 v3 硬合格代表补向量，不再依赖已停用的 enrichment_status=ready。
 	var candidates []DiscoveryCandidate
-	if err := db.Where("processing_state = ? AND eligibility_state = ? AND dedupe_state = ?",
+	if err := discovery.Candidates(db).Where("processing_state = ? AND eligibility_state = ? AND dedupe_state = ?",
 		discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady).
 		Where("representative_id IS NULL OR representative_id = id").
 		Where("embedding_model = '' OR embedding_model IS NULL").
@@ -79,18 +81,17 @@ func StoreCandidateEmbedding(ctx context.Context, candidateID uint, model string
 	if err != nil {
 		return err
 	}
-	if db.Dialector.Name() != "postgres" {
-		return db.Model(&DiscoveryCandidate{}).Where("id = ?", candidateID).Updates(map[string]interface{}{
-			"embedding_model": strings.TrimSpace(model),
-			"updated_at":      time.Now(),
-		}).Error
+	var representation material.Representation
+	if err := db.Table("material_representations r").Select("r.*").Joins("JOIN material m ON m.current_version_id = r.version_id").
+		Joins("JOIN discovery_candidates c ON c.material_id = m.id").Where("c.id = ? AND r.kind = ? AND r.role = ?", candidateID, "text", "body").Take(&representation).Error; err != nil {
+		return err
 	}
-	return db.WithContext(ctx).Exec(
-		"UPDATE discovery_candidates SET embedding = ?::vector, embedding_model = ?, updated_at = NOW() WHERE id = ?",
-		vectorLiteral,
-		strings.TrimSpace(model),
-		candidateID,
-	).Error
+	row := material.Embedding{RepresentationID: representation.ID, Model: strings.TrimSpace(model), UpdatedAt: time.Now()}
+	if db.Dialector.Name() != "postgres" {
+		return db.Clauses(clause.OnConflict{UpdateAll: true}).Create(&row).Error
+	}
+	return db.WithContext(ctx).Exec(`INSERT INTO material_embeddings(representation_id, model, embedding, updated_at)
+ VALUES (?, ?, ?::vector, NOW()) ON CONFLICT(representation_id, model) DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = NOW()`, row.RepresentationID, row.Model, vectorLiteral).Error
 }
 
 func loadPGVectorCandidateIDs(ctx context.Context, profile *UserRecommendationProfile, limit int) ([]uint, error) {
@@ -110,9 +111,12 @@ func loadPGVectorCandidateIDs(ctx context.Context, profile *UserRecommendationPr
 	}
 	// 向量召回与选文共用硬合格门禁，避免已停用的 enrichment_status 把召回永远滤空。
 	if err := db.WithContext(ctx).
-		Raw(`SELECT id FROM discovery_candidates
+		Raw(`SELECT c.id FROM discovery_candidate_details c
+			JOIN material m ON m.id = c.material_id
+			JOIN material_representations r ON r.version_id = m.current_version_id AND r.kind = 'text' AND r.role = 'body'
+			JOIN LATERAL (SELECT embedding FROM material_embeddings WHERE representation_id = r.id ORDER BY updated_at DESC LIMIT 1) e ON TRUE
 			WHERE processing_state = ? AND eligibility_state = ? AND dedupe_state = ?
-			  AND (representative_id IS NULL OR representative_id = id)
+			  AND (representative_id IS NULL OR representative_id = c.id)
 			  AND embedding IS NOT NULL
 			ORDER BY embedding <=> ?::vector
 			LIMIT ?`,
@@ -137,7 +141,10 @@ func loadCandidateEmbeddingVectors(candidateIDs []uint) (map[uint][]float32, err
 		ID        uint   `gorm:"column:id"`
 		Embedding string `gorm:"column:embedding"`
 	}
-	if err := db.Raw("SELECT id, embedding::text AS embedding FROM discovery_candidates WHERE id IN ? AND embedding IS NOT NULL", candidateIDs).Scan(&rows).Error; err != nil {
+	if err := db.Raw(`SELECT c.id, e.embedding::text AS embedding FROM discovery_candidates c
+ JOIN material m ON m.id = c.material_id JOIN material_representations r ON r.version_id = m.current_version_id AND r.kind = 'text' AND r.role = 'body'
+ JOIN LATERAL (SELECT embedding FROM material_embeddings WHERE representation_id = r.id ORDER BY updated_at DESC LIMIT 1) e ON TRUE
+ WHERE c.id IN ? AND e.embedding IS NOT NULL`, candidateIDs).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	for _, row := range rows {

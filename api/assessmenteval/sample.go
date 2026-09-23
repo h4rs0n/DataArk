@@ -70,7 +70,7 @@ SELECT c.id AS candidate_id,
        COALESCE(active.overall_quality, 0) AS active_quality,
        COALESCE(active.depth, 0) AS active_depth,
        COALESCE(active.evergreen_value, 0) AS active_evergreen
-FROM discovery_candidates c
+FROM discovery_candidate_details c
 JOIN discovery_article_content_versions cv
   ON cv.candidate_id = c.id AND cv.content_version = c.content_version
 LEFT JOIN discovery_article_assessments active ON active.id = c.current_assessment_id

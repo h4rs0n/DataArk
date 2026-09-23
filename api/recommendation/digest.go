@@ -121,7 +121,7 @@ func buildRecommendationItems(dayID uint, userID uint, selected []recommendation
 	items := make([]RecommendationItem, 0, len(selected))
 	for index, scored := range selected {
 		item := RecommendationItem{
-			DayID: uintPointer(dayID), UserID: userID, CandidateID: scored.Candidate.ID,
+			DayID: uintPointer(dayID), UserID: userID, CandidateID: scored.Candidate.ID, MaterialID: scored.Candidate.MaterialID,
 			DedupeKey: strings.TrimSpace(scored.Candidate.DedupeKey), AssessmentID: scored.Candidate.CurrentAssessmentID,
 			Rank: firstRank + index, RetrievalScore: scored.RetrievalScore, RerankScore: scored.RerankScore,
 			FinalScore: scored.FinalScore, Reason: scored.Reason, ReasonMetadata: buildReasonMetadata(scored),
@@ -261,9 +261,9 @@ func appendRecommendationSupplement(dayID uint, userID uint, requestedCount int,
 		for index := range items {
 			items[index].Rank = maxRank + appended + 1
 			var count int64
-			query := tx.Model(&RecommendationItem{}).Where("day_id = ? AND user_id = ? AND candidate_id = ?", dayID, userID, items[index].CandidateID)
+			query := tx.Model(&RecommendationItem{}).Where("day_id = ? AND user_id = ? AND material_id = ?", dayID, userID, items[index].MaterialID)
 			if key := strings.TrimSpace(items[index].DedupeKey); key != "" {
-				query = tx.Model(&RecommendationItem{}).Where("day_id = ? AND user_id = ? AND (candidate_id = ? OR dedupe_key = ?)", dayID, userID, items[index].CandidateID, key)
+				query = tx.Model(&RecommendationItem{}).Where("day_id = ? AND user_id = ? AND (material_id = ? OR dedupe_key = ?)", dayID, userID, items[index].MaterialID, key)
 			}
 			if err := query.Count(&count).Error; err != nil {
 				return err

@@ -378,7 +378,7 @@ func computeLongTailMetrics(metrics *AdminProductMetrics, positiveItems map[uint
 		siteCandidate[row.SiteID][row.CandidateID] = true
 	}
 	var eligible []uint
-	db.Model(&DiscoveryCandidate{}).Where("eligibility_state = ?", discovery.DiscoveryEligibilityEligible).Pluck("id", &eligible)
+	discovery.Candidates(db).Model(&DiscoveryCandidate{}).Where("eligibility_state = ?", discovery.DiscoveryEligibilityEligible).Pluck("id", &eligible)
 	eligibleSet := map[uint]bool{}
 	for _, id := range eligible {
 		eligibleSet[id] = true

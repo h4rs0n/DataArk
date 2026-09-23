@@ -106,11 +106,15 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 				updates["eligibility_state"] = DiscoveryEligibilityUnknown
 			}
 			if len(updates) > 0 {
-				if err := tx.Model(&DiscoveryCandidate{}).Where("id = ?", candidate.ID).Updates(updates).Error; err != nil {
+				if err := UpdateCandidate(tx, candidate.ID, updates).Error; err != nil {
 					return err
 				}
 			}
 			sourceID := candidate.SourceID
+			var evidenceCount int64
+			if err := tx.Model(&DiscoveryCandidateProvenance{}).Where("candidate_id = ? AND source_id = ?", candidate.ID, sourceID).Count(&evidenceCount).Error; err != nil {
+				return err
+			}
 			provenance := DiscoveryCandidateProvenance{
 				ProvenanceKey:   stableMigrationKey("legacy", candidate.ID, siteID, sourceID, candidate.URL),
 				CandidateID:     candidate.ID,
@@ -121,14 +125,16 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 				FirstSeenAt:     firstSeen,
 				LastSeenAt:      lastSeen,
 			}
-			if err := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{{Name: "provenance_key"}},
-				DoUpdates: clause.Assignments(map[string]interface{}{
-					"last_seen_at": lastSeen,
-					"updated_at":   time.Now(),
-				}),
-			}).Create(&provenance).Error; err != nil {
-				return err
+			if evidenceCount == 0 {
+				if err := tx.Clauses(clause.OnConflict{
+					Columns: []clause.Column{{Name: "provenance_key"}},
+					DoUpdates: clause.Assignments(map[string]interface{}{
+						"last_seen_at": lastSeen,
+						"updated_at":   time.Now(),
+					}),
+				}).Create(&provenance).Error; err != nil {
+					return err
+				}
 			}
 			if candidate.Status == DiscoveryCandidateStatusRead || candidate.Status == DiscoveryCandidateStatusIgnored || candidate.Status == DiscoveryCandidateStatusArchived {
 				review := DiscoveryLegacyCandidateStateReview{

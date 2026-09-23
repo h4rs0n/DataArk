@@ -77,6 +77,8 @@ func (ArticleAssessmentWorkflowRun) TableName() string {
 }
 
 type ArticleAssessmentWorkflowItem struct {
+	MaterialID           *uint      `gorm:"index"`
+	MaterialVersionID    *uint      `gorm:"index"`
 	ID                   uint       `gorm:"primaryKey"`
 	RunID                uint       `gorm:"uniqueIndex:idx_assessment_workflow_item;index;not null"`
 	Position             int        `gorm:"not null"`
@@ -105,6 +107,18 @@ type ArticleAssessmentWorkflowItem struct {
 
 func (ArticleAssessmentWorkflowItem) TableName() string {
 	return "article_assessment_workflow_items"
+}
+
+func (item *ArticleAssessmentWorkflowItem) BeforeCreate(tx *gorm.DB) error {
+	var version discovery.DiscoveryArticleContentVersion
+	if err := tx.First(&version, item.ContentVersionID).Error; err != nil {
+		return err
+	}
+	if version.MaterialID != 0 {
+		item.MaterialID = &version.MaterialID
+	}
+	item.MaterialVersionID = version.MaterialVersionID
+	return nil
 }
 
 type ArticleAssessmentWorkflowLabel struct {

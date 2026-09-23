@@ -17,12 +17,12 @@ func TestRecommendationSelectionOnlyUsesDuplicateRepresentative(t *testing.T) {
 	representative := createReadyCandidate(t, "https://author.example/original", "Original", []string{"Systems"}, "before-cluster-a", 0.8, 0.8)
 	member := createReadyCandidate(t, "https://mirror.example/copy", "Copy", []string{"Systems"}, "before-cluster-b", 0.9, 0.9)
 	clusterID := "dup-fixture-cluster"
-	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", representative.ID).Updates(map[string]interface{}{
+	if err := discovery.UpdateCandidates(db.Model(&DiscoveryCandidate{}).Where("id = ?", representative.ID), map[string]interface{}{
 		"duplicate_cluster_id": clusterID, "dedupe_key": clusterID, "representative_id": representative.ID,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", member.ID).Updates(map[string]interface{}{
+	if err := discovery.UpdateCandidates(db.Model(&DiscoveryCandidate{}).Where("id = ?", member.ID), map[string]interface{}{
 		"duplicate_cluster_id": clusterID, "dedupe_key": clusterID, "representative_id": representative.ID,
 	}).Error; err != nil {
 		t.Fatal(err)

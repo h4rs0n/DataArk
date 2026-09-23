@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"DataArk/archive"
+	"DataArk/material"
 	"context"
 	"errors"
 	"fmt"
@@ -69,7 +70,7 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 			return err
 		}
 		var record DiscoveryCandidate
-		findErr := tx.Where("url = ? OR normalized_url = ?", normalizedURL, articleURL).Order("id").First(&record).Error
+		findErr := Candidates(tx).Where("url = ? OR normalized_url = ?", normalizedURL, articleURL).Order("id").First(&record).Error
 		switch {
 		case errors.Is(findErr, gorm.ErrRecordNotFound):
 			processingState := DiscoveryProcessingFetchPending
@@ -83,7 +84,8 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 				eligibilityReasons = processingErrorDomainBlacklist
 			}
 			record = DiscoveryCandidate{
-				SourceID: source.ID, SourceName: source.Name, URL: normalizedURL,
+				SkipInitialProvenance: true,
+				SourceID:              source.ID, SourceName: source.Name, URL: normalizedURL,
 				NormalizedURL: articleURL, CanonicalURL: articleURL, CrawlHost: crawlHost,
 				Title: strings.TrimSpace(candidate.Title), Summary: archive.BuildSummary(candidate.Summary, 260),
 				Status: DiscoveryCandidateStatusNew, ProcessingState: processingState,
@@ -138,17 +140,29 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 				updates["dedupe_key"] = initialCandidateDedupeKey(articleURL)
 				record.DedupeKey = initialCandidateDedupeKey(articleURL)
 			}
-			if err := tx.Model(&record).Updates(updates).Error; err != nil {
+			if err := UpdateCandidate(tx, record.ID, updates).Error; err != nil {
 				return err
 			}
 			result.Updated = len(updates) > 2
 		}
 		record.LastSeenAt = now
-		if source.SiteID != nil {
+		{
 			sourceID := source.ID
-			provenance := DiscoveryCandidateProvenance{
-				ProvenanceKey: stableMigrationKey("discovery-v1", record.ID, *source.SiteID, source.ID, method, normalizedURL, candidate.SourcePageURL),
-				CandidateID:   record.ID, SiteID: *source.SiteID, SourceID: &sourceID,
+			domain := ""
+			if source.SiteID != nil {
+				var site DiscoverySite
+				if err := tx.First(&site, *source.SiteID).Error; err != nil {
+					return err
+				}
+				domain = siteDomainKey(site)
+			} else {
+				domain, _ = domainKeyForURL(source.URL)
+			}
+			provenance := material.Provenance{
+				ProvenanceKey: stableMigrationKey("material-discovery-v1", source.ID, method, normalizedURL, candidate.SourcePageURL),
+				MaterialID:    record.MaterialID, CandidateID: &record.ID, SiteID: source.SiteID, SourceID: &sourceID,
+				DomainKey: domain, SourceName: source.Name, Title: candidate.Title, Summary: candidate.Summary,
+				MetadataConfidence: confidence, PublishedAt: candidate.PublishedAt, PublishedConfidence: candidate.PublishedConfidence,
 				DiscoveryMethod: method, OriginalURL: normalizedURL,
 				SourcePageURL: candidate.SourcePageURL, FirstSeenAt: now, LastSeenAt: now,
 				CreatedAt: now, UpdatedAt: now,
@@ -159,6 +173,9 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 			}).Create(&provenance).Error; err != nil {
 				return err
 			}
+		}
+		if err := Candidates(tx).Where("id = ?", record.ID).Scan(&record).Error; err != nil {
+			return err
 		}
 		result.Candidate = record
 		return nil

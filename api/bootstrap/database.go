@@ -22,6 +22,12 @@ func InitDB() {
 	if err := database.RunDatabaseMigrations(database.DB()); err != nil {
 		log.Fatal("failed to run database migrations", err)
 	}
+	if err := discovery.ReconcileMaterialIdentities(database.DB()); err != nil {
+		log.Fatal("failed to reconcile material identities: ", err)
+	}
+	if err := archive.BackfillMaterialContent(); err != nil {
+		log.Fatal("failed to backfill archive material: ", err)
+	}
 	if err := migrateV3Compatibility(database.DB()); err != nil {
 		log.Fatal("failed to migrate v3 compatibility data", err)
 	}
@@ -42,6 +48,9 @@ func migrateV3Compatibility(database *gorm.DB) error {
 		models = append(models, assessment.V3Models()...)
 		if err := database.AutoMigrate(models...); err != nil {
 			return fmt.Errorf("auto-migrate v3 models: %w", err)
+		}
+		if err := discovery.MigrateMaterialTestSchema(database); err != nil {
+			return err
 		}
 	}
 	if err := auth.BackfillOwnerRole(database); err != nil {

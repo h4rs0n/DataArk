@@ -37,7 +37,7 @@ func TestCandidateInventorySeparatesPoolsAndAppliesOnlyUserHardFilters(t *testin
 		createReadyCandidate(t, "https://blocked.example/post", "Blocked", []string{"Security"}, "blocked", 0.9, 0.8),
 	}
 	old := now.AddDate(0, 0, -90)
-	if err := db.Model(&candidates[1]).Update("published_at", &old).Error; err != nil {
+	if err := discovery.UpdateCandidate(db, candidates[1].ID, map[string]interface{}{"published_at": &old}).Error; err != nil {
 		t.Fatal(err)
 	}
 	for index := range candidates {
@@ -48,7 +48,7 @@ func TestCandidateInventorySeparatesPoolsAndAppliesOnlyUserHardFilters(t *testin
 		if err := db.Create(&row).Error; err != nil {
 			t.Fatal(err)
 		}
-		if err := db.Model(&candidates[index]).Update("current_assessment_id", row.ID).Error; err != nil {
+		if err := discovery.UpdateCandidate(db, candidates[index].ID, map[string]interface{}{"current_assessment_id": row.ID}).Error; err != nil {
 			t.Fatal(err)
 		}
 		siteID := seed.ID

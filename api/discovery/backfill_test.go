@@ -148,7 +148,7 @@ func TestBackfillPersistsCursorAcrossFailureRestartAndIdempotentReplay(t *testin
 		t.Fatalf("resumed batch = %#v, %v", completed, err)
 	}
 	var candidates int64
-	if err := db.Model(&DiscoveryCandidate{}).Where("url LIKE ?", "https://restart.example/posts/%").Count(&candidates).Error; err != nil || candidates != 2 {
+	if err := Candidates(db).Model(&DiscoveryCandidate{}).Where("url LIKE ?", "https://restart.example/posts/%").Count(&candidates).Error; err != nil || candidates != 2 {
 		t.Fatalf("candidate count = %d, %v", candidates, err)
 	}
 	// Replay the first page as if a crash happened after candidate writes but
@@ -164,7 +164,7 @@ func TestBackfillPersistsCursorAcrossFailureRestartAndIdempotentReplay(t *testin
 	if replayed.NextBatchAt.Sub(clock.Now()) > 7*24*time.Hour {
 		t.Fatalf("low-yield next batch is not finite: %s", replayed.NextBatchAt)
 	}
-	if err := db.Model(&DiscoveryCandidate{}).Where("url LIKE ?", "https://restart.example/posts/%").Count(&candidates).Error; err != nil || candidates != 2 {
+	if err := Candidates(db).Model(&DiscoveryCandidate{}).Where("url LIKE ?", "https://restart.example/posts/%").Count(&candidates).Error; err != nil || candidates != 2 {
 		t.Fatalf("replay candidate count = %d, %v", candidates, err)
 	}
 }

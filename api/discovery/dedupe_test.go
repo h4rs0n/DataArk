@@ -49,8 +49,8 @@ func TestResolveCandidateDuplicatesKeepsOneRepresentativeAndAllProvenance(t *tes
 		if member.DuplicateClusterID != clusterID || member.DedupeKey != clusterID || member.RepresentativeID == nil || *member.RepresentativeID != original.ID || member.DedupeState != DiscoveryDedupeReady {
 			t.Fatalf("cluster member = %#v", member)
 		}
-		if member.ID != original.ID && (member.EligibilityState != DiscoveryEligibilityIneligible || member.EligibilityReasons != "duplicate_non_representative") {
-			t.Fatalf("non-representative eligibility = %#v", member)
+		if member.MaterialID != members[0].MaterialID || member.IndependentSourceCount != 3 {
+			t.Fatalf("exact duplicates must share material and source evidence: %#v", member)
 		}
 	}
 	var cluster DiscoveryDuplicateCluster
@@ -61,7 +61,7 @@ func TestResolveCandidateDuplicatesKeepsOneRepresentativeAndAllProvenance(t *tes
 		t.Fatalf("cluster = %#v", cluster)
 	}
 	var provenanceCount int64
-	if err := db.Model(&DiscoveryCandidateProvenance{}).Where("candidate_id = ?", original.ID).Count(&provenanceCount).Error; err != nil {
+	if err := db.Model(&DiscoveryCandidateProvenance{}).Where("material_id = ?", members[0].MaterialID).Distinct("domain_key").Count(&provenanceCount).Error; err != nil {
 		t.Fatal(err)
 	}
 	if provenanceCount != 3 {
@@ -150,7 +150,7 @@ func TestUpsertTrackingAliasesKeepsOneCandidateAndBothDiscoveryPaths(t *testing.
 		t.Fatalf("alias writes first=%#v second=%#v", first, second)
 	}
 	var candidateCount, provenanceCount int64
-	if err := db.Model(&DiscoveryCandidate{}).Count(&candidateCount).Error; err != nil {
+	if err := Candidates(db).Model(&DiscoveryCandidate{}).Count(&candidateCount).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&DiscoveryCandidateProvenance{}).Where("candidate_id = ?", first.Candidate.ID).Count(&provenanceCount).Error; err != nil {

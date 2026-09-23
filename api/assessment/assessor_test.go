@@ -89,7 +89,7 @@ func TestLowHitSourceHighArticlesAreAssessedIndependently(t *testing.T) {
 	}
 
 	var eligibleB int64
-	if err := db.Model(&discovery.DiscoveryCandidate{}).Where("source_name = ? AND eligibility_state = ?", "Long-tail B", discovery.DiscoveryEligibilityEligible).Count(&eligibleB).Error; err != nil {
+	if err := discovery.Candidates(db).Model(&discovery.DiscoveryCandidate{}).Where("source_name = ? AND eligibility_state = ?", "Long-tail B", discovery.DiscoveryEligibilityEligible).Count(&eligibleB).Error; err != nil {
 		t.Fatal(err)
 	}
 	if eligibleB != 3 {
@@ -156,7 +156,7 @@ func TestAssessorFailureKeepsInventoryOutAndVersionsRemainImmutable(t *testing.T
 		t.Fatal(err)
 	}
 	updatedBody := body + strings.Repeat(" New observations add independent evidence and a revised conclusion.", 4)
-	if err := db.Model(&candidate).Updates(map[string]interface{}{
+	if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{
 		"body_text": updatedBody, "word_count": len(strings.Fields(updatedBody)), "content_hash": discovery.ContentHash(updatedBody),
 		"content_version": 2, "assessment_state": discovery.DiscoveryAssessmentPending, "current_assessment_id": nil,
 		"eligibility_state": discovery.DiscoveryEligibilityUnknown,
@@ -233,7 +233,7 @@ func TestModelAssessmentWritesSummaryAndActivatesScores(t *testing.T) {
 	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/observe-summary", "Observed summary", strings.Repeat("substance ", 80), now)
-	if err := db.Model(&candidate).Update("summary", "https://example.com/observe-summary").Error; err != nil {
+	if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{"summary": "https://example.com/observe-summary"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	result := ArticleAssessmentResult{
@@ -264,7 +264,7 @@ func TestMissingAssessorDoesNotOverwriteExistingSummary(t *testing.T) {
 	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 17, 12, 30, 0, 0, time.UTC)
 	candidate := createAssessmentCandidate(t, "Fixture", "https://example.com/keep-summary", "Keep summary", strings.Repeat("substance ", 80), now)
-	if err := db.Model(&candidate).Updates(map[string]interface{}{"summary": "keep-original-summary", "topics": `["original"]`}).Error; err != nil {
+	if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{"summary": "keep-original-summary", "topics": `["original"]`}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := AssessCandidate(context.Background(), candidate.ID, nil); err == nil {

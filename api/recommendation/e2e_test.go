@@ -47,12 +47,12 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 			quality = 0.98 // archive gem.
 		}
 		candidate := createReadyCandidate(t, fmt.Sprintf("https://b.example/articles/%02d", index), fmt.Sprintf("B article %02d", index), []string{"systems"}, fmt.Sprintf("b-%02d", index), quality, quality)
-		if err := db.Model(&candidate).Updates(map[string]interface{}{"source_id": sources[1].ID, "source_name": sources[1].Name, "content_version": 1}).Error; err != nil {
+		if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{"source_id": sources[1].ID, "source_name": sources[1].Name, "content_version": 1}).Error; err != nil {
 			t.Fatal(err)
 		}
 		candidate.SourceID, candidate.SourceName, candidate.ContentVersion = sources[1].ID, sources[1].Name, 1
 		if index != 1 {
-			if err := db.Model(&candidate).Updates(map[string]interface{}{"eligibility_state": discovery.DiscoveryEligibilityIneligible, "eligibility_reasons": "article_quality_below_threshold"}).Error; err != nil {
+			if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{"eligibility_state": discovery.DiscoveryEligibilityIneligible, "eligibility_reasons": "article_quality_below_threshold"}).Error; err != nil {
 				t.Fatal(err)
 			}
 			candidate.EligibilityState = discovery.DiscoveryEligibilityIneligible
@@ -70,14 +70,14 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 	createM17Provenance(t, sites[1], sources[1], bCandidates[1], "feed", "b-gem-feed", clock.Now())
 	createM17Provenance(t, sites[1], sources[1], bCandidates[1], "archive", "b-gem-archive", clock.Now())
 	var gemProvenance int64
-	if err := db.Model(&discovery.DiscoveryCandidateProvenance{}).Where("candidate_id = ?", bCandidates[1].ID).Count(&gemProvenance).Error; err != nil || gemProvenance != 3 {
+	if err := db.Model(&discovery.DiscoveryCandidateProvenance{}).Where("candidate_id = ?", bCandidates[1].ID).Count(&gemProvenance).Error; err != nil || gemProvenance != 4 {
 		t.Fatalf("single representative provenance count = %d, err=%v", gemProvenance, err)
 	}
 
 	// 九个独立来源加上一篇 B，凑满每日 10 篇且每个来源只有一篇。
 	for index := 0; index < 9; index++ {
 		candidate := createReadyCandidate(t, fmt.Sprintf("https://seed-%d.example/articles/%02d", index, index), fmt.Sprintf("Seed article %02d", index), []string{fmt.Sprintf("topic-%d", index)}, fmt.Sprintf("seed-%02d", index), 0.8-float64(index)*0.01, 0.7)
-		if err := db.Model(&candidate).Updates(map[string]interface{}{"content_version": 1}).Error; err != nil {
+		if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{"content_version": 1}).Error; err != nil {
 			t.Fatal(err)
 		}
 		createM17Provenance(t, sites[0], sources[0], candidate, "feed", fmt.Sprintf("seed-%02d", index), clock.Now())
@@ -185,7 +185,7 @@ func TestEndToEndM17UserDigestAndLongTailClosure(t *testing.T) {
 	// Published display values survive candidate mutation and a compatibility
 	// retry. A separate user proves a failed reranker does not publish.
 	originalTitle := bItem.SnapshotTitle
-	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", bItem.CandidateID).Updates(map[string]interface{}{"title": "mutated after publication", "eligibility_state": discovery.DiscoveryEligibilityIneligible}).Error; err != nil {
+	if err := discovery.UpdateCandidates(db.Model(&DiscoveryCandidate{}).Where("id = ?", bItem.CandidateID), map[string]interface{}{"title": "mutated after publication", "eligibility_state": discovery.DiscoveryEligibilityIneligible}).Error; err != nil {
 		t.Fatal(err)
 	}
 	retried, err := RegenerateDailyRecommendations(context.Background(), 1701, "2026-07-14")
@@ -274,7 +274,7 @@ func m17Settings(userID uint, timezone string, limit int) RecommendationSettings
 
 func m17MakeEligible(t *testing.T, candidate *DiscoveryCandidate, quality float64) {
 	t.Helper()
-	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", candidate.ID).Updates(map[string]interface{}{"eligibility_state": discovery.DiscoveryEligibilityEligible, "eligibility_reasons": "", "quality_score": quality, "depth_score": quality}).Error; err != nil {
+	if err := discovery.UpdateCandidates(db.Model(&DiscoveryCandidate{}).Where("id = ?", candidate.ID), map[string]interface{}{"eligibility_state": discovery.DiscoveryEligibilityEligible, "eligibility_reasons": "", "quality_score": quality, "depth_score": quality}).Error; err != nil {
 		t.Fatal(err)
 	}
 	candidate.EligibilityState, candidate.QualityScore, candidate.DepthScore = discovery.DiscoveryEligibilityEligible, quality, quality

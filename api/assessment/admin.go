@@ -43,13 +43,13 @@ func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAsses
 	}
 
 	limit := normalizeArticleAssessmentBatchLimit(options.Limit)
-	query := db.WithContext(ctx).Model(&discovery.DiscoveryCandidate{}).
+	query := discovery.Candidates(db.WithContext(ctx)).Model(&discovery.DiscoveryCandidate{}).
 		Where("processing_state = ? AND dedupe_state = ? AND content_version > 0", discovery.DiscoveryProcessingReady, discovery.DiscoveryDedupeReady).
 		Where("representative_id IS NULL OR representative_id = id").
 		Where(`NOT EXISTS (
 SELECT 1 FROM discovery_article_assessments active
 WHERE active.id = discovery_candidates.current_assessment_id
-  AND active.candidate_id = discovery_candidates.id
+  AND active.material_id = discovery_candidates.material_id
   AND active.content_version = discovery_candidates.content_version
   AND active.assessor = ?
   AND active.assessor_version = ?
@@ -91,7 +91,7 @@ WHERE active.id = discovery_candidates.current_assessment_id
 		if options.DryRun {
 			continue
 		}
-		if err := db.WithContext(ctx).Model(&candidate).Updates(map[string]interface{}{
+		if err := discovery.UpdateCandidate(db.WithContext(ctx), candidate.ID, map[string]interface{}{
 			"assessment_state": discovery.DiscoveryAssessmentPending,
 			"assessment_error": "",
 			"updated_at":       discovery.Timestamp(),
@@ -99,7 +99,7 @@ WHERE active.id = discovery_candidates.current_assessment_id
 			enqueueErrors = append(enqueueErrors, fmt.Errorf("mark candidate %d assessment pending: %w", candidate.ID, err))
 			continue
 		}
-		if err := queue.EnqueueAssessArticle(ctx, candidate.ID, strconv.FormatUint(uint64(candidate.ContentVersion), 10)); err != nil {
+		if err := queue.EnqueueAssessArticle(ctx, candidate.MaterialID, strconv.FormatUint(uint64(candidate.ContentVersion), 10)); err != nil {
 			enqueueErrors = append(enqueueErrors, fmt.Errorf("enqueue candidate %d assessment: %w", candidate.ID, err))
 			continue
 		}
@@ -120,7 +120,7 @@ func RollbackArticleAssessment(ctx context.Context, assessor ArticleAssessor, op
 	result.PolicyVersion = assessor.PolicyVersion()
 	limit := normalizeArticleAssessmentBatchLimit(options.Limit)
 	var candidates []discovery.DiscoveryCandidate
-	if err := db.WithContext(ctx).
+	if err := discovery.Candidates(db.WithContext(ctx)).
 		Joins("JOIN discovery_article_assessments active ON active.id = discovery_candidates.current_assessment_id").
 		Where("active.assessor = ? AND active.assessor_version = ? AND active.policy_version = ?", assessor.Name(), assessor.Version(), assessor.PolicyVersion()).
 		Order("discovery_candidates.id").Limit(limit).Find(&candidates).Error; err != nil {
@@ -130,7 +130,7 @@ func RollbackArticleAssessment(ctx context.Context, assessor ArticleAssessor, op
 	for _, candidate := range candidates {
 		var target ArticleAssessment
 		err := db.WithContext(ctx).
-			Where("candidate_id = ? AND content_version = ? AND id <> ? AND assessor <> ?", candidate.ID, candidate.ContentVersion, *candidate.CurrentAssessmentID, RuleArticleAssessorName).
+			Where("material_id = ? AND content_version = ? AND id <> ? AND assessor <> ?", candidate.MaterialID, candidate.ContentVersion, *candidate.CurrentAssessmentID, RuleArticleAssessorName).
 			Order(clause.Expr{SQL: "CASE WHEN policy_version <> ? THEN 0 ELSE 1 END", Vars: []interface{}{assessor.PolicyVersion()}}).
 			Order("id DESC").
 			First(&target).Error

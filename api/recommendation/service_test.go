@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,12 @@ func TestRecommendationSettingsDefaultAndSave(t *testing.T) {
 
 func TestRecommendationDayAndItemDeduplication(t *testing.T) {
 	setupSQLiteDB(t)
+	for _, id := range []uint{11, 12} {
+		candidate := DiscoveryCandidate{ID: id, URL: fmt.Sprintf("https://dedup.example/%d", id), Status: DiscoveryCandidateStatusNew}
+		if err := db.Create(&candidate).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	day, err := CreateRecommendationDay(3, "2026-06-28T00:00:00Z", 10)
 	if err != nil {
@@ -99,6 +106,10 @@ func TestRecommendationDayAndItemDeduplication(t *testing.T) {
 
 func TestRecommendationFeedbackAndBlockRules(t *testing.T) {
 	setupSQLiteDB(t)
+	candidate := DiscoveryCandidate{ID: 21, URL: "https://feedback.example/21", Status: DiscoveryCandidateStatusNew}
+	if err := db.Create(&candidate).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	day, err := CreateRecommendationDay(5, "2026-06-28", 10)
 	if err != nil {
@@ -337,13 +348,13 @@ func TestGenerateDailyRecommendationsDoesNotMutateCandidateOnPublishPath(t *test
 	if err := db.First(&enriched, candidate.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if enriched.Topics != "" || enriched.Entities != "" || enriched.DedupeKey != "" {
+	if enriched.Topics != "[]" || enriched.Entities != "[]" || enriched.DedupeKey != "" {
 		t.Fatalf("publish path mutated candidate metadata = %#v", enriched)
 	}
 	if err := db.First(&summaryOnly, summaryOnly.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if summaryOnly.Topics != "" || summaryOnly.Summary != "A feed summary without an extracted body" {
+	if summaryOnly.Topics != "[]" || summaryOnly.Summary != "A feed summary without an extracted body" {
 		t.Fatalf("summary-only candidate was mutated: %#v", summaryOnly)
 	}
 }
@@ -381,7 +392,7 @@ func TestGenerateDailyRecommendationsRerankerValidationAndFailure(t *testing.T) 
 		t.Fatalf("snapshot candidate not attached: %#v", snapshot.Items[0])
 	}
 
-	if err := db.Model(&DiscoveryCandidate{}).Where("id IN ?", []uint{first.ID, second.ID}).Update("eligibility_state", discovery.DiscoveryEligibilityIneligible).Error; err != nil {
+	if err := discovery.UpdateCandidates(db.Model(&DiscoveryCandidate{}).Where("id IN ?", []uint{first.ID, second.ID}), map[string]interface{}{"eligibility_state": discovery.DiscoveryEligibilityIneligible}).Error; err != nil {
 		t.Fatal(err)
 	}
 	settings = DefaultRecommendationSettings(12)
@@ -474,6 +485,7 @@ func TestEmbedReadyDiscoveryCandidatesIgnoresLegacyEnrichmentStatus(t *testing.T
 	pending := DiscoveryCandidate{
 		SourceID: 1, SourceName: "pending.example", URL: "https://pending.example/post",
 		Title: "Eligible pending enrichment", Status: DiscoveryCandidateStatusNew,
+		BodyText:         "Extracted article body for the embedding fixture.",
 		EnrichmentStatus: RecommendationEnrichmentStatusPending,
 		ProcessingState:  discovery.DiscoveryProcessingReady,
 		EligibilityState: discovery.DiscoveryEligibilityEligible,
@@ -548,6 +560,7 @@ func createReadyCandidate(t *testing.T, rawURL string, title string, topics []st
 		NormalizedURL:    rawURL,
 		CanonicalURL:     rawURL,
 		Title:            title,
+		BodyText:         title + " extracted article body for " + rawURL,
 		Summary:          title,
 		Topics:           string(topicBytes),
 		ContentType:      "article",

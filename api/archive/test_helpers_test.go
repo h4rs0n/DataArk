@@ -2,6 +2,7 @@ package archive
 
 import (
 	"DataArk/database"
+	"DataArk/material"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -22,6 +23,9 @@ func setupSQLiteDB(t *testing.T) {
 		&ArchiveClickEvent{},
 	); err != nil {
 		t.Fatalf("failed to migrate sqlite db: %v", err)
+	}
+	if err := sqliteDB.AutoMigrate(material.Models()...); err != nil {
+		t.Fatal(err)
 	}
 	oldDatabase := database.SetDB(sqliteDB)
 	oldArchive := SetDB(sqliteDB)

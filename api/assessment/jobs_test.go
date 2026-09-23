@@ -20,6 +20,7 @@ func TestRecoverDueJobsEnqueuesPendingAssessments(t *testing.T) {
 	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
 	candidate := discovery.DiscoveryCandidate{
+		ID:       50,
 		SourceID: 1, SourceName: "Feed", URL: "https://assess.example/ready",
 		Status: discovery.DiscoveryCandidateStatusNew, ProcessingState: discovery.DiscoveryProcessingReady,
 		DedupeState: discovery.DiscoveryDedupeReady, AssessmentState: discovery.DiscoveryAssessmentPending,
@@ -32,7 +33,7 @@ func TestRecoverDueJobsEnqueuesPendingAssessments(t *testing.T) {
 	if err := RecoverDueJobs(context.Background(), queue, now); err != nil {
 		t.Fatal(err)
 	}
-	if len(queue.assessments) != 1 || queue.assessments[0] != candidate.ID {
+	if len(queue.assessments) != 1 || queue.assessments[0] != candidate.MaterialID {
 		t.Fatalf("assessment recoveries = %#v", queue.assessments)
 	}
 }

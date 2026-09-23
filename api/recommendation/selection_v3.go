@@ -183,6 +183,7 @@ func collectHardEligibleSelectionPool(userID uint, poolSize int, options recomme
 	unique := make([]DiscoveryCandidate, 0, poolSize)
 	overflow := make([]DiscoveryCandidate, 0, poolSize)
 	sourceSeen := make(map[string]bool)
+	materialSeen := make(map[uint]bool)
 	offset := 0
 	scanned := 0
 	maxScan := poolSize * 50
@@ -223,6 +224,10 @@ func collectHardEligibleSelectionPool(userID uint, poolSize int, options recomme
 				continue
 			}
 			key := recommendationSourceKeyFromCandidate(candidate)
+			if candidate.MaterialID != 0 && materialSeen[candidate.MaterialID] {
+				continue
+			}
+			materialSeen[candidate.MaterialID] = true
 			if !sourceSeen[key] {
 				unique = append(unique, candidate)
 				sourceSeen[key] = true
@@ -257,14 +262,14 @@ func recommendationEligibleCandidateQuery(userID uint, unseenOrUpdatedOnly bool)
 	query := discovery.ExcludeBlacklistedCandidateDomains(db, "")
 	if unseenOrUpdatedOnly {
 		query = query.Select("discovery_candidates.*").
-			Joins("LEFT JOIN user_candidate_states AS candidate_exposure ON candidate_exposure.user_id = ? AND candidate_exposure.candidate_id = discovery_candidates.id", userID).
+			Joins("LEFT JOIN user_material_states AS candidate_exposure ON candidate_exposure.user_id = ? AND candidate_exposure.material_id = discovery_candidates.material_id", userID).
 			Where(`candidate_exposure.id IS NULL OR candidate_exposure.exposure_count = 0 OR EXISTS (
 SELECT 1
 FROM recommendation_items AS prior_item
 WHERE prior_item.user_id = ?
   AND prior_item.content_version < discovery_candidates.content_version
   AND (
-		prior_item.candidate_id = discovery_candidates.id OR
+		prior_item.material_id = discovery_candidates.material_id OR
 		(discovery_candidates.dedupe_key <> '' AND prior_item.dedupe_key = discovery_candidates.dedupe_key)
   )
 )`, userID)
@@ -276,7 +281,7 @@ WHERE prior_item.user_id = ?
 
 func populateGlobalSelectionExclusions(excluded map[string]int) error {
 	var blacklisted int64
-	if err := discovery.OnlyBlacklistedCandidateDomains(db.Model(&DiscoveryCandidate{}), "").Count(&blacklisted).Error; err != nil {
+	if err := discovery.OnlyBlacklistedCandidateDomains(discovery.Candidates(db).Model(&DiscoveryCandidate{}), "").Count(&blacklisted).Error; err != nil {
 		return err
 	}
 	excluded["domain_blacklist"] = int(blacklisted)
@@ -291,7 +296,7 @@ func populateGlobalSelectionExclusions(excluded map[string]int) error {
 	}
 	for _, query := range queries {
 		var count int64
-		if err := db.Model(&DiscoveryCandidate{}).Where(query.where, query.args...).Count(&count).Error; err != nil {
+		if err := discovery.Candidates(db).Model(&DiscoveryCandidate{}).Where(query.where, query.args...).Count(&count).Error; err != nil {
 			return err
 		}
 		excluded[query.key] = int(count)
@@ -312,6 +317,9 @@ func loadRecommendationHistoryV3(userID uint) (map[string]recommendationHistoryE
 	for _, item := range items {
 		entry := recommendationHistoryEntry{LastRecommendedAt: item.CreatedAt, MaxContentVersion: item.ContentVersion}
 		mergeRecommendationHistory(result, fmt.Sprintf("candidate:%d", item.CandidateID), entry)
+		if item.MaterialID != 0 {
+			mergeRecommendationHistory(result, fmt.Sprintf("material:%d", item.MaterialID), entry)
+		}
 		if key := strings.TrimSpace(item.DedupeKey); key != "" {
 			mergeRecommendationHistory(result, "dedupe:"+key, entry)
 		}
@@ -332,6 +340,11 @@ func mergeRecommendationHistory(history map[string]recommendationHistoryEntry, k
 
 func recommendationHistoryForCandidate(history map[string]recommendationHistoryEntry, candidate DiscoveryCandidate) (recommendationHistoryEntry, bool) {
 	entry, ok := history[fmt.Sprintf("candidate:%d", candidate.ID)]
+	if candidate.MaterialID != 0 {
+		if shared, exists := history[fmt.Sprintf("material:%d", candidate.MaterialID)]; exists {
+			entry, ok = shared, true
+		}
+	}
 	if key := strings.TrimSpace(candidate.DedupeKey); key != "" {
 		if dedupe, exists := history["dedupe:"+key]; exists {
 			if !ok || dedupe.LastRecommendedAt.After(entry.LastRecommendedAt) {

@@ -136,8 +136,5 @@ func finishGraphScan(site *DiscoverySite, now time.Time, fetched *FetchResult, s
 
 func truncateOperationalError(value string) string {
 	value = strings.Join(strings.Fields(value), " ")
-	if len(value) > 512 {
-		return value[:512]
-	}
-	return value
+	return truncateValidUTF8Bytes(value, 512)
 }

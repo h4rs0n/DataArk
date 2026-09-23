@@ -4,6 +4,7 @@ import (
 	"DataArk/archive"
 	"DataArk/config"
 	"DataArk/discovery/articlerules"
+	"DataArk/material"
 	"DataArk/observability"
 	"context"
 	"errors"
@@ -74,7 +75,7 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 			updates := candidateFailureUpdates(DiscoveryProcessingDomainBlocked, DiscoveryEligibilityUnknown, processingErrorDomainBlacklist, err.Error(), discoveryClock.Now())
 			updates["eligibility_reasons"] = processingErrorDomainBlacklist
 			updates["next_processing_at"] = nil
-			if updateErr := db.Model(&candidate).Updates(updates).Error; updateErr != nil {
+			if updateErr := UpdateCandidate(db, candidate.ID, updates).Error; updateErr != nil {
 				return updateErr
 			}
 		}
@@ -83,7 +84,7 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 
 	now := discoveryClock.Now()
 	attempt := candidate.ProcessingAttempts + 1
-	if err := db.Model(&candidate).Updates(map[string]interface{}{
+	if err := UpdateCandidate(db, candidate.ID, map[string]interface{}{
 		"processing_state":    DiscoveryProcessingFetching,
 		"processing_attempts": attempt,
 		"next_processing_at":  nil,
@@ -141,7 +142,7 @@ func enqueueCandidateForAssessment(ctx context.Context, candidateID uint) error 
 	if candidate.ProcessingState != DiscoveryProcessingReady {
 		return nil
 	}
-	return db.Model(&candidate).Updates(map[string]interface{}{
+	return UpdateCandidate(db, candidate.ID, map[string]interface{}{
 		"assessment_state": DiscoveryAssessmentPending, "updated_at": discoveryClock.Now(),
 	}).Error
 }
@@ -184,12 +185,12 @@ func recordCandidateFetchFailure(candidate *DiscoveryCandidate, fetchErr error, 
 	if int(candidate.ProcessingAttempts) >= maximumAttempts {
 		updates := candidateFailureUpdates(DiscoveryProcessingFailed, DiscoveryEligibilityReview, category, fetchErr.Error(), now)
 		updates["next_processing_at"] = nil
-		return db.Model(candidate).Updates(updates).Error
+		return UpdateCandidate(db, candidate.ID, updates).Error
 	}
 	next := now.Add(candidateRetryDelay(candidate.ProcessingAttempts))
 	updates := candidateFailureUpdates(DiscoveryProcessingFetchPending, DiscoveryEligibilityUnknown, category, fetchErr.Error(), now)
 	updates["next_processing_at"] = &next
-	if err := db.Model(candidate).Updates(updates).Error; err != nil {
+	if err := UpdateCandidate(db, candidate.ID, updates).Error; err != nil {
 		return err
 	}
 	return fetchErr
@@ -217,14 +218,14 @@ func finishCandidateIneligible(candidate *DiscoveryCandidate, category string, s
 	updates := candidateFailureUpdates(DiscoveryProcessingIneligible, DiscoveryEligibilityIneligible, category, summary, now)
 	updates["next_processing_at"] = nil
 	updates["eligibility_reasons"] = category
-	return db.Model(candidate).Updates(updates).Error
+	return UpdateCandidate(db, candidate.ID, updates).Error
 }
 
 func finishCandidateReview(candidate *DiscoveryCandidate, category string, summary string, now time.Time) error {
 	updates := candidateFailureUpdates(DiscoveryProcessingReview, DiscoveryEligibilityReview, category, summary, now)
 	updates["next_processing_at"] = nil
 	updates["eligibility_reasons"] = category
-	return db.Model(candidate).Updates(updates).Error
+	return UpdateCandidate(db, candidate.ID, updates).Error
 }
 
 func candidateFailureUpdates(processingState string, eligibilityState string, category string, summary string, now time.Time) map[string]interface{} {
@@ -250,7 +251,7 @@ func commitExtractedArticle(candidateID uint, expectedVersion uint, finalURL str
 	if fetchedAt.IsZero() {
 		fetchedAt = now
 	}
-	contentHash := ContentHash(article.Text)
+	contentHash := material.TextHash(article.Text)
 	canonicalURL := resolveArticleCanonicalURL(finalURL, article.CanonicalURL)
 	return db.Transaction(func(tx *gorm.DB) error {
 		var current DiscoveryCandidate
@@ -297,7 +298,15 @@ func commitExtractedArticle(candidateID uint, expectedVersion uint, finalURL str
 		if bodyChanged {
 			updates["body_changed_at"] = now
 		}
-		return tx.Model(&current).Updates(updates).Error
+		if err := UpdateCandidate(tx, current.ID, updates).Error; err != nil {
+			return err
+		}
+		var mapping material.CandidateVersion
+		if err := tx.First(&mapping, "candidate_id = ? AND content_version = ?", current.ID, contentVersion).Error; err != nil {
+			return err
+		}
+		return tx.Model(&DiscoveryArticleContentVersion{}).Where("candidate_id = ? AND content_version = ?", current.ID, contentVersion).
+			Updates(map[string]interface{}{"material_id": mapping.MaterialID, "material_version_id": mapping.VersionID}).Error
 	})
 }
 

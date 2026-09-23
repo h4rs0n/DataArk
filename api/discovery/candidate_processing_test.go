@@ -135,13 +135,13 @@ func TestUpsertCandidateHashesLongURLIdentity(t *testing.T) {
 		t.Fatalf("dedupe key length = %d, want at most 128", len(first.Candidate.DedupeKey))
 	}
 	var count int64
-	if err := db.Model(&DiscoveryCandidate{}).Count(&count).Error; err != nil {
+	if err := Candidates(db).Model(&DiscoveryCandidate{}).Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
 		t.Fatalf("candidate count = %d, want 1", count)
 	}
-	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", first.Candidate.ID).Update("dedupe_key", "").Error; err != nil {
+	if err := UpdateCandidates(db.Model(&DiscoveryCandidate{}).Where("id = ?", first.Candidate.ID), map[string]interface{}{"dedupe_key": ""}).Error; err != nil {
 		t.Fatal(err)
 	}
 	third, err := upsertDiscoveryCandidate(source, discoveredCandidate{URL: rawURL, Title: "Long URL", DiscoveryMethod: DiscoveryMethodFeed})

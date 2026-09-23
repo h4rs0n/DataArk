@@ -23,6 +23,9 @@ func setupAssessmentDB(t *testing.T) {
 	); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
+	if err := discovery.MigrateMaterialTestSchema(sqliteDB); err != nil {
+		t.Fatal(err)
+	}
 	oldDiscovery := discovery.SetDB(sqliteDB)
 	oldAssessment := SetDB(sqliteDB)
 	t.Cleanup(func() {

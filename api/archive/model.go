@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"DataArk/material"
 	"errors"
 	"strings"
 	"time"
@@ -36,14 +37,15 @@ type ArchiveStat struct {
 
 // ArchiveDocument 保存单个归档 HTML 的可搜索元数据。
 type ArchiveDocument struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
-	Domain    string    `json:"domain" gorm:"uniqueIndex:idx_archive_documents_identity;not null;size:255"`
-	FileName  string    `json:"fileName" gorm:"uniqueIndex:idx_archive_documents_identity;not null;size:1024"`
-	SourceURL string    `json:"sourceUrl"`
-	Title     string    `json:"title" gorm:"size:1024"`
-	Summary   string    `json:"summary" gorm:"type:text"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	MaterialID uint      `json:"materialId" gorm:"index"`
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	Domain     string    `json:"domain" gorm:"uniqueIndex:idx_archive_documents_identity;not null;size:255"`
+	FileName   string    `json:"fileName" gorm:"uniqueIndex:idx_archive_documents_identity;not null;size:1024"`
+	SourceURL  string    `json:"sourceUrl"`
+	Title      string    `json:"title" gorm:"size:1024"`
+	Summary    string    `json:"summary" gorm:"type:text"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 type SearchEvent struct {
@@ -142,8 +144,9 @@ func SaveArchiveDocumentDetails(domain string, fileName string, sourceURL string
 		Summary:   strings.TrimSpace(summary),
 	}
 	updates := map[string]interface{}{
-		"source_url": sourceURL,
-		"updated_at": time.Now(),
+		"source_url":  sourceURL,
+		"material_id": gorm.Expr("excluded.material_id"),
+		"updated_at":  time.Now(),
 	}
 	if strings.TrimSpace(title) != "" {
 		updates["title"] = strings.TrimSpace(title)
@@ -289,4 +292,30 @@ func buildArchiveStatsSnapshot(stats []ArchiveStat) *ArchiveStatsSnapshot {
 		TotalFiles: totalFiles,
 		Sources:    items,
 	}
+}
+
+func (row *ArchiveDocument) BeforeCreate(tx *gorm.DB) error {
+	if row.MaterialID != 0 {
+		return nil
+	}
+	identity := strings.TrimSpace(row.SourceURL)
+	if identity == "" {
+		identity = "archive:" + row.Domain + "/" + row.FileName
+	}
+	var existing ArchiveDocument
+	result := tx.Where("domain = ? AND file_name = ?", row.Domain, row.FileName).Limit(1).Find(&existing)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 && existing.MaterialID != 0 {
+		if normalized, err := material.NormalizeURL(identity); err == nil {
+			identity = normalized
+		}
+		id, err := material.BindIdentity(tx, existing.MaterialID, "url", identity)
+		row.MaterialID = id
+		return err
+	}
+	record, err := material.EnsureURL(tx, identity, row.Title, row.Summary)
+	row.MaterialID = record.ID
+	return err
 }
