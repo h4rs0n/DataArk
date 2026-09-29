@@ -1,0 +1,158 @@
+digraph DataArkER {
+  rankdir=LR;
+  graph [fontname="Helvetica", fontsize=11, compound=true, splines=true, nodesep=0.35, ranksep=0.9];
+  node  [fontname="Helvetica", fontsize=9, shape=record, style="filled,rounded"];
+  edge  [fontname="Helvetica", fontsize=8];
+
+  /* ===================== 内容核心 material ===================== */
+  subgraph cluster_material {
+    label="内容核心 (material_*)  —  Source of Truth";
+    style=filled; color="#e8f0fe"; fontsize=12;
+    material            [fillcolor="#cfe0ff", label="{material (PK)|id\lcurrent_version_id (FK)\ltitle / summary\lauthors JSONB / topics / entities\llanguage / published_at\l}"];
+    material_versions   [fillcolor="#cfe0ff", label="{material_versions|id (PK)\lmaterial_id (FK)\lversion\lUQ(material_id,version)\lUQ(material_id,id)\l}"];
+    material_representations [fillcolor="#cfe0ff", label="{material_representations|id (PK)\lversion_id (FK)\lkind / role\ltext / content_hash\lword_count / extractor\lUQ(version_id,kind,role)\l}"];
+    material_embeddings [fillcolor="#cfe0ff", label="{material_embeddings|representation_id (PK,FK)\lmodel (PK)\lembedding vector\l}"];
+    material_identities [fillcolor="#cfe0ff", label="{material_identities|id (PK)\lmaterial_id (FK)\lkind / identity_key\lUQ(kind,identity_key)\l}"];
+    material_redirects  [fillcolor="#cfe0ff", label="{material_redirects|id (PK)\lmaterial_id (FK)\lCHECK id<>material_id\l}"];
+    material_provenances [fillcolor="#cfe0ff", label="{material_provenances|id (PK)\lprovenance_key UQ\lmaterial_id (FK)\lcandidate_id / site_id / source_id (FK)\ldomain_key / *_confidence\l}"];
+    material_article_states [fillcolor="#cfe0ff", label="{material_article_states|material_id (PK,FK)\lcontent_version\lassessment_state / eligibility_state\lcurrent_assessment_id (FK)\lquality_score / depth_score\l}"];
+    material_candidate_versions [fillcolor="#cfe0ff", label="{material_candidate_versions|candidate_id,content_version (PK)\lmaterial_id (FK)\lversion_id (FK)\l}"];
+    material_archive_links [fillcolor="#cfe0ff", label="{material_archive_links|task_id (PK)\lmaterial_id (FK)\l}"];
+    material_ingestion_issues [fillcolor="#cfe0ff", label="{material_ingestion_issues|archive_document_id (PK,FK)\lerror\l}"];
+  }
+
+  /* ===================== 发现 / 爬取 ===================== */
+  subgraph cluster_discovery {
+    label="发现 / 爬取 (discovery_*)";
+    style=filled; color="#e6f4ea"; fontsize=12;
+    discovery_sites [fillcolor="#c8e6c9", label="{discovery_sites|id (PK)\lhost_key UQ / domain_key\lstatus / discovery_method\lgraph_depth / robots_status\l}"];
+    discovery_site_edges [fillcolor="#c8e6c9", label="{discovery_site_edges|id (PK)\ledge_key UQ\lfrom_site_id / to_site_id (FK)\lrelation_type / confidence\l}"];
+    discovery_sources [fillcolor="#c8e6c9", label="{discovery_sources|id (PK)\lsite_id (FK)\lurl UQ / endpoint_type\lpriority / user_managed\lbackoff_* / etag\l}"];
+    discovery_candidates [fillcolor="#c8e6c9", label="{discovery_candidates|id (PK)\lmaterial_id (FK, NOT NULL)\lurl UQ / normalized_url / final_url\lprocessing_state / dedupe_state\leligibility_state\lrepresentative_id (FK self)\l}"];
+    discovery_candidate_provenances [fillcolor="#c8e6c9", label="{discovery_candidate_provenances|id (PK)\lprovenance_key UQ\lcandidate_id (FK)\lsite_id / source_id (FK)\l}"];
+    discovery_candidate_identities [fillcolor="#c8e6c9", label="{discovery_candidate_identities|id (PK)\lcandidate_id (FK)\lkind / identity_key\l}"];
+    discovery_duplicate_clusters [fillcolor="#c8e6c9", label="{discovery_duplicate_clusters|cluster_id (PK)\lrepresentative_id (FK RESTRICT)\lmatch_method / member_count\l}"];
+    discovery_duplicate_review_signals [fillcolor="#c8e6c9", label="{discovery_duplicate_review_signals|id (PK)\lcandidate_id (FK)\lstatus / reporter_user_id\l}"];
+    discovery_article_content_versions [fillcolor="#c8e6c9", label="{discovery_article_content_versions|id (PK)\lcandidate_id (FK)\lcontent_version\lmaterial_id / material_version_id (FK)\lUQ(candidate_id,content_version)\l}"];
+    discovery_fetch_runs [fillcolor="#c8e6c9", label="{discovery_fetch_runs|id (PK)\lsource_id (FK) / site_id (FK)\lstatus / http_status\lnew/dup/failure counts\l}"];
+    discovery_backfill_states [fillcolor="#c8e6c9", label="{discovery_backfill_states|id (PK)\lsite_id (FK)\lstrategy / cursor\lUQ(site_id,strategy)\l}"];
+    discovery_site_operational_stats [fillcolor="#c8e6c9", label="{discovery_site_operational_stats|id (PK)\lsite_id (FK UQ)\lcounters...\l}"];
+    discovery_source_schedule_decisions [fillcolor="#c8e6c9", label="{discovery_source_schedule_decisions|id (PK)\lsource_id (FK UQ) / site_id (FK)\lbasis / intervals\l}"];
+    discovery_domain_blacklist_entries [fillcolor="#c8e6c9", label="{discovery_domain_blacklist_entries|id (PK)\ldomain UQ / reason\l}"];
+    discovery_legacy_candidate_state_reviews [fillcolor="#c8e6c9", label="{discovery_legacy_candidate_state_reviews|id (PK)\lcandidate_id (FK UQ)\lresolution\l}"];
+  }
+
+  /* ===================== 评估 ===================== */
+  subgraph cluster_assessment {
+    label="评估 (assessment)";
+    style=filled; color="#fef7e0"; fontsize=12;
+    discovery_article_assessments [fillcolor="#ffe0b2", label="{discovery_article_assessments|id (PK)\lcandidate_id (FK SET NULL)\lmaterial_id / material_version_id (FK)\lcontent_version\lmulti-dim scores + summary/keywords\l}"];
+    assessment_llm_calls [fillcolor="#ffe0b2", label="{assessment_llm_calls|id (PK)\lcandidate_id / material_id\lstage / status / tokens\l}"];
+    article_assessment_workflow_runs [fillcolor="#ffe0b2", label="{article_assessment_workflow_runs|id (PK)\lseed / manifest_digest\lstatus (1 active UQ)\l}"];
+    article_assessment_workflow_items [fillcolor="#ffe0b2", label="{article_assessment_workflow_items|id (PK)\lrun_id (FK)\lcandidate_id (FK)\lcontent_version_id (FK)\lmaterial_id / material_version_id (FK)\l}"];
+    article_assessment_workflow_labels [fillcolor="#ffe0b2", label="{article_assessment_workflow_labels|id (PK)\lrun_id (FK)\lsample_id / pass\lquality/depth/evergreen\l}"];
+    article_assessment_workflow_scores [fillcolor="#ffe0b2", label="{article_assessment_workflow_scores|id (PK)\lrun_id (FK)\lsample_id / model_run\l}"];
+    article_assessment_workflow_calls [fillcolor="#ffe0b2", label="{article_assessment_workflow_calls|id (PK)\lrun_id (FK)\ltokens / duration\l}"];
+  }
+
+  /* ===================== 推荐 / 信息流 ===================== */
+  subgraph cluster_reco {
+    label="推荐 / 信息流 (recommendation_*)";
+    style=filled; color="#fce8e6"; fontsize=12;
+    recommendation_settings [fillcolor="#f8bbd0", label="{recommendation_settings|id (PK)\luser_id UQ\ldaily_limit / exploration_rate\lpreferred_*\l}"];
+    recommendation_days [fillcolor="#f8bbd0", label="{recommendation_days|id (PK)\luser_id\lUQ(user_id,recommendation_date)\lstatus / summary_*\l}"];
+    recommendation_feed_batches [fillcolor="#f8bbd0", label="{recommendation_feed_batches|id (PK)\luser_id\lstatus (1 active UQ)\l}"];
+    recommendation_items [fillcolor="#f8bbd0", label="{recommendation_items|id (PK)\lday_id (FK) XOR feed_batch_id (FK)\lcandidate_id (FK SET NULL)\lmaterial_id / material_version_id (FK)\lassessment_id (FK)\lsnapshot_* frozen fields\l}"];
+    recommendation_feedbacks [fillcolor="#f8bbd0", label="{recommendation_feedbacks|id (PK)\lrecommendation_item_id (FK)\lcandidate_id (FK SET NULL)\lmaterial_id (FK)\lis_current / current_key UQ\lsupersedes_id\l}"];
+    user_recommendation_profiles [fillcolor="#f8bbd0", label="{user_recommendation_profiles|id (PK)\luser_id UQ\lpos/neg embedding JSONB\ltopic/source/style weights\l}"];
+    user_block_rules [fillcolor="#f8bbd0", label="{user_block_rules|id (PK)\luser_id\lrule_type / rule_value\lfeedback_id\l}"];
+  }
+
+  /* ===================== 用户 ===================== */
+  subgraph cluster_user {
+    label="用户 (user)";
+    style=filled; color="#f3e8fd"; fontsize=12;
+    users [fillcolor="#e1bee7", label="{users|id (PK)\lusername UQ / role\l}"];
+    user_material_states [fillcolor="#e1bee7", label="{user_material_states|id (PK)\luser_id (FK)\lmaterial_id (FK)\lcandidate_id (FK SET NULL)\lUQ(user_id,material_id)\lexposure / read / feedback\l}"];
+  }
+
+  /* ===================== 归档 ===================== */
+  subgraph cluster_archive {
+    label="归档 (archive_*)";
+    style=filled; color="#eceff1"; fontsize=12;
+    archive_tasks [fillcolor="#cfd8dc", label="{archive_tasks|id (PK varchar36)\lurl / domain / status\lexternal_task_id\l}"];
+    archive_documents [fillcolor="#cfd8dc", label="{archive_documents|id (PK)\lmaterial_id (FK NOT NULL)\lUQ(domain,file_name)\l}"];
+    archive_stats [fillcolor="#cfd8dc", label="{archive_stats|source (PK)\lfile_count\l}"];
+    search_events [fillcolor="#cfd8dc", label="{search_events|id (PK)\lkeyword / result_count\l}"];
+    archive_click_events [fillcolor="#cfd8dc", label="{archive_click_events|id (PK)\ldomain / file_name / path\l}"];
+  }
+
+  /* ================= 关系 (material 核心) ================= */
+  material -> material_versions      [label="1:N versions", arrowhead=crow, arrowtail=none];
+  material_versions -> material_representations [label="1:N", arrowhead=crow];
+  material_representations -> material_embeddings [label="1:N (per model)", arrowhead=crow];
+  material -> material_identities    [label="1:N", arrowhead=crow];
+  material -> material_redirects     [label="1:N", arrowhead=crow];
+  material -> material_provenances   [label="1:N", arrowhead=crow];
+  material -> material_article_states [label="1:1", arrowhead=none, arrowtail=crow, dir=both];
+  material_versions -> material [label="current_version_id\n(deferred composite FK)", style=dashed, arrowhead=vee, constraint=false];
+
+  /* material_candidate_versions 桥接 */
+  discovery_candidates -> material_candidate_versions [arrowhead=crow];
+  material -> material_candidate_versions [arrowhead=crow];
+  material_versions -> material_candidate_versions [arrowhead=crow];
+
+  /* ================= 关系 (discovery) ================= */
+  discovery_sites -> discovery_sources [label="1:N", arrowhead=crow];
+  discovery_sites -> discovery_site_edges [label="from/to", arrowhead=crow];
+  discovery_sites -> discovery_site_edges [arrowhead=crow, style=dashed];
+  discovery_sites -> discovery_candidate_provenances [arrowhead=crow];
+  discovery_sites -> discovery_fetch_runs [arrowhead=crow];
+  discovery_sites -> discovery_backfill_states [arrowhead=crow];
+  discovery_sites -> discovery_site_operational_stats [label="1:1", arrowhead=none];
+  discovery_sources -> discovery_source_schedule_decisions [label="1:1", arrowhead=none];
+  discovery_sources -> discovery_fetch_runs [label="1:N", arrowhead=crow];
+  discovery_sources -> discovery_candidate_provenances [arrowhead=crow];
+  discovery_candidates -> discovery_candidate_provenances [label="1:N", arrowhead=crow];
+  discovery_candidates -> discovery_candidate_identities [label="1:N", arrowhead=crow];
+  discovery_candidates -> discovery_duplicate_clusters [label="representative", arrowhead=crow];
+  discovery_candidates -> discovery_duplicate_review_signals [arrowhead=crow];
+  discovery_candidates -> discovery_article_content_versions [label="1:N versions", arrowhead=crow];
+  discovery_candidates -> discovery_legacy_candidate_state_reviews [label="1:1", arrowhead=none];
+  discovery_candidates -> discovery_candidates [label="representative_id (self)", arrowhead=vee];
+
+  /* candidate -> material (核心归属) */
+  discovery_candidates -> material [label="material_id (RESTRICT)\n内容所有者", color="#1a73e8", penwidth=1.6, arrowhead=vee];
+  discovery_article_content_versions -> material_versions [label="material_version_id", style=dashed, arrowhead=vee];
+
+  /* ================= 关系 (assessment) ================= */
+  discovery_candidates -> discovery_article_assessments [label="candidate_id SET NULL", arrowhead=crow];
+  material -> discovery_article_assessments [label="material_id", arrowhead=crow, color="#1a73e8"];
+  material_article_states -> discovery_article_assessments [label="current_assessment_id", style=dashed, arrowhead=vee];
+  article_assessment_workflow_runs -> article_assessment_workflow_items [label="1:N", arrowhead=crow];
+  article_assessment_workflow_runs -> article_assessment_workflow_labels [arrowhead=crow];
+  article_assessment_workflow_runs -> article_assessment_workflow_scores [arrowhead=crow];
+  article_assessment_workflow_runs -> article_assessment_workflow_calls [arrowhead=crow];
+  discovery_article_content_versions -> article_assessment_workflow_items [arrowhead=vee];
+
+  /* ================= 关系 (recommendation) ================= */
+  users -> recommendation_settings [label="1:1", arrowhead=none];
+  users -> recommendation_days [label="1:N", arrowhead=crow];
+  users -> recommendation_feed_batches [label="1:N", arrowhead=crow];
+  users -> user_recommendation_profiles [label="1:1", arrowhead=none];
+  users -> user_block_rules [label="1:N", arrowhead=crow];
+  recommendation_days -> recommendation_items [label="1:N (day)", arrowhead=crow];
+  recommendation_feed_batches -> recommendation_items [label="1:N (feed)", arrowhead=crow];
+  recommendation_items -> recommendation_feedbacks [label="1:N", arrowhead=crow];
+  material -> recommendation_items [label="material_id", arrowhead=crow, color="#1a73e8"];
+  discovery_candidates -> recommendation_items [label="candidate_id SET NULL", style=dashed, arrowhead=crow];
+  material -> recommendation_feedbacks [label="material_id", arrowhead=crow, color="#1a73e8"];
+
+  /* ================= 关系 (user states / archive) ================= */
+  users -> user_material_states [label="1:N", arrowhead=crow];
+  material -> user_material_states [label="material_id\nUQ(user,material)", arrowhead=crow, color="#1a73e8", penwidth=1.6];
+  discovery_candidates -> user_material_states [label="candidate_id SET NULL", style=dashed, arrowhead=crow];
+  archive_documents -> material [label="material_id (NOT NULL)", arrowhead=vee, color="#1a73e8"];
+  archive_documents -> material_ingestion_issues [label="1:1", arrowhead=none];
+  material -> material_archive_links [label="1:N", arrowhead=crow];
+}
