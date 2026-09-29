@@ -135,6 +135,16 @@ test('today recommendation titles open the source in a safe new tab', () => {
   assert.match(recommendationCard, /item\.candidate\.title \|\| `候选文章 \$\{item\.candidateId\}`/)
 })
 
+test('recommendation cards show only article topic tags', () => {
+  assert.doesNotMatch(recommendationCard, /poolType/)
+  assert.doesNotMatch(recommendationCard, /explorationReason/)
+  assert.doesNotMatch(recommendationCard, /探索：/)
+  assert.match(recommendationCard, /v-if="topicTags\.length"/)
+  assert.match(recommendationCard, /topicTags\.slice\(0, 4\)/)
+  assert.match(recommendationCard, /topic-more/)
+  assert.match(recommendationCard, /\+{{ topicTags\.length - 4 }}/)
+})
+
 test('unread discovery candidates use a refreshable personalized feed', () => {
   assert.match(feed, /<h2>猜你喜欢<\/h2>/)
   assert.match(feed, /\/api\/recommendations\/discovery-feed/)

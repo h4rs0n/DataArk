@@ -18,10 +18,9 @@
         </a>
       </h3>
       <p>{{ item.candidate.summary || item.candidate.url }}</p>
-      <div class="topic-row">
-        <span v-for="topic in parseList(item.candidate.topics).slice(0, 4)" :key="topic">{{ topic }}</span>
-        <span v-if="item.poolType">{{ item.poolType }}</span>
-        <span v-if="item.explorationReason">探索：{{ item.explorationReason }}</span>
+      <div v-if="topicTags.length" class="topic-row">
+        <span v-for="topic in topicTags.slice(0, 4)" :key="topic">{{ topic }}</span>
+        <span v-if="topicTags.length > 4" class="topic-more">+{{ topicTags.length - 4 }}</span>
       </div>
       <small>{{ item.reason || '基于内容质量和反馈画像推荐' }}</small>
     </div>
@@ -50,6 +49,7 @@
 <script setup lang="ts">
 import FeedbackControls from '@/components/recommendations/FeedbackControls.vue'
 import { IconLink, IconStorage } from '@arco-design/web-vue/es/icon'
+import { computed } from 'vue'
 
 type FeedbackAction = 'valuable' | 'not_interested' | 'too_repetitive' | 'low_value'
 type BlockRuleType = 'topic' | 'source' | 'style'
@@ -72,12 +72,10 @@ interface CardItem {
   rank: number
   reason: string
   rerankScore: number
-  poolType?: string
-  explorationReason?: string
   candidate: CardCandidate
 }
 
-defineProps<{
+const props = defineProps<{
   item: CardItem
   archiving?: boolean
   currentAction?: string
@@ -102,6 +100,17 @@ const parseList = (value?: string): string[] => {
   } catch { /* Fall through to comma-separated legacy values. */ }
   return value.split(',').map((item) => item.trim()).filter(Boolean)
 }
+
+const topicTags = computed(() => {
+  const seen = new Set<string>()
+  return parseList(props.item.candidate.topics).filter((topic) => {
+    const value = topic.trim()
+    const key = value.toLowerCase()
+    if (!value || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+})
 
 const sourceHost = (rawURL: string) => {
   try { return new URL(rawURL).hostname }
@@ -147,7 +156,6 @@ const formatDateTime = (value: string) => new Date(value).toLocaleString('zh-CN'
 }
 
 .item-main p {
-  min-height: 44px;
   display: -webkit-box;
   margin: 0 0 8px;
   overflow: hidden;
@@ -175,7 +183,6 @@ small {
 .item-meta { margin-bottom: 8px; }
 
 .topic-row {
-  min-height: 24px;
   margin: 8px 0;
 }
 
@@ -185,6 +192,11 @@ small {
   background: #eef2ff;
   color: #1d4ed8;
   font-size: 12px;
+}
+
+.topic-row .topic-more {
+  background: #f2f3f5;
+  color: #86909c;
 }
 
 .item-actions {
