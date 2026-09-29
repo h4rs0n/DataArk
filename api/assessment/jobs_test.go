@@ -2,6 +2,7 @@ package assessment
 
 import (
 	"DataArk/discovery"
+	"DataArk/jobqueue"
 	"context"
 	"testing"
 	"time"
@@ -9,10 +10,21 @@ import (
 
 type recoveryQueue struct {
 	assessments []uint
+	batches     int
+	targets     []jobqueue.AssessmentTarget
 }
 
 func (queue *recoveryQueue) EnqueueAssessArticle(_ context.Context, candidateID uint, _ string) error {
 	queue.assessments = append(queue.assessments, candidateID)
+	return nil
+}
+
+func (queue *recoveryQueue) EnqueueAssessArticles(_ context.Context, targets []jobqueue.AssessmentTarget) error {
+	queue.batches++
+	queue.targets = append(queue.targets, targets...)
+	for _, target := range targets {
+		queue.assessments = append(queue.assessments, target.MaterialID)
+	}
 	return nil
 }
 
@@ -35,6 +47,14 @@ func TestRecoverDueJobsEnqueuesPendingAssessments(t *testing.T) {
 	}
 	if len(queue.assessments) != 1 || queue.assessments[0] != candidate.MaterialID {
 		t.Fatalf("assessment recoveries = %#v", queue.assessments)
+	}
+	// 恢复必须是单次批量投递：逐条插入在十万级积压下会产生同样多次唯一键冲突。
+	if queue.batches != 1 {
+		t.Fatalf("batch calls = %d, want 1", queue.batches)
+	}
+	// content_version 的十进制写法要与 EnqueueAssessArticle 一致，否则 ByArgs 唯一键对不上。
+	if want := (jobqueue.AssessmentTarget{MaterialID: candidate.MaterialID, ContentVersion: "1"}); len(queue.targets) != 1 || queue.targets[0] != want {
+		t.Fatalf("batch targets = %#v, want %#v", queue.targets, want)
 	}
 }
 

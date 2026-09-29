@@ -84,7 +84,11 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 		}
 
 		var candidates []DiscoveryCandidate
-		if err := tx.Order("id").Find(&candidates).Error; err != nil {
+		if err := Candidates(tx).Select(candidateBackfillColumns).Order("id").Find(&candidates).Error; err != nil {
+			return err
+		}
+		existingEvidence, err := loadCandidateSourceEvidence(tx)
+		if err != nil {
 			return err
 		}
 		for index := range candidates {
@@ -111,10 +115,6 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 				}
 			}
 			sourceID := candidate.SourceID
-			var evidenceCount int64
-			if err := tx.Model(&DiscoveryCandidateProvenance{}).Where("candidate_id = ? AND source_id = ?", candidate.ID, sourceID).Count(&evidenceCount).Error; err != nil {
-				return err
-			}
 			provenance := DiscoveryCandidateProvenance{
 				ProvenanceKey:   stableMigrationKey("legacy", candidate.ID, siteID, sourceID, candidate.URL),
 				CandidateID:     candidate.ID,
@@ -125,7 +125,7 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 				FirstSeenAt:     firstSeen,
 				LastSeenAt:      lastSeen,
 			}
-			if evidenceCount == 0 {
+			if !existingEvidence[[2]uint{candidate.ID, sourceID}] {
 				if err := tx.Clauses(clause.OnConflict{
 					Columns: []clause.Column{{Name: "provenance_key"}},
 					DoUpdates: clause.Assignments(map[string]interface{}{
@@ -154,6 +154,27 @@ func BackfillV3Compatibility(database *gorm.DB) error {
 		}
 		return nil
 	})
+}
+
+// candidateBackfillColumns 是兼容回填真正用到的最小列集。基表没有 source_id，
+// 而整行读取会经 AfterFind 逐行回查视图并拖上数百 MB 的 body_text。
+var candidateBackfillColumns = []string{"id", "source_id", "url", "status", "processing_state", "eligibility_state", "first_seen_at", "last_seen_at", "created_at", "updated_at"}
+
+// loadCandidateSourceEvidence 一次取回已存在的 (candidate_id, source_id) 组合，
+// 取代逐候选 COUNT——十二万级候选下那是同样多次的数据库往返。
+func loadCandidateSourceEvidence(tx *gorm.DB) (map[[2]uint]bool, error) {
+	var pairs []struct {
+		CandidateID uint
+		SourceID    uint
+	}
+	if err := tx.Model(&DiscoveryCandidateProvenance{}).Select("candidate_id", "source_id").Where("source_id IS NOT NULL").Find(&pairs).Error; err != nil {
+		return nil, err
+	}
+	evidence := make(map[[2]uint]bool, len(pairs))
+	for _, pair := range pairs {
+		evidence[[2]uint{pair.CandidateID, pair.SourceID}] = true
+	}
+	return evidence, nil
 }
 
 func backfillDiscoverySiteDomainKeys(tx *gorm.DB) error {

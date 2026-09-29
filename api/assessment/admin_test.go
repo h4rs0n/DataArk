@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"DataArk/discovery"
+	"DataArk/jobqueue"
 )
 
 type modeFixtureAssessor struct {
@@ -40,6 +41,15 @@ func (queue recordingJobEnqueuer) enqueue(key string) error {
 
 func (queue recordingJobEnqueuer) EnqueueAssessArticle(_ context.Context, candidateID uint, contentVersion string) error {
 	return queue.enqueue(fmt.Sprintf("assess:%d:%s", candidateID, contentVersion))
+}
+
+func (queue recordingJobEnqueuer) EnqueueAssessArticles(ctx context.Context, targets []jobqueue.AssessmentTarget) error {
+	for _, target := range targets {
+		if err := queue.EnqueueAssessArticle(ctx, target.MaterialID, target.ContentVersion); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type failingAssessmentQueue struct {

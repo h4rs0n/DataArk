@@ -32,12 +32,23 @@ const (
 
 var ErrHandlerUnavailable = errors.New("job handler is not registered")
 
+// assessmentInsertChunkSize 限定单个 InsertMany 事务的行数，避免恢复时一次锁住
+// river_job 太久。
+const assessmentInsertChunkSize = 500
+
+// AssessmentTarget 是批量登记评估作业的最小载荷。
+type AssessmentTarget struct {
+	MaterialID     uint
+	ContentVersion string
+}
+
 type JobEnqueuer interface {
 	EnqueueFetchSource(context.Context, uint) error
 	EnqueueScanBlogroll(context.Context, uint) error
 	EnqueueBackfillSite(context.Context, uint) error
 	EnqueueProcessCandidate(context.Context, uint, string) error
 	EnqueueAssessArticle(context.Context, uint, string) error
+	EnqueueAssessArticles(context.Context, []AssessmentTarget) error
 	EnqueueGenerateDaily(context.Context, uint, string) error
 	EnqueueGenerateDigestSummary(context.Context, uint, string) error
 }
@@ -223,6 +234,45 @@ func (querier stdSQLQuerier) QueryRowContext(ctx context.Context, query string, 
 	return querier.db.QueryRowContext(ctx, query, args...)
 }
 
+// contextSQLRowsQuerier 读取 river_job 的多行结果；生产走 *sql.DB，测试可注入。
+type contextSQLRowsQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+type stdSQLRowsQuerier struct {
+	db *sql.DB
+}
+
+func (querier stdSQLRowsQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return querier.db.QueryContext(ctx, query, args...)
+}
+
+// liveAssessmentTargets 取回评估队列中仍存活的作业参数。状态集合必须与 River 部分
+// 唯一索引覆盖的存活态一致，否则会重复插入或漏派工；candidate_id = 0 对应
+// EnqueueAssessArticle 构造的参数，同时排除 AssessLegacyCandidate 那类作业。
+func liveAssessmentTargets(ctx context.Context, querier contextSQLRowsQuerier) (map[AssessmentTarget]bool, error) {
+	rows, err := querier.QueryContext(ctx, `
+SELECT COALESCE((args->>'material_id')::bigint, 0), args->>'content_version'
+FROM river_job
+WHERE kind = $1
+  AND COALESCE((args->>'candidate_id')::bigint, 0) = 0
+  AND state IN ('available', 'pending', 'scheduled', 'retryable', 'running')`, AssessArticleJobKind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	live := make(map[AssessmentTarget]bool)
+	for rows.Next() {
+		var materialID int64
+		var contentVersion sql.NullString
+		if err := rows.Scan(&materialID, &contentVersion); err != nil {
+			return nil, err
+		}
+		live[AssessmentTarget{MaterialID: uint(materialID), ContentVersion: contentVersion.String}] = true
+	}
+	return live, rows.Err()
+}
+
 type riverCrawlView struct {
 	queue *riverQueue
 }
@@ -324,6 +374,42 @@ func (queue *riverQueue) EnqueueProcessCandidate(ctx context.Context, candidateI
 func (queue *riverQueue) EnqueueAssessArticle(ctx context.Context, materialID uint, contentVersion string) error {
 	_, err := queue.client.Insert(ctx, AssessArticleArgs{MaterialID: materialID, ContentVersion: contentVersion}, nil)
 	return err
+}
+
+// EnqueueAssessArticles 批量登记评估作业：先剔除队列里已存活的 (material, version)，
+// 再分片 InsertMany。逐条插入在恢复场景下会产生数万次唯一键冲突，每次冲突都写一个
+// 空转元组，把 river_job 越撑越大。
+func (queue *riverQueue) EnqueueAssessArticles(ctx context.Context, targets []AssessmentTarget) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	live, err := liveAssessmentTargets(ctx, stdSQLRowsQuerier{db: queue.db})
+	if err != nil {
+		return err
+	}
+	for _, batch := range assessmentInsertBatches(targets, live) {
+		if _, err := queue.client.InsertMany(ctx, batch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// assessmentInsertBatches 剔除队列里已存活的目标，再切成 InsertMany 分片——River 不
+// 内部分片，整批跑在一个事务里，不分片会一次锁住 river_job 太久。
+func assessmentInsertBatches(targets []AssessmentTarget, live map[AssessmentTarget]bool) [][]river.InsertManyParams {
+	pending := make([]river.InsertManyParams, 0, len(targets))
+	for _, target := range targets {
+		if live[target] {
+			continue
+		}
+		pending = append(pending, river.InsertManyParams{Args: AssessArticleArgs{MaterialID: target.MaterialID, ContentVersion: target.ContentVersion}})
+	}
+	batches := make([][]river.InsertManyParams, 0, len(pending)/assessmentInsertChunkSize+1)
+	for start := 0; start < len(pending); start += assessmentInsertChunkSize {
+		batches = append(batches, pending[start:min(start+assessmentInsertChunkSize, len(pending))])
+	}
+	return batches
 }
 
 func (queue *riverQueue) EnqueueGenerateDaily(ctx context.Context, userID uint, localDate string) error {

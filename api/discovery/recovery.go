@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// candidateRecoveryColumns 只含入队所需字段；候选投影整行读取会拖上数百 MB 的 body_text。
+var candidateRecoveryColumns = []string{"id", "url", "content_version"}
+
 // RecoverDueJobs restores work that should not wait for the next scheduler
 // interval after a process restart.
 func RecoverDueJobs(ctx context.Context, queue DiscoveryJobEnqueuer, now time.Time) error {
@@ -81,7 +84,7 @@ next_due_at <= ? OR
 
 	var candidates []DiscoveryCandidate
 	processingStates := []string{"fetch_pending", "extract_pending", "dedupe_pending"}
-	if err := Candidates(db).Where("(processing_state IN ? AND (next_processing_at IS NULL OR next_processing_at <= ?)) OR (processing_state = ? AND dedupe_state = ?)", processingStates, now, DiscoveryProcessingReady, DiscoveryDedupePending).Order("id").Find(&candidates).Error; err != nil {
+	if err := Candidates(db).Select(candidateRecoveryColumns).Where("(processing_state IN ? AND (next_processing_at IS NULL OR next_processing_at <= ?)) OR (processing_state = ? AND dedupe_state = ?)", processingStates, now, DiscoveryProcessingReady, DiscoveryDedupePending).Order("id").Find(&candidates).Error; err != nil {
 		recoveryErrors = append(recoveryErrors, err)
 	} else {
 		for _, candidate := range candidates {

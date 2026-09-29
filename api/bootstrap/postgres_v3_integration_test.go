@@ -100,6 +100,34 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 	verifyPostgresMaterialHistory(t, database)
 	verifyPostgresConcurrentGraph(t, database)
 
+	// runV3CompatibilityOnce 靠 checkpoint 跳过一次性回填：稳态重启省下的 74s 全在这里，
+	// 所以两侧都要证明——命中 checkpoint 时不回填，checkpoint 缺失时照常回填。
+	if err := runV3CompatibilityOnce(database); err != nil {
+		t.Fatalf("first guarded compatibility run: %v", err)
+	}
+	assertPostgresScalar(t, database,
+		fmt.Sprintf("SELECT count(*)::text FROM material_migration_checkpoints WHERE name = '%s'", v3CompatibilityCheckpoint), "1")
+	assertPostgresScalar(t, database,
+		fmt.Sprintf("SELECT domain_key FROM discovery_sites WHERE id = %d", legacySite.ID), "legacy-sitemap.invalid")
+	if err := database.Model(&discovery.DiscoverySite{}).Where("id = ?", legacySite.ID).Update("domain_key", "stale.invalid").Error; err != nil {
+		t.Fatalf("stale site domain key: %v", err)
+	}
+	if err := runV3CompatibilityOnce(database); err != nil {
+		t.Fatalf("second guarded compatibility run: %v", err)
+	}
+	assertPostgresScalar(t, database,
+		fmt.Sprintf("SELECT domain_key FROM discovery_sites WHERE id = %d", legacySite.ID), "stale.invalid")
+	if err := database.Exec("DELETE FROM material_migration_checkpoints WHERE name = ?", v3CompatibilityCheckpoint).Error; err != nil {
+		t.Fatalf("drop compatibility checkpoint: %v", err)
+	}
+	if err := runV3CompatibilityOnce(database); err != nil {
+		t.Fatalf("unguarded compatibility run: %v", err)
+	}
+	assertPostgresScalar(t, database,
+		fmt.Sprintf("SELECT domain_key FROM discovery_sites WHERE id = %d", legacySite.ID), "legacy-sitemap.invalid")
+	assertPostgresScalar(t, database,
+		fmt.Sprintf("SELECT count(*)::text FROM material_migration_checkpoints WHERE name = '%s'", v3CompatibilityCheckpoint), "1")
+
 	assertPostgresScalar(t, database,
 		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "35")
 	assertPostgresScalar(t, database,

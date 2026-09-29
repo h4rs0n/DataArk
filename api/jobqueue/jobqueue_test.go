@@ -182,6 +182,98 @@ func TestReconcileManualDiscoveryJobsReturnsDatabaseError(t *testing.T) {
 	}
 }
 
+type stubSQLRowsQuerier struct {
+	query string
+	args  []any
+	err   error
+}
+
+func (querier *stubSQLRowsQuerier) QueryContext(_ context.Context, query string, args ...any) (*sql.Rows, error) {
+	querier.query = query
+	querier.args = args
+	return nil, querier.err
+}
+
+func TestLiveAssessmentTargetsFiltersToLiveUniqueStates(t *testing.T) {
+	want := errors.New("database unavailable")
+	querier := &stubSQLRowsQuerier{err: want}
+	if _, err := liveAssessmentTargets(context.Background(), querier); !errors.Is(err, want) {
+		t.Fatalf("query error = %v, want %v", err, want)
+	}
+	// 状态集合必须与 River 部分唯一索引覆盖的存活态一致：漏掉 retryable/scheduled 会重复
+	// 插入，多算 completed/cancelled 会漏派工。
+	for _, fragment := range []string{
+		"COALESCE((args->>'material_id')::bigint, 0)",
+		"FROM river_job",
+		"WHERE kind = $1",
+		"COALESCE((args->>'candidate_id')::bigint, 0) = 0",
+		"state IN ('available', 'pending', 'scheduled', 'retryable', 'running')",
+	} {
+		if !strings.Contains(querier.query, fragment) {
+			t.Fatalf("live target query missing %q: %s", fragment, querier.query)
+		}
+	}
+	if len(querier.args) != 1 || querier.args[0] != AssessArticleJobKind {
+		t.Fatalf("live target args = %#v, want [%q]", querier.args, AssessArticleJobKind)
+	}
+}
+
+func TestAssessmentInsertBatchesDropsLiveTargetsAndChunksInserts(t *testing.T) {
+	targets := make([]AssessmentTarget, 0, assessmentInsertChunkSize+3)
+	for index := range assessmentInsertChunkSize + 3 {
+		targets = append(targets, AssessmentTarget{MaterialID: uint(index + 1), ContentVersion: fmt.Sprintf("v%d", index)})
+	}
+	live := map[AssessmentTarget]bool{targets[3]: true, targets[len(targets)-1]: true}
+	batches := assessmentInsertBatches(targets, live)
+	if len(batches) != 2 || len(batches[0]) != assessmentInsertChunkSize || len(batches[1]) != 1 {
+		t.Fatalf("batch sizes = %d/%d/%d, want 2/%d/1", len(batches), len(batches[0]), len(batches[1]), assessmentInsertChunkSize)
+	}
+	seen := make([]AssessmentTarget, 0, assessmentInsertChunkSize+1)
+	for _, batch := range batches {
+		for _, params := range batch {
+			args, ok := params.Args.(AssessArticleArgs)
+			if !ok {
+				t.Fatalf("insert args = %T, want AssessArticleArgs", params.Args)
+			}
+			// InsertOpts 必须留空，否则会覆盖 AssessArticleArgs.InsertOpts() 的队列名、
+			// MaxAttempts 与 ByArgs 唯一键。
+			if params.InsertOpts != nil {
+				t.Fatalf("insert opts = %#v, want nil", params.InsertOpts)
+			}
+			seen = append(seen, AssessmentTarget{MaterialID: args.MaterialID, ContentVersion: args.ContentVersion})
+		}
+	}
+	for _, target := range []AssessmentTarget{targets[3], targets[len(targets)-1]} {
+		for _, inserted := range seen {
+			if inserted == target {
+				t.Fatalf("live target %#v must not be re-inserted", target)
+			}
+		}
+	}
+	for index, inserted := range seen {
+		if index >= 3 {
+			// targets[3] 被剔除，其后所有目标前移一位。
+			if want := targets[index+1]; inserted != want {
+				t.Fatalf("insert %d = %#v, want %#v (order must be preserved)", index, inserted, want)
+			}
+			continue
+		}
+		if want := targets[index]; inserted != want {
+			t.Fatalf("insert %d = %#v, want %#v", index, inserted, want)
+		}
+	}
+}
+
+func TestAssessmentInsertBatchesSkipsInsertWhenQueueAlreadyCoversTargets(t *testing.T) {
+	live := map[AssessmentTarget]bool{{MaterialID: 9, ContentVersion: "3"}: true}
+	if batches := assessmentInsertBatches([]AssessmentTarget{{MaterialID: 9, ContentVersion: "3"}}, live); len(batches) != 0 {
+		t.Fatalf("batches = %d, want 0", len(batches))
+	}
+	if batches := assessmentInsertBatches(nil, nil); len(batches) != 0 {
+		t.Fatalf("empty batches = %d, want 0", len(batches))
+	}
+}
+
 type stubSQLQuerier struct {
 	query     string
 	args      []any

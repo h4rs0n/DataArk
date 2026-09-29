@@ -141,6 +141,15 @@ func (queue *MemoryQueue) EnqueueAssessArticle(_ context.Context, materialID uin
 	return queue.stage(AssessArticleJobKind, fmt.Sprintf("material:%d:version:%s", materialID, contentVersion), "material", materialID, contentVersion)
 }
 
+func (queue *MemoryQueue) EnqueueAssessArticles(ctx context.Context, targets []AssessmentTarget) error {
+	for _, target := range targets {
+		if err := queue.EnqueueAssessArticle(ctx, target.MaterialID, target.ContentVersion); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (queue *MemoryQueue) EnqueueGenerateDaily(ctx context.Context, userID uint, localDate string) error {
 	if queue.handlers.GenerateDaily == nil {
 		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, GenerateDailyJobKind)
