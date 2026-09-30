@@ -1,5 +1,7 @@
 # Add Archive Consistency Repair and Backend Coverage
 
+> 历史记录（2026-09-30 核对）：归档一致性功能已经实现；本文记录的 66.9% 覆盖率及未达到 100% 的目标是 2026-05-07 的结果，未在本次核对中重测，不是当前待执行任务。`api/common` 已拆分，路由与 handler 已迁至 `api/api/routes.go` 和 `api/api/archive.go`；归档元数据现在有 `archive_documents`，正文进入 material。当前入口见 [文档索引](../../README.md)。
+
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 This repository includes `PLANS.md` at the repository root. This document is maintained in accordance with `PLANS.md`: it is self-contained, records decisions as they are made, and describes observable behavior, validation, and recovery.

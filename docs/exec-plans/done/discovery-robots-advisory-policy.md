@@ -1,5 +1,9 @@
 # Make robots.txt advisory for manually triggered discovery
 
+> 归档说明（2026-09-30 核对）：本文保留实施当时的背景、决策、路径与验证记录，部分内容已被后续变更取代。现行行为与操作入口见 [文档索引](../../README.md)。历史测试输出不代表当前部署状态。
+>
+> 当前 robots 仅记录状态，已不消费 Sitemap 声明；Sitemap 抓取能力在 `000028` 关闭，见 `api/discovery/robots.go`。
+
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds. This document follows `PLANS.md` in the repository root and supersedes earlier statements in `docs/exec-plans/blogroll-article-recommendation-v3.md` that described `Allow` and `Disallow` as crawl gates.
 
 ## Purpose / Big Picture

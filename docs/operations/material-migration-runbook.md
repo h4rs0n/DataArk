@@ -15,7 +15,7 @@
 SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1;
 -- 应为 35 或更新的迁移版本。
 SELECT * FROM material_migration_checkpoints ORDER BY name;
--- legacy-storage-copied、strong-identities、archive-content。
+-- legacy-storage-copied、strong-identities、archive-content、v3-compatibility。
 SELECT COUNT(*) FROM discovery_candidates WHERE material_id IS NULL;
 SELECT COUNT(*) FROM archive_documents WHERE material_id IS NULL;
 -- 均为 0。
@@ -31,7 +31,7 @@ FROM material_provenances WHERE domain_key <> '' GROUP BY material_id;
 
 ## 归档异常与回滚
 
-缺失或损坏文件不会阻止元数据迁移，问题记录在 `material_ingestion_issues`。恢复文件后运行现有归档重建流程重新抽取；若需重跑全部启动回填，在维护窗口删除仅 `archive-content` 的 checkpoint 后重启，并再次核查问题表。不得清空其他 checkpoint 来反复执行生产迁移。
+缺失或损坏文件不会阻止元数据迁移，问题记录在 `material_ingestion_issues`。恢复文件后运行现有归档重建流程重新抽取。重建索引不会自动清理该问题表；要重新核查文件并清除已修复的问题记录，在维护窗口仅删除 `archive-content` 的 checkpoint 后重启，启动回填会检查全部归档文档，再次核查问题表。不得清空其他 checkpoint 来反复执行生产迁移。
 
 Down 会主动报错，不能无损恢复拆表前的写入关系。回滚必须停止新版本，恢复升级前 PostgreSQL/归档备份，再启动匹配的旧版本。
 
@@ -40,6 +40,7 @@ Down 会主动报错，不能无损恢复拆表前的写入关系。回滚必须
 `cd api && go test ./...` 覆盖 SQLite 回归。生产验证必须将 `DATAARK_POSTGRES_TEST_DSN` 指向空的、名称以 `dataark_v3_verify` 开头的可丢弃数据库，再运行：
 
 ```sh
+cd api
 go test ./bootstrap -run TestPostgresV3MigrationsRiverRestartAndPGVector -count=1
 ```
 

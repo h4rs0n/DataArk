@@ -1,5 +1,9 @@
 # Add a personalized discovery feed with refreshable batches
 
+> 归档说明（2026-09-30 核对）：本文保留实施当时的背景、决策、路径与验证记录，部分内容已被后续变更取代。现行行为与操作入口见 [文档索引](../../README.md)。历史测试输出不代表当前部署状态。
+>
+> 当前候选内容及个人状态由 material 表提供，排名需要成功的 LLM rerank；旧 `api/recommendation/service.go` 已拆分。
+
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds. This document must be maintained in accordance with `PLANS.md` at the repository root.
 
 ## Purpose / Big Picture

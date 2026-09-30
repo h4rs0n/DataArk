@@ -18,7 +18,7 @@
 - 表名通常使用复数；核心内容表明确命名为单数 `material`，评估行继续使用 `discovery_article_assessments`。
 - 主键：业务表多为 `BIGSERIAL`；`archive_tasks.id` 是 `varchar(36)`（UUID）；`archive_stats.source` 是域名主键；`discovery_duplicate_clusters.cluster_id` 是字符串主键。
 - 时间：DSN 带 `TimeZone=Asia/Shanghai`；时间列多为 `timestamptz`。
-- 外键：归档/用户/搜索事件之间仍无 FK。发现图、评估、推荐、金标工作流、River 客户端队列有显式 `REFERENCES`。
+- 外键：`archive_documents.material_id` 指向 material；`user_material_states` 指向 users 和 material。搜索/点击事件无业务 FK；推荐设置、日期、画像和屏蔽规则的 `user_id` 也没有 users FK。发现图、评估、推荐条目、金标工作流与 River 队列表的具体约束以迁移为准。
 - JSON：`material.authors/topics/entities` 使用 JSONB；迁移兼容原候选的 JSON 文本列。
 - 向量：`material_embeddings` 按 `(representation_id, model)` 保存，与具体内容表示关联。
 - 原始物理文件与 Meilisearch 索引在 Postgres 外；抽取正文存入 `material_representations`。
@@ -42,7 +42,7 @@ discovery_article_content_versions / material_candidate_versions
 river_* / goose_db_version：队列与迁移账本。
 ```
 
-当前产品流：自动发现并记录来源 → 候选抓取/抽取 → material 内容版本 → 人工评估队列 → 推荐读取 ready/eligible 内容。
+当前产品流：自动发现并记录来源 → 候选抓取/抽取 → material 内容版本 → owner 手动开启 LLM 评估队列 → 推荐读取 ready/eligible 内容。人工标注金标是独立验收工作流。
 
 ## 核心内容模型（`000032`–`000035`）
 
@@ -73,7 +73,7 @@ river_* / goose_db_version：队列与迁移账本。
 
 ### `users`
 
-登录与角色。启动时 `auth.CreateDefaultAdmin()`：若 `admin` 不存在则随机 12 位十六进制密码并打日志；`admin` 角色为 `owner`，其余默认 `member`。`BackfillOwnerRole` 会把历史 `admin` 回填为 owner。
+登录与角色。启动时 `auth.CreateDefaultAdmin()`：若 `admin` 不存在则随机 12 位十六进制密码并打印到标准输出；`admin` 角色为 `owner`，其余默认 `member`。`BackfillOwnerRole` 会把历史 `admin` 回填为 owner。
 
 | 列 | 运行库类型 | 约束 | 说明 |
 | --- | --- | --- | --- |
@@ -89,7 +89,7 @@ river_* / goose_db_version：队列与迁移账本。
 
 ## 归档、搜索与点击
 
-HTML 文件在归档目录；Postgres 只存任务、按域名的文件计数、无法从路径恢复的元数据，以及搜索/点击事件。
+HTML 文件在归档目录；archive 领域表保存任务、按域名的文件计数、文件元数据和搜索/点击事件。抽取后的正文另存于 Postgres 的 `material_representations`。
 
 ### `archive_tasks`
 
@@ -173,7 +173,7 @@ HTML 文件在归档目录；Postgres 只存任务、按域名的文件计数、
 
 ### `discovery_domain_blacklist_entries`
 
-按注册域屏蔽抓取。`domain` 唯一。`000021` 默认插入 `csdn.net`。命中后候选 `processing_state = domain_blocked`。
+按规范化主机名及其所有子域屏蔽抓取，可使用注册域或具体子域；不会自动提升为注册域。`domain` 唯一。`000021` 默认插入 `csdn.net`。命中后候选 `processing_state = domain_blocked`。
 
 ### `discovery_sources`
 
@@ -202,7 +202,7 @@ RSS/Atom 或同站入口。`url` 唯一。`site_id` → `discovery_sites` `ON DE
 | `assessment_state` | 位于 `material_article_states`；discovery 写 `pending` | `pending` / `ready` / `review` / `degraded` |
 | `eligibility_state` | 位于 `material_article_states`；推荐资格 | `unknown` / `eligible` / `review` / `ineligible` |
 
-候选实体保留 URL/规范化 URL/最终 URL、crawl host、去重簇/代表、抓取尝试/错误/调度、抓取与发现时间。`000034` 删除标题、摘要、正文、作者、字数、向量、模型状态、评分及单一来源字段。
+候选实体保留 URL/规范化 URL/最终 URL、crawl host、去重簇/代表、抓取尝试/错误/调度、抓取与发现时间。`000034` 删除标题、摘要、正文、作者、字数、向量、模型状态、评分及单一来源字段；这些字段在 Go 候选类型中保留为只读投影，不能据此认定物理表仍有相应列。
 
 主题/摘要的权威写回在评估成功之后，不要再加独立 enrichment hop。
 
@@ -296,7 +296,7 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
 生命周期：`draft` → `published`；补推后 `supplemented`；失败 `failed`。历史值 `pending`/`generated` 在 `000015` 与启动 backfill 中分别映射为 `draft`/`published`。接口层还有非落库状态 `missing`。
 
-发布后预生成 digest 摘要（`000026`：`summary_text` / `summary_highlights` / `summary_topics` / `summary_model` / `summary_prompt_version` / `summary_actual_count` / `summary_generated_at`）。`GET /recommendations/today/summary` 只读缓存。另有 `policy_version`、`shortage_reasons`、`degraded`、`supplement_policy`、`audit_version`。
+发布后预生成 digest 摘要（`000026`：`summary_text` / `summary_highlights` / `summary_topics` / `summary_model` / `summary_prompt_version` / `summary_actual_count` / `summary_generated_at`）。`GET /api/recommendations/today/summary` 只读缓存。另有 `policy_version`、`shortage_reasons`、`degraded`、`supplement_policy`、`audit_version`。
 
 ### `recommendation_feed_batches`
 
@@ -353,7 +353,9 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
 `goose_db_version`：`id`、`version_id`、`is_applied`、`tstamp`。仓库当前最新迁移为 **35**（`000035_material_relations`），部署版本须查询实际数据库确认。
 
-多数 Down 是 **保留数据的 no-op**（`SELECT 1`），回滚 Goose 版本号不会删 v3 表。不要把 Down 当成可逆删表。
+早期推荐迁移的 Down 多为 **保留数据的 no-op**（`SELECT 1`）；`000032`–`000035` 的 Down 会主动报错，要求恢复升级前备份和匹配的旧二进制。不要把 Down 当成可逆删表或生产回滚方式。
+
+`material_migration_checkpoints` 保存 `legacy-storage-copied`、`strong-identities`、`archive-content`、`v3-compatibility`。后面三项分别控制启动时的强身份归并、归档内容回填和兼容性回填；已完成的工作不会每次重启重跑。
 
 ---
 
@@ -394,6 +396,7 @@ archive_tasks
 
 archive_documents
   id PK
+  material_id FK → material (NOT NULL)
   (domain, file_name) UNIQUE
   source_url / title / summary
   created_at / updated_at
@@ -404,4 +407,4 @@ archive_stats
   created_at / updated_at
 ```
 
-发现与推荐的外键见上文「领域关系」。完整列清单以本运行库 `information_schema.columns` / `pg_constraint` 为准；代码侧模型分别为 `auth.User`、`archive.*`、`discovery.*`、`assessment.*`、`assessmenteval.*`、`recommendation.*`。
+发现与推荐的外键见上文「领域关系」。仓库的完整列清单与约束以编号 Goose 迁移为准；核对具体部署时查询其 `information_schema.columns` / `pg_constraint`。本文历史实例的类型和数量未在本次文档核对中重新验证。关系概览见 `docs/design-docs/dataark_er.dot`，图中虚线标注的用户归属为应用关系，不代表数据库 FK；代码侧模型分别为 `auth.User`、`archive.*`、`discovery.*`、`assessment.*`、`assessmenteval.*`、`recommendation.*`。

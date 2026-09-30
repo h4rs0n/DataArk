@@ -1,5 +1,9 @@
 # Add content discovery and recommendations
 
+> 归档说明（2026-09-30 核对）：本文保留实施当时的背景、决策、路径与验证记录，部分内容已被后续变更取代。现行行为与操作入口见 [文档索引](../../README.md)。历史测试输出不代表当前部署状态。
+>
+> 当前推荐与反馈按用户隔离，旧全局候选状态 API 已被个人状态和个性化 feed 取代；`api/common` 已移除。
+
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds. This document follows `PLANS.md` from the repository root.
 
 ## Purpose / Big Picture

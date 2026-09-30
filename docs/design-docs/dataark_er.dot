@@ -1,4 +1,6 @@
 digraph DataArkER {
+  // 主要领域关系概览，依据 Goose 000001–000035；不列出全部列、表或外键。
+  // 标为 application relation 的虚线边没有数据库 FK；其他虚线用于布局/指针。
   rankdir=LR;
   graph [fontname="Helvetica", fontsize=11, compound=true, splines=true, nodesep=0.35, ranksep=0.9];
   node  [fontname="Helvetica", fontsize=9, shape=record, style="filled,rounded"];
@@ -11,7 +13,7 @@ digraph DataArkER {
     material            [fillcolor="#cfe0ff", label="{material (PK)|id\lcurrent_version_id (FK)\ltitle / summary\lauthors JSONB / topics / entities\llanguage / published_at\l}"];
     material_versions   [fillcolor="#cfe0ff", label="{material_versions|id (PK)\lmaterial_id (FK)\lversion\lUQ(material_id,version)\lUQ(material_id,id)\l}"];
     material_representations [fillcolor="#cfe0ff", label="{material_representations|id (PK)\lversion_id (FK)\lkind / role\ltext / content_hash\lword_count / extractor\lUQ(version_id,kind,role)\l}"];
-    material_embeddings [fillcolor="#cfe0ff", label="{material_embeddings|representation_id (PK,FK)\lmodel (PK)\lembedding vector\l}"];
+    material_embeddings [fillcolor="#cfe0ff", label="{material_embeddings|representation_id (PK,FK)\lmodel (PK)\lembedding vector (if vector type exists at migration)\l}"];
     material_identities [fillcolor="#cfe0ff", label="{material_identities|id (PK)\lmaterial_id (FK)\lkind / identity_key\lUQ(kind,identity_key)\l}"];
     material_redirects  [fillcolor="#cfe0ff", label="{material_redirects|id (PK)\lmaterial_id (FK)\lCHECK id<>material_id\l}"];
     material_provenances [fillcolor="#cfe0ff", label="{material_provenances|id (PK)\lprovenance_key UQ\lmaterial_id (FK)\lcandidate_id / site_id / source_id (FK)\ldomain_key / *_confidence\l}"];
@@ -28,7 +30,7 @@ digraph DataArkER {
     discovery_sites [fillcolor="#c8e6c9", label="{discovery_sites|id (PK)\lhost_key UQ / domain_key\lstatus / discovery_method\lgraph_depth / robots_status\l}"];
     discovery_site_edges [fillcolor="#c8e6c9", label="{discovery_site_edges|id (PK)\ledge_key UQ\lfrom_site_id / to_site_id (FK)\lrelation_type / confidence\l}"];
     discovery_sources [fillcolor="#c8e6c9", label="{discovery_sources|id (PK)\lsite_id (FK)\lurl UQ / endpoint_type\lpriority / user_managed\lbackoff_* / etag\l}"];
-    discovery_candidates [fillcolor="#c8e6c9", label="{discovery_candidates|id (PK)\lmaterial_id (FK, NOT NULL)\lurl UQ / normalized_url / final_url\lprocessing_state / dedupe_state\leligibility_state\lrepresentative_id (FK self)\l}"];
+    discovery_candidates [fillcolor="#c8e6c9", label="{discovery_candidates|id (PK)\lmaterial_id (FK, NOT NULL)\lurl UQ / normalized_url / final_url\lprocessing_state / dedupe_state\lrepresentative_id (FK self)\l}"];
     discovery_candidate_provenances [fillcolor="#c8e6c9", label="{discovery_candidate_provenances|id (PK)\lprovenance_key UQ\lcandidate_id (FK)\lsite_id / source_id (FK)\l}"];
     discovery_candidate_identities [fillcolor="#c8e6c9", label="{discovery_candidate_identities|id (PK)\lcandidate_id (FK)\lkind / identity_key\l}"];
     discovery_duplicate_clusters [fillcolor="#c8e6c9", label="{discovery_duplicate_clusters|cluster_id (PK)\lrepresentative_id (FK RESTRICT)\lmatch_method / member_count\l}"];
@@ -59,13 +61,13 @@ digraph DataArkER {
   subgraph cluster_reco {
     label="推荐 / 信息流 (recommendation_*)";
     style=filled; color="#fce8e6"; fontsize=12;
-    recommendation_settings [fillcolor="#f8bbd0", label="{recommendation_settings|id (PK)\luser_id UQ\ldaily_limit / exploration_rate\lpreferred_*\l}"];
-    recommendation_days [fillcolor="#f8bbd0", label="{recommendation_days|id (PK)\luser_id\lUQ(user_id,recommendation_date)\lstatus / summary_*\l}"];
-    recommendation_feed_batches [fillcolor="#f8bbd0", label="{recommendation_feed_batches|id (PK)\luser_id\lstatus (1 active UQ)\l}"];
+    recommendation_settings [fillcolor="#f8bbd0", label="{recommendation_settings|id (PK)\luser_id UQ (no users FK)\ldaily_limit / exploration_rate\lpreferred_*\l}"];
+    recommendation_days [fillcolor="#f8bbd0", label="{recommendation_days|id (PK)\luser_id (no users FK)\lUQ(user_id,recommendation_date)\lstatus / summary_*\l}"];
+    recommendation_feed_batches [fillcolor="#f8bbd0", label="{recommendation_feed_batches|id (PK)\luser_id (no users FK)\lstatus (1 active UQ)\l}"];
     recommendation_items [fillcolor="#f8bbd0", label="{recommendation_items|id (PK)\lday_id (FK) XOR feed_batch_id (FK)\lcandidate_id (FK SET NULL)\lmaterial_id / material_version_id (FK)\lassessment_id (FK)\lsnapshot_* frozen fields\l}"];
     recommendation_feedbacks [fillcolor="#f8bbd0", label="{recommendation_feedbacks|id (PK)\lrecommendation_item_id (FK)\lcandidate_id (FK SET NULL)\lmaterial_id (FK)\lis_current / current_key UQ\lsupersedes_id\l}"];
-    user_recommendation_profiles [fillcolor="#f8bbd0", label="{user_recommendation_profiles|id (PK)\luser_id UQ\lpos/neg embedding JSONB\ltopic/source/style weights\l}"];
-    user_block_rules [fillcolor="#f8bbd0", label="{user_block_rules|id (PK)\luser_id\lrule_type / rule_value\lfeedback_id\l}"];
+    user_recommendation_profiles [fillcolor="#f8bbd0", label="{user_recommendation_profiles|id (PK)\luser_id UQ (no users FK)\lpos/neg embedding JSONB\ltopic/source/style weights\l}"];
+    user_block_rules [fillcolor="#f8bbd0", label="{user_block_rules|id (PK)\luser_id (no users FK)\lrule_type / rule_value\lfeedback_id\l}"];
   }
 
   /* ===================== 用户 ===================== */
@@ -94,7 +96,7 @@ digraph DataArkER {
   material -> material_identities    [label="1:N", arrowhead=crow];
   material -> material_redirects     [label="1:N", arrowhead=crow];
   material -> material_provenances   [label="1:N", arrowhead=crow];
-  material -> material_article_states [label="1:1", arrowhead=none, arrowtail=crow, dir=both];
+  material -> material_article_states [label="1:1", arrowhead=none];
   material_versions -> material [label="current_version_id\n(deferred composite FK)", style=dashed, arrowhead=vee, constraint=false];
 
   /* material_candidate_versions 桥接 */
@@ -133,14 +135,14 @@ digraph DataArkER {
   article_assessment_workflow_runs -> article_assessment_workflow_labels [arrowhead=crow];
   article_assessment_workflow_runs -> article_assessment_workflow_scores [arrowhead=crow];
   article_assessment_workflow_runs -> article_assessment_workflow_calls [arrowhead=crow];
-  discovery_article_content_versions -> article_assessment_workflow_items [arrowhead=vee];
+  discovery_article_content_versions -> article_assessment_workflow_items [label="1:N", arrowhead=crow];
 
   /* ================= 关系 (recommendation) ================= */
-  users -> recommendation_settings [label="1:1", arrowhead=none];
-  users -> recommendation_days [label="1:N", arrowhead=crow];
-  users -> recommendation_feed_batches [label="1:N", arrowhead=crow];
-  users -> user_recommendation_profiles [label="1:1", arrowhead=none];
-  users -> user_block_rules [label="1:N", arrowhead=crow];
+  users -> recommendation_settings [label="1:1 application relation", arrowhead=none, style=dashed];
+  users -> recommendation_days [label="1:N application relation", arrowhead=crow, style=dashed];
+  users -> recommendation_feed_batches [label="1:N application relation", arrowhead=crow, style=dashed];
+  users -> user_recommendation_profiles [label="1:1 application relation", arrowhead=none, style=dashed];
+  users -> user_block_rules [label="1:N application relation", arrowhead=crow, style=dashed];
   recommendation_days -> recommendation_items [label="1:N (day)", arrowhead=crow];
   recommendation_feed_batches -> recommendation_items [label="1:N (feed)", arrowhead=crow];
   recommendation_items -> recommendation_feedbacks [label="1:N", arrowhead=crow];

@@ -1,5 +1,9 @@
 # Retry invalid article assessment JSON with concrete errors
 
+> 归档说明（2026-09-30 核对）：本文保留实施当时的背景、决策、路径与验证记录，部分内容已被后续变更取代。现行行为与操作入口见 [文档索引](../../README.md)。历史测试输出不代表当前部署状态。
+>
+> 当前重试只在原始消息后追加校验错误，不回放旧模型输出；最多 6 次 schema 调用再尝试 object，见 `api/assessment/openai.go`。
+
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 This document must be maintained in accordance with `PLANS.md` at the repository root.

@@ -1,5 +1,9 @@
 # Add a manually executed discovery crawl queue
 
+> 归档说明（2026-09-30 核对）：本文保留实施当时的背景、决策、路径与验证记录，部分内容已被后续变更取代。现行行为与操作入口见 [文档索引](../../README.md)。历史测试输出不代表当前部署状态。
+>
+> 当前 `discovery_crawl` 已改为自动消费；手动开启的是 `article_assessment`，见 `api/jobqueue/jobqueue.go`。
+
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds. This document follows `PLANS.md` in the repository root.
 
 ## Purpose / Big Picture

@@ -1,5 +1,9 @@
 # Keep one article per source in each recommendation batch
 
+> 归档说明（2026-09-30 核对）：本文保留实施当时的背景、决策、路径与验证记录，部分内容已被后续变更取代。现行行为与操作入口见 [文档索引](../../README.md)。历史测试输出不代表当前部署状态。
+>
+> 当前组池优先不同来源；最终结果由 LLM rerank 返回的顺序决定，没有旧 `diversifyRecommendationCandidatesV3` 或 `source_limit` 放宽分支，也没有最终每来源一篇的硬保证。当前策略为 `v3-selection-llm-1`，见 `api/recommendation/selection_v3.go` 和 `api/recommendation/rerank.go`。
+
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds. Maintain this document in accordance with `PLANS.md` at the repository root.
 
 ## Purpose / Big Picture

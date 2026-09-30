@@ -1,5 +1,9 @@
 # DataArk：友情链接图谱、文章级质量与每日推荐 v3 执行计划
 
+> 归档说明（2026-09-30 核对）：本文保留实施当时的背景、决策、路径与验证记录，部分内容已被后续变更取代。现行行为与操作入口见 [文档索引](../../README.md)。历史测试输出不代表当前部署状态。
+>
+> 后续实现已改变 robots、Sitemap、队列、LLM 依赖和内容存储；本文的旧操作步骤不适用于当前升级，尤其不能跨 material 迁移仅回退二进制。
+
 本文档是一份可执行的 ExecPlan，存放于：
 
     docs/exec-plans/blogroll-article-recommendation-v3.md
