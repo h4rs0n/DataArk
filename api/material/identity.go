@@ -101,7 +101,7 @@ func Merge(tx *gorm.DB, first, second uint) (uint, error) {
 			return 0, err
 		}
 	}
-	for _, table := range []string{"discovery_candidates", "material_provenances", "material_identities", "material_redirects", "material_candidate_versions", "material_archive_links", "archive_documents", "discovery_article_content_versions", "discovery_article_assessments", "recommendation_items", "recommendation_feedbacks", "assessment_llm_calls", "article_assessment_workflow_items"} {
+	for _, table := range []string{"discovery_candidates", "material_provenances", "material_identities", "material_redirects", "material_candidate_versions", "material_archive_links", "archive_documents", "discovery_article_content_versions", "discovery_article_assessments", "recommendation_items", "recommendation_feedbacks", "assessment_llm_calls"} {
 		if !tx.Migrator().HasColumn(table, "material_id") {
 			continue
 		}

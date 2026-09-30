@@ -1,5 +1,5 @@
 digraph DataArkER {
-  // 主要领域关系概览，依据 Goose 000001–000035；不列出全部列、表或外键。
+  // 主要领域关系概览，依据 Goose 000001–000036；不列出全部列、表或外键。
   // 标为 application relation 的虚线边没有数据库 FK；其他虚线用于布局/指针。
   rankdir=LR;
   graph [fontname="Helvetica", fontsize=11, compound=true, splines=true, nodesep=0.35, ranksep=0.9];
@@ -50,11 +50,6 @@ digraph DataArkER {
     style=filled; color="#fef7e0"; fontsize=12;
     discovery_article_assessments [fillcolor="#ffe0b2", label="{discovery_article_assessments|id (PK)\lcandidate_id (FK SET NULL)\lmaterial_id / material_version_id (FK)\lcontent_version\lmulti-dim scores + summary/keywords\l}"];
     assessment_llm_calls [fillcolor="#ffe0b2", label="{assessment_llm_calls|id (PK)\lcandidate_id / material_id\lstage / status / tokens\l}"];
-    article_assessment_workflow_runs [fillcolor="#ffe0b2", label="{article_assessment_workflow_runs|id (PK)\lseed / manifest_digest\lstatus (1 active UQ)\l}"];
-    article_assessment_workflow_items [fillcolor="#ffe0b2", label="{article_assessment_workflow_items|id (PK)\lrun_id (FK)\lcandidate_id (FK)\lcontent_version_id (FK)\lmaterial_id / material_version_id (FK)\l}"];
-    article_assessment_workflow_labels [fillcolor="#ffe0b2", label="{article_assessment_workflow_labels|id (PK)\lrun_id (FK)\lsample_id / pass\lquality/depth/evergreen\l}"];
-    article_assessment_workflow_scores [fillcolor="#ffe0b2", label="{article_assessment_workflow_scores|id (PK)\lrun_id (FK)\lsample_id / model_run\l}"];
-    article_assessment_workflow_calls [fillcolor="#ffe0b2", label="{article_assessment_workflow_calls|id (PK)\lrun_id (FK)\ltokens / duration\l}"];
   }
 
   /* ===================== 推荐 / 信息流 ===================== */
@@ -131,11 +126,6 @@ digraph DataArkER {
   discovery_candidates -> discovery_article_assessments [label="candidate_id SET NULL", arrowhead=crow];
   material -> discovery_article_assessments [label="material_id", arrowhead=crow, color="#1a73e8"];
   material_article_states -> discovery_article_assessments [label="current_assessment_id", style=dashed, arrowhead=vee];
-  article_assessment_workflow_runs -> article_assessment_workflow_items [label="1:N", arrowhead=crow];
-  article_assessment_workflow_runs -> article_assessment_workflow_labels [arrowhead=crow];
-  article_assessment_workflow_runs -> article_assessment_workflow_scores [arrowhead=crow];
-  article_assessment_workflow_runs -> article_assessment_workflow_calls [arrowhead=crow];
-  discovery_article_content_versions -> article_assessment_workflow_items [label="1:N", arrowhead=crow];
 
   /* ================= 关系 (recommendation) ================= */
   users -> recommendation_settings [label="1:1 application relation", arrowhead=none, style=dashed];

@@ -97,7 +97,6 @@
           <!-- 独立包装，避免 Arco Spin 把评估模块挤成左侧窄列 -->
           <div class="assess-module">
             <AssessmentMetricsPanel :active="moduleTab === 'assess'" />
-            <ArticleAssessmentWorkflow :active="moduleTab === 'assess'" />
           </div>
         </a-tab-pane>
       </a-tabs>
@@ -124,7 +123,6 @@
 // 推荐中心页签壳：组装推荐/发现/评估模块，并处理跨面板的反馈与归档。
 import ArchiveRankingPanel from '@/components/recommendations/ArchiveRankingPanel.vue'
 import ArchiveRecommendPanel from '@/components/recommendations/ArchiveRecommendPanel.vue'
-import ArticleAssessmentWorkflow from '@/components/recommendations/ArticleAssessmentWorkflow.vue'
 import AssessmentMetricsPanel from '@/components/recommendations/AssessmentMetricsPanel.vue'
 import CrawlQueuePanel from '@/components/recommendations/CrawlQueuePanel.vue'
 import DailyDigestPanel from '@/components/recommendations/DailyDigestPanel.vue'

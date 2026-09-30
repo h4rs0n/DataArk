@@ -3,11 +3,9 @@ package api
 import (
 	"DataArk/archive"
 	"DataArk/assessment"
-	"DataArk/assessmenteval"
 	"DataArk/auth"
 	"DataArk/backup"
 	"DataArk/bootstrap"
-	"DataArk/database"
 	"DataArk/discovery"
 	"DataArk/jobqueue"
 	"DataArk/recommendation"
@@ -118,27 +116,6 @@ var (
 	}
 	rollbackArticleAssessments = func(ctx context.Context, options assessment.ArticleAssessmentBatchOptions) (assessment.ArticleAssessmentBatchResult, error) {
 		return assessment.RollbackArticleAssessment(ctx, assessment.ConfiguredArticleAssessor(), options)
-	}
-	getArticleAssessmentWorkflow = func() (assessmenteval.WorkflowSummary, error) {
-		return assessmenteval.LatestWorkflowSummary(database.DB(), time.Now())
-	}
-	createArticleAssessmentWorkflow = func(userID uint) (assessmenteval.WorkflowSummary, error) {
-		return assessmenteval.StartWorkflow(database.DB(), userID, time.Now())
-	}
-	getArticleAssessmentWorkflowItem = func(runID uint, pass, position int) (assessmenteval.WorkflowItemView, error) {
-		return assessmenteval.GetWorkflowItem(database.DB(), runID, pass, position)
-	}
-	saveArticleAssessmentWorkflowLabel = func(runID, userID uint, pass int, sampleID string, input assessmenteval.WorkflowLabelInput) (assessmenteval.WorkflowSummary, error) {
-		return assessmenteval.SaveWorkflowLabel(database.DB(), runID, userID, pass, sampleID, input, time.Now())
-	}
-	skipArticleAssessmentWorkflowItem = func(runID, userID uint, pass int, sampleID string) (assessmenteval.WorkflowSummary, error) {
-		return assessmenteval.SkipWorkflowItem(database.DB(), runID, userID, pass, sampleID, time.Now())
-	}
-	advanceArticleAssessmentWorkflow = func(runID uint) (assessmenteval.WorkflowSummary, error) {
-		return assessmenteval.AdvanceWorkflow(database.DB(), runID, time.Now())
-	}
-	evaluateArticleAssessmentWorkflow = func(runID uint) (assessmenteval.WorkflowSummary, error) {
-		return assessmenteval.StartEvaluation(database.DB(), runID, recommendation.ConfiguredOpenAICompatibleProvider(), time.Now())
 	}
 	startDiscoveryScheduler      = discovery.StartDiscoveryScheduler
 	startRecommendationScheduler = recommendation.StartRecommendationScheduler

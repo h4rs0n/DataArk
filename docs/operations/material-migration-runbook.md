@@ -9,6 +9,8 @@
 3. 启动新版本。Goose 顺序执行结构迁移和数据复制；随后启动代码归并强身份并回填本地归档文本。
 4. 确认下列检查通过后恢复使用。评估队列继续默认暂停，仍需 owner 手动开启。
 
+后续 Goose `000036` 删除人工标注工作流的五张表及全部数据，正文、正式评估和推荐快照继续保留。升级至该版本前须停止旧 API 并备份数据库；迁移拒绝 Down，恢复需要备份及匹配的旧版本。详见[文章评估手册](article-assessment-runbook.md#human-workflow-removal-in-goose-000036)。
+
 ## 检查
 
 ```sql
@@ -25,7 +27,7 @@ SELECT material_id, COUNT(DISTINCT domain_key) AS independent_sources
 FROM material_provenances WHERE domain_key <> '' GROUP BY material_id;
 ```
 
-迁移保留旧抽取记录 ID、金标引用、推荐条目 ID 和展示快照。强身份合并保留来源证据；旧 material ID 可通过 `material_redirects` 解析。同日历史重复推荐标记 `legacy_duplicate`，不会被删除。
+迁移保留旧抽取记录 ID、推荐条目 ID 和展示快照。强身份合并保留来源证据；旧 material ID 可通过 `material_redirects` 解析。同日历史重复推荐标记 `legacy_duplicate`，不会被删除。
 
 `migration_uncertain` 表示旧去重逻辑曾转移来源、且原 URL 无法唯一还原目标的历史证据，需按原 URL 复核。独立来源计数按发现站点域名去重，不按 endpoint 数或文章目标域名计算。
 
@@ -44,4 +46,4 @@ cd api
 go test ./bootstrap -run TestPostgresV3MigrationsRiverRestartAndPGVector -count=1
 ```
 
-测试覆盖历史内容搬迁、强身份合并、版本/评估保留、推荐快照、用户状态汇总、来源删除后的独立计数，以及 River 重启和 pgvector。
+测试覆盖历史内容搬迁、强身份合并、版本/评估保留、推荐快照、用户状态汇总、来源删除后的独立计数，以及 River 重启和 pgvector；同时验证 `000036` 删除包含旧记录的工作流表、重复启动和拒绝自动回滚。

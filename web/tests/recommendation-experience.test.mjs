@@ -72,6 +72,7 @@ test('discovery UI lists manual subscriptions without sitemap gap fill', () => {
 test('owner assessment module shows metrics and a manual LLM queue', () => {
   assert.match(view, /title="评估"/)
   assert.match(view, /AssessmentMetricsPanel/)
+  assert.doesNotMatch(surface, /ArticleAssessmentWorkflow|article-assessment-workflow|人工标注工作流/)
   assert.match(view, /class="assess-module"/)
   assert.match(metricsPanel, /\/api\/admin\/assessment\/metrics/)
   assert.match(metricsPanel, /\/api\/admin\/assessment\/queue\?limit=50/)

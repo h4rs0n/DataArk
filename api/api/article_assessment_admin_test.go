@@ -2,76 +2,12 @@ package api
 
 import (
 	"DataArk/assessment"
-	"DataArk/assessmenteval"
 	"DataArk/auth"
 	"context"
 	"net/http"
 	"testing"
 	"time"
 )
-
-func TestArticleAssessmentWorkflowIsOwnerOnlyAndCreatesServerSideRun(t *testing.T) {
-	oldGet := getArticleAssessmentWorkflow
-	oldCreate := createArticleAssessmentWorkflow
-	t.Cleanup(func() {
-		getArticleAssessmentWorkflow = oldGet
-		createArticleAssessmentWorkflow = oldCreate
-	})
-	getCalls, createCalls := 0, 0
-	getArticleAssessmentWorkflow = func() (assessmenteval.WorkflowSummary, error) {
-		getCalls++
-		return assessmenteval.WorkflowSummary{Exists: true, RunID: 9, Status: assessmenteval.WorkflowStatusPassOne, PassOne: assessmenteval.WorkflowProgress{Total: 120, Labeled: 4}}, nil
-	}
-	createArticleAssessmentWorkflow = func(userID uint) (assessmenteval.WorkflowSummary, error) {
-		createCalls++
-		if userID != 1 {
-			t.Fatalf("creator user ID = %d", userID)
-		}
-		return assessmenteval.WorkflowSummary{Exists: true, RunID: 10, Status: assessmenteval.WorkflowStatusPassOne, PassOne: assessmenteval.WorkflowProgress{Total: 120}}, nil
-	}
-	member := &auth.User{ID: 2, Role: auth.UserRoleMember}
-	owner := &auth.User{ID: 1, Role: auth.UserRoleOwner}
-	if response := performUserControllerRequest(http.MethodGet, "/admin/recommendations/article-assessment-workflow", nil, member, GetArticleAssessmentWorkflow); response.Code != http.StatusForbidden {
-		t.Fatalf("member GET status = %d", response.Code)
-	}
-	if response := performUserControllerRequest(http.MethodGet, "/admin/recommendations/article-assessment-workflow", nil, owner, GetArticleAssessmentWorkflow); response.Code != http.StatusOK || getCalls != 1 {
-		t.Fatalf("owner GET status=%d calls=%d", response.Code, getCalls)
-	}
-	response := performUserControllerRequest(http.MethodPost, "/admin/recommendations/article-assessment-workflow/runs", []byte(`{}`), owner, CreateArticleAssessmentWorkflow)
-	if response.Code != http.StatusCreated || createCalls != 1 {
-		t.Fatalf("owner create status=%d calls=%d body=%s", response.Code, createCalls, response.Body.String())
-	}
-	data := decodeResponse(t, response)["Data"].(map[string]interface{})
-	if data["runId"] != float64(10) || data["status"] != assessmenteval.WorkflowStatusPassOne {
-		t.Fatalf("workflow response = %#v", data)
-	}
-}
-
-func TestArticleAssessmentWorkflowSkipIsOwnerOnly(t *testing.T) {
-	oldSkip := skipArticleAssessmentWorkflowItem
-	t.Cleanup(func() { skipArticleAssessmentWorkflowItem = oldSkip })
-	calls := 0
-	skipArticleAssessmentWorkflowItem = func(runID, userID uint, pass int, sampleID string) (assessmenteval.WorkflowSummary, error) {
-		calls++
-		if runID != 9 || userID != 1 || pass != 1 || sampleID != "sample-30" {
-			t.Fatalf("skip arguments = run:%d user:%d pass:%d sample:%q", runID, userID, pass, sampleID)
-		}
-		return assessmenteval.WorkflowSummary{
-			Exists: true, RunID: runID, Status: assessmenteval.WorkflowStatusPassOne,
-			PassOne: assessmenteval.WorkflowProgress{Total: 120, Labeled: 30, Skipped: 1, Required: 30},
-		}, nil
-	}
-	path := "/admin/recommendations/article-assessment-workflow/runs/9/skips/1/sample-30"
-	route := "/admin/recommendations/article-assessment-workflow/runs/:runId/skips/:pass/:sampleId"
-	member := performUserPathControllerRequestWithBody(http.MethodPut, route, path, []byte(`{}`), &auth.User{ID: 2, Role: auth.UserRoleMember}, SkipArticleAssessmentWorkflowItem)
-	if member.Code != http.StatusForbidden || calls != 0 {
-		t.Fatalf("member status=%d calls=%d", member.Code, calls)
-	}
-	owner := performUserPathControllerRequestWithBody(http.MethodPut, route, path, []byte(`{}`), &auth.User{ID: 1, Role: auth.UserRoleOwner}, SkipArticleAssessmentWorkflowItem)
-	if owner.Code != http.StatusOK || calls != 1 {
-		t.Fatalf("owner status=%d calls=%d body=%s", owner.Code, calls, owner.Body.String())
-	}
-}
 
 func TestArticleAssessmentBackfillRequiresOwnerAndSupportsDryRun(t *testing.T) {
 	oldPrepare := prepareArticleAssessmentBackfill

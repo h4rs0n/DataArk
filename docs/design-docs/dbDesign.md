@@ -1,11 +1,11 @@
 # 数据库设计
 
-本文档描述仓库的 PostgreSQL schema，内容模型更新至 Goose `000035`。文中标注的运行库类型与数量是 2026-08-27 的历史快照，不能据此推断生产库已经升级。
+本文档描述仓库更新至 Goose `000036` 的 PostgreSQL schema。文中标注的运行库类型与数量是 2026-08-27 的历史快照，不能据此推断生产库已经升级。
 
-- 生产 schema **只**由 Goose 编号迁移定义：`api/migrations/000001`–`000035`。
+- 生产 schema **只**由 Goose 编号迁移定义：`api/migrations/000001`–`000036`。
 - 启动路径：`api/bootstrap.InitDB()` → `api/database.InitDB()` 连库 → `RunDatabaseMigrations()`（Goose `Up` + River migrator）。
 - GORM `AutoMigrate` **只给 SQLite 测试当方言替身**，不定义生产 schema。
-- 模型分散在 `api/material`、`api/auth`、`api/archive`、`api/discovery`、`api/assessment`、`api/assessmenteval`、`api/recommendation`。没有 `api/common/`。
+- 模型分散在 `api/material`、`api/auth`、`api/archive`、`api/discovery`、`api/assessment`、`api/recommendation`。没有 `api/common/`。
 - 改列/建表必须新增编号 Goose 文件；不要假设改 GORM tag 就会改生产库。
 
 本实例快照：`goose_db_version.version_id = 30`；扩展 `vector 0.8.3`、`pgcrypto 1.3`、`plpgsql`；`public` 下 **44** 张表（含 Goose 账本与 River）。
@@ -18,7 +18,7 @@
 - 表名通常使用复数；核心内容表明确命名为单数 `material`，评估行继续使用 `discovery_article_assessments`。
 - 主键：业务表多为 `BIGSERIAL`；`archive_tasks.id` 是 `varchar(36)`（UUID）；`archive_stats.source` 是域名主键；`discovery_duplicate_clusters.cluster_id` 是字符串主键。
 - 时间：DSN 带 `TimeZone=Asia/Shanghai`；时间列多为 `timestamptz`。
-- 外键：`archive_documents.material_id` 指向 material；`user_material_states` 指向 users 和 material。搜索/点击事件无业务 FK；推荐设置、日期、画像和屏蔽规则的 `user_id` 也没有 users FK。发现图、评估、推荐条目、金标工作流与 River 队列表的具体约束以迁移为准。
+- 外键：`archive_documents.material_id` 指向 material；`user_material_states` 指向 users 和 material。搜索/点击事件无业务 FK；推荐设置、日期、画像和屏蔽规则的 `user_id` 也没有 users FK。发现图、评估、推荐条目与 River 队列表的具体约束以迁移为准。
 - JSON：`material.authors/topics/entities` 使用 JSONB；迁移兼容原候选的 JSON 文本列。
 - 向量：`material_embeddings` 按 `(representation_id, model)` 保存，与具体内容表示关联。
 - 原始物理文件与 Meilisearch 索引在 Postgres 外；抽取正文存入 `material_representations`。
@@ -38,11 +38,11 @@ recommendation_days / feed_batches ── items ─────┤
 archive_documents / material_archive_links ─────┘
 
 discovery_article_content_versions / material_candidate_versions
-  保留历史抽取 ID 和旧候选版本映射，供金标与旧队列任务使用。
+  保留历史抽取 ID 和旧候选版本映射，供旧队列任务及历史映射使用。
 river_* / goose_db_version：队列与迁移账本。
 ```
 
-当前产品流：自动发现并记录来源 → 候选抓取/抽取 → material 内容版本 → owner 手动开启 LLM 评估队列 → 推荐读取 ready/eligible 内容。人工标注金标是独立验收工作流。
+当前产品流：自动发现并记录来源 → 候选抓取/抽取 → material 内容版本 → owner 手动开启 LLM 评估队列 → 推荐读取 ready/eligible 内容。
 
 ## 核心内容模型（`000032`–`000035`）
 
@@ -224,7 +224,7 @@ Blogroll 图。`edge_key` 唯一。`from_site_id`/`to_site_id` CASCADE。CHECK�
 
 ### `discovery_article_content_versions`
 
-保留旧抽取版本及其 ID，新增 `material_id`/`material_version_id` 对应核心版本。`(candidate_id, content_version)` 唯一；金标引用继续有效。
+保留旧抽取版本及其 ID，新增 `material_id`/`material_version_id` 对应核心版本。`(candidate_id, content_version)` 唯一。
 
 ### `discovery_duplicate_clusters` / `discovery_candidate_identities` / `discovery_duplicate_review_signals`
 
@@ -250,6 +250,8 @@ Blogroll 图。`edge_key` 唯一。`from_site_id`/`to_site_id` CASCADE。CHECK�
 
 ## 文章评估
 
+Goose `000036` 删除已下线的人工标注工作流五张专用表及其数据；正式文章评估和调用日志继续保留。该迁移不可自动回滚，恢复需要迁移前数据库备份及对应旧版本。
+
 ### `discovery_article_assessments`
 
 评估行归属 material；唯一键 `(material_id, content_version, assessor, assessor_version, policy_version)`，并指向 `material_version_id`。candidate 仅作历史入口，删除时 SET NULL。原有分数、摘要和关键词保留。评估任务使用 material ID；旧 candidate 参数通过版本映射兼容。
@@ -259,28 +261,6 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 ### `assessment_llm_calls`
 
 安全观测：禁止写 prompt 或模型正文。无业务 FK。`000029` 建表，`000030` 加 `predicted_tokens`、`predicted_ms`。索引：`(stage, created_at)`、`candidate_id`。
-
----
-
-## Owner 金标工作流（`api/assessmenteval`）
-
-私有标注，启动时 `RecoverInterruptedEvaluations`。同时最多一个活跃 run：部分唯一索引 `idx_article_assessment_workflow_active`（`status IN pass_one, waiting_pass_two, pass_two, adjudication, human_complete, evaluating, evaluation_failed`）。
-
-### `article_assessment_workflow_runs`
-
-种子、manifest 摘要、策略版本、双 pass 时间戳、评估 generation、模型/prompt、`report_json`。
-
-### `article_assessment_workflow_items`
-
-样本。`(run_id, sample_id)`、`(run_id, position)` 唯一；pass two / adjudication 位置有部分唯一索引。`candidate_id` **RESTRICT**；`content_version_id` **RESTRICT**（避免标金标时删正文）。`000024` 增加 pass one skip 审计。
-
-### `article_assessment_workflow_labels`
-
-人工分。`(run_id, sample_id, pass)` 唯一。CHECK：`pass` 1–3；`quality`/`depth`/`evergreen` 0–100。
-
-### `article_assessment_workflow_scores` / `article_assessment_workflow_calls`
-
-模型打分（`model_run` 1–2）与 token 观测。均 `run_id` CASCADE。
 
 ---
 
@@ -351,9 +331,9 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
 ## 迁移账本
 
-`goose_db_version`：`id`、`version_id`、`is_applied`、`tstamp`。仓库当前最新迁移为 **35**（`000035_material_relations`），部署版本须查询实际数据库确认。
+`goose_db_version`：`id`、`version_id`、`is_applied`、`tstamp`。仓库当前最新迁移为 **36**（`000036_remove_article_assessment_workflow`），部署版本须查询实际数据库确认。
 
-早期推荐迁移的 Down 多为 **保留数据的 no-op**（`SELECT 1`）；`000032`–`000035` 的 Down 会主动报错，要求恢复升级前备份和匹配的旧二进制。不要把 Down 当成可逆删表或生产回滚方式。
+早期推荐迁移的 Down 多为 **保留数据的 no-op**（`SELECT 1`）；`000032`–`000036` 的 Down 会主动报错，要求恢复升级前备份和匹配的旧二进制。不要把 Down 当成可逆删表或生产回滚方式。
 
 `material_migration_checkpoints` 保存 `legacy-storage-copied`、`strong-identities`、`archive-content`、`v3-compatibility`。后面三项分别控制启动时的强身份归并、归档内容回填和兼容性回填；已完成的工作不会每次重启重跑。
 
@@ -407,4 +387,4 @@ archive_stats
   created_at / updated_at
 ```
 
-发现与推荐的外键见上文「领域关系」。仓库的完整列清单与约束以编号 Goose 迁移为准；核对具体部署时查询其 `information_schema.columns` / `pg_constraint`。本文历史实例的类型和数量未在本次文档核对中重新验证。关系概览见 `docs/design-docs/dataark_er.dot`，图中虚线标注的用户归属为应用关系，不代表数据库 FK；代码侧模型分别为 `auth.User`、`archive.*`、`discovery.*`、`assessment.*`、`assessmenteval.*`、`recommendation.*`。
+发现与推荐的外键见上文「领域关系」。仓库的完整列清单与约束以编号 Goose 迁移为准；核对具体部署时查询其 `information_schema.columns` / `pg_constraint`。本文历史实例的类型和数量未在本次文档核对中重新验证。关系概览见 `docs/design-docs/dataark_er.dot`，图中虚线标注的用户归属为应用关系，不代表数据库 FK；代码侧模型分别为 `auth.User`、`archive.*`、`discovery.*`、`assessment.*`、`recommendation.*`。
