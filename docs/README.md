@@ -12,8 +12,4 @@
 | [前端易错点](references/frontend-pitfalls.md) | Arco 组件参数与浏览器验证经验 |
 | [本次事实核对记录](references/documentation-audit-2026-09-30.md) | 已发现的不一致、修订及代码依据 |
 
-全部历史执行计划已归档至 `exec-plans/done/`。目的、实施步骤、函数路径、测试输出和中途决策描述的是当时的工作，可能已经被后续实现取代；每篇已补充归档说明。查当前操作时使用上表手册，查改动背景时使用历史计划。
-
-[归档一致性与覆盖率计划](exec-plans/done/archive-consistency-and-backend-coverage.md) 也已归档。其未勾选的 100% 覆盖率目标没有在本次核对中完成或重新测量。
-
 代码事实入口：HTTP 路由在 `api/api/routes.go`，启动数据库迁移与 checkpoint 在 `api/bootstrap/database.go`，生产 schema 在 `api/migrations/`，运行参数在 `api/flag/flag.go`，队列在 `api/jobqueue/jobqueue.go`，Compose 环境变量映射在 `docker/docker-compose.yml`。
