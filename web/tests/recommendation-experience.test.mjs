@@ -97,6 +97,16 @@ test('owner assessment module shows metrics and a manual LLM queue', () => {
   assert.match(metricsPanel, /wasRunning \|\| queue.state === 'running'/)
   assert.match(metricsPanel, /void loadMetrics\(true\)/)
   assert.match(metricsPanel, /入队后仍需点击/)
+  assert.match(metricsPanel, /AssessmentQueueRunResult/)
+  assert.match(metricsPanel, /'dedupeRun' in data/)
+  assert.match(metricsPanel, /if \(dedupeRun\.value\) return '评估进行中'/)
+  assert.match(metricsPanel, /评估进行中：全库查重构建中，完成后自动开始 LLM 评估/)
+  assert.match(metricsPanel, /评估任务队列已开始执行/)
+  assert.match(metricsPanel, /class="dedupe-banner"/)
+  assert.match(metricsPanel, /runningQueue \|\| dedupeRun !== null/)
+  assert.match(metricsPanel, /dedupeRun \? 'queue-state-running'/)
+  assert.match(metricsPanel, /dedupeProgressLabel/)
+  assert.match(metricsPanel, /dedupeRun\.value \? 5000 : 10000/)
 })
 
 test('candidate article titles open the source in a safe new tab', () => {

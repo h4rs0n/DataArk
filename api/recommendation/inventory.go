@@ -39,7 +39,12 @@ func GetCandidateInventory(userID uint) (*CandidateInventory, error) {
 	}
 	var candidates []DiscoveryCandidate
 	query := discovery.ExcludeBlacklistedCandidateDomains(db, "")
-	if err := query.Where("processing_state = ? AND eligibility_state = ? AND dedupe_state = ? AND (representative_id IS NULL OR representative_id = id)",
+	var filterErr error
+	query, filterErr = discovery.FilterDedupeAssessmentCandidates(query)
+	if filterErr != nil {
+		return nil, filterErr
+	}
+	if err := query.Where("processing_state = ? AND eligibility_state = ? AND dedupe_state = ?",
 		discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady).Find(&candidates).Error; err != nil {
 		return nil, err
 	}

@@ -62,6 +62,11 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 	// 抽取完成但去重未完成：只补去重并交接评估，避免重复抓取。
 	// 已 pending 的评估不在这里短路，否则正文更新无法再进入抽取。
 	if candidate.ProcessingState == DiscoveryProcessingReady && candidate.DedupeState == DiscoveryDedupePending && candidate.ContentHash != "" {
+		if active, err := DedupeActive(); err != nil {
+			return err
+		} else if active {
+			return RegisterCandidateDedupe(ctx, candidate.ID)
+		}
 		if err := ResolveCandidateDuplicates(ctx, candidate.ID); err != nil {
 			return err
 		}
@@ -123,6 +128,11 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 	if err := commitExtractedArticle(candidate.ID, expected, finalURL, response.FetchedAt, article, now); err != nil {
 		return err
 	}
+	if active, err := DedupeActive(); err != nil {
+		return err
+	} else if active {
+		return RegisterCandidateDedupe(ctx, candidate.ID)
+	}
 	if err := ResolveCandidateDuplicates(ctx, candidate.ID); err != nil {
 		return err
 	}
@@ -140,6 +150,12 @@ func enqueueCandidateForAssessment(ctx context.Context, candidateID uint) error 
 		return err
 	}
 	if candidate.ProcessingState != DiscoveryProcessingReady {
+		return nil
+	}
+	if candidate.RepresentativeID != nil && *candidate.RepresentativeID != candidate.ID {
+		return nil
+	}
+	if candidate.AssessmentState == "ready" && candidate.CurrentAssessmentID != nil {
 		return nil
 	}
 	return UpdateCandidate(db, candidate.ID, map[string]interface{}{

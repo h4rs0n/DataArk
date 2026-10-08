@@ -6,6 +6,7 @@ import (
 	"DataArk/auth"
 	"DataArk/backup"
 	"DataArk/bootstrap"
+	"DataArk/dedupe"
 	"DataArk/discovery"
 	"DataArk/jobqueue"
 	"DataArk/recommendation"
@@ -18,6 +19,22 @@ import (
 )
 
 // deps.go 保存可在测试中替换的未导出函数变量。
+
+func init() {
+	// 延迟评估的释放必须与 owner 手动执行完全一致：先登记待评估文章，再恢复暂停队列。
+	discovery.ReleaseDeferredAssessment = func(ctx context.Context) error {
+		queue, queueAvailable := jobqueue.Default()
+		controller, controllerAvailable := jobqueue.AssessmentControl()
+		if !queueAvailable || !controllerAvailable {
+			return errors.New("article assessment queue is unavailable")
+		}
+		if err := assessment.RecoverDueJobs(ctx, queue, time.Now()); err != nil {
+			return err
+		}
+		_, err := controller.Run(ctx)
+		return err
+	}
+}
 
 var (
 	checkArchiveConsistency            = search.CheckArchiveConsistency
@@ -92,23 +109,51 @@ var (
 		}
 		return controller.Snapshot(ctx, 50)
 	}
-	getAssessmentQueue = func(ctx context.Context, limit int) (*jobqueue.CrawlQueueSnapshot, error) {
+	getAssessmentQueue = func(ctx context.Context, limit int) (*jobqueue.CrawlQueueSnapshot, *dedupe.Run, error) {
 		controller, available := jobqueue.AssessmentControl()
 		if !available {
-			return nil, errors.New("article assessment queue is unavailable")
+			return nil, nil, errors.New("article assessment queue is unavailable")
 		}
-		return controller.Snapshot(ctx, limit)
+		snapshot, err := controller.Snapshot(ctx, limit)
+		if err != nil {
+			return nil, nil, err
+		}
+		// 评估被延迟到查重构建完成时，快照必须携带构建进度，否则面板只显示误导性的暂停态。
+		run, deferred, err := discovery.PendingDedupeAssessmentRun(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !deferred {
+			return snapshot, nil, nil
+		}
+		return snapshot, &run, nil
 	}
-	runAssessmentQueue = func(ctx context.Context) (*jobqueue.CrawlQueueSnapshot, error) {
+	runAssessmentQueue = func(ctx context.Context) (*jobqueue.CrawlQueueSnapshot, *dedupe.Run, error) {
 		queue, queueAvailable := jobqueue.Default()
 		controller, controllerAvailable := jobqueue.AssessmentControl()
 		if !queueAvailable || !controllerAvailable {
-			return nil, errors.New("article assessment queue is unavailable")
+			return nil, nil, errors.New("article assessment queue is unavailable")
+		}
+		// 查重未生效时先自动构建全库去重运行；评估在其应用完成后由恢复流程自动释放。
+		run, proceed, err := discovery.EnsureDedupeForAssessment(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !proceed {
+			snapshot, err := controller.Snapshot(ctx, 50)
+			if err != nil {
+				return nil, nil, err
+			}
+			return snapshot, &run, nil
 		}
 		if err := assessment.RecoverDueJobs(ctx, queue, time.Now()); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return controller.Run(ctx)
+		snapshot, err := controller.Run(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return snapshot, nil, nil
 	}
 	prepareArticleAssessmentBackfill = func(ctx context.Context, options assessment.ArticleAssessmentBatchOptions) (assessment.ArticleAssessmentBatchResult, error) {
 		queue, _ := jobqueue.Default()

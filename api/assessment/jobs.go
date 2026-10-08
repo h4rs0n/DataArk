@@ -23,6 +23,11 @@ func RecoverDueJobs(ctx context.Context, queue ArticleJobEnqueuer, now time.Time
 		return nil
 	}
 	query := discovery.Candidates(db).Select(assessmentRecoveryColumns).Where("processing_state = ? AND dedupe_state = ? AND assessment_state = ? AND (next_processing_at IS NULL OR next_processing_at <= ?)", discovery.DiscoveryProcessingReady, discovery.DiscoveryDedupeReady, discovery.DiscoveryAssessmentPending, now)
+	var filterErr error
+	query, filterErr = discovery.FilterDedupeAssessmentCandidates(query)
+	if filterErr != nil {
+		return filterErr
+	}
 	query = discovery.ExcludeBlacklistedCandidateDomains(query, "")
 	var pending []discovery.DiscoveryCandidate
 	if err := query.Order("id").Find(&pending).Error; err != nil {
@@ -43,6 +48,16 @@ func EnqueuePending(ctx context.Context, queue ArticleJobEnqueuer, candidateID u
 	var candidate discovery.DiscoveryCandidate
 	if err := db.First(&candidate, candidateID).Error; err != nil {
 		return err
+	}
+	qualification, err := discovery.ArticleDedupeQualification(db.WithContext(ctx), candidate.MaterialID)
+	if err != nil {
+		return err
+	}
+	if qualification.Active && (!qualification.Ready || !qualification.Representative) {
+		return nil
+	}
+	if !qualification.Active && !qualification.ExactOnly && candidate.RepresentativeID != nil && *candidate.RepresentativeID != candidate.ID {
+		return nil
 	}
 	if candidate.AssessmentState != discovery.DiscoveryAssessmentPending {
 		return nil

@@ -54,6 +54,7 @@ type JobEnqueuer interface {
 }
 
 type Handlers struct {
+	Dedupe                func(context.Context, DedupeArgs) error
 	FetchSource           func(context.Context, uint) error
 	ScanBlogroll          func(context.Context, uint) error
 	BackfillSite          func(context.Context, uint) error
@@ -138,6 +139,7 @@ func (AssessArticleArgs) Kind() string { return AssessArticleJobKind }
 func (AssessArticleArgs) InsertOpts() river.InsertOpts {
 	opts := uniqueByArgsOpts()
 	opts.Queue = AssessmentQueueName
+	opts.UniqueOpts.ByState = []rivertype.JobState{rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled}
 	// 评估队列默认暂停，失败后由 owner 再次手动执行，River 不得自行重试。
 	opts.MaxAttempts = 1
 	return opts
@@ -351,6 +353,29 @@ WHERE kind = $2
 	return result.RowsAffected()
 }
 
+// reconcileDedupeJobs 把上一进程中断的 running 去重作业改回 available。River 的
+// rescuer 默认要等 1 小时才回收孤儿 running 作业，而按参数去重的唯一约束在此期间
+// 会挡住恢复流程的重新入队，运行批次将长时间停顿；启动即回收是及时的恢复路径。
+func reconcileDedupeJobs(ctx context.Context, executor contextSQLExecer) (int64, error) {
+	result, err := executor.ExecContext(ctx, `
+UPDATE river_job
+SET state = 'available'::river_job_state,
+	attempted_at = NULL,
+	attempted_by = NULL,
+	scheduled_at = now(),
+	max_attempts = GREATEST(attempt, 1)
+WHERE kind = $1
+  AND queue = $2
+  AND state = 'running'`,
+		DedupeJobKind,
+		DedupeQueueName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (queue *riverQueue) EnqueueFetchSource(ctx context.Context, sourceID uint) error {
 	_, err := queue.client.Insert(ctx, FetchSourceArgs{SourceID: sourceID}, nil)
 	return err
@@ -383,15 +408,23 @@ func (queue *riverQueue) EnqueueAssessArticles(ctx context.Context, targets []As
 	if len(targets) == 0 {
 		return nil
 	}
-	live, err := liveAssessmentTargets(ctx, stdSQLRowsQuerier{db: queue.db})
-	if err != nil {
-		return err
-	}
-	for _, batch := range assessmentInsertBatches(targets, live) {
-		if _, err := queue.client.InsertMany(ctx, batch); err != nil {
+	for start := 0; start < len(targets); start += assessmentInsertChunkSize {
+		end := start + assessmentInsertChunkSize
+		if end > len(targets) {
+			end = len(targets)
+		}
+		chunk := targets[start:end]
+		live, err := liveAssessmentTargetsFor(ctx, queue.db, chunk)
+		if err != nil {
 			return err
 		}
+		for _, batch := range assessmentInsertBatches(chunk, live) {
+			if _, err := queue.client.InsertMany(ctx, batch); err != nil {
+				return err
+			}
+		}
 	}
+
 	return nil
 }
 
@@ -449,6 +482,7 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 	client, err := river.NewClient(riverdatabasesql.New(sqlDB), &river.Config{
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault:  {MaxWorkers: 4},
+			DedupeQueueName:     {MaxWorkers: 2},
 			DiscoveryQueueName:  {MaxWorkers: 4},
 			AssessmentQueueName: {MaxWorkers: assessmentWorkers},
 		},
@@ -488,6 +522,13 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 	}
 	if reconciledAssessments > 0 {
 		log.Printf("reconciled %d assessment jobs into paused queue %s", reconciledAssessments, AssessmentQueueName)
+	}
+	reconciledDedupes, err := reconcileDedupeJobs(ctx, sqlDB)
+	if err != nil {
+		return func() {}, fmt.Errorf("reconcile dedupe jobs: %w", err)
+	}
+	if reconciledDedupes > 0 {
+		log.Printf("reconciled %d interrupted dedupe jobs into queue %s", reconciledDedupes, DedupeQueueName)
 	}
 	if err := client.Start(ctx); err != nil {
 		return func() {}, err
@@ -686,7 +727,7 @@ SELECT
   COUNT(*) FILTER (WHERE state IN ('available', 'pending', 'retryable', 'scheduled')),
   COUNT(*) FILTER (WHERE state = 'running'),
   COUNT(*) FILTER (WHERE state = 'completed' AND finalized_at >= $2),
-  COUNT(*) FILTER (WHERE state IN ('cancelled', 'discarded') AND finalized_at >= $2),
+  COUNT(*) FILTER (WHERE state IN ('cancelled', 'discarded') AND finalized_at >= $2 AND NOT (metadata @> '{"dedupe_superseded":true}'::jsonb)),
   COUNT(*) FILTER (
     WHERE state IN ('available', 'pending', 'running')
        OR (state IN ('retryable', 'scheduled') AND scheduled_at <= now())
@@ -891,6 +932,7 @@ func workerEvent(name string, jobID string, event observability.Event, err error
 }
 
 func registerWorkers(workers *river.Workers, handlers Handlers) {
+	river.AddWorker(workers, &dedupeWorker{handler: handlers.Dedupe})
 	river.AddWorker(workers, &fetchSourceWorker{handler: handlers.FetchSource})
 	river.AddWorker(workers, &scanBlogrollWorker{handler: handlers.ScanBlogroll})
 	river.AddWorker(workers, &backfillSiteWorker{handler: handlers.BackfillSite})

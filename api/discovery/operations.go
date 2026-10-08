@@ -97,7 +97,7 @@ func countSiteCandidates(siteID uint, stats *DiscoverySiteOperationalStats) erro
 		args   []interface{}
 	}{
 		{&stats.CandidateCount, "", nil},
-		{&stats.EligibleCandidateCount, "candidates.processing_state = ? AND candidates.eligibility_state = ? AND candidates.dedupe_state = ? AND (candidates.representative_id IS NULL OR candidates.representative_id = candidates.id)", []interface{}{DiscoveryProcessingReady, DiscoveryEligibilityEligible, DiscoveryDedupeReady}},
+		{&stats.EligibleCandidateCount, "candidates.processing_state = ? AND candidates.eligibility_state = ? AND candidates.dedupe_state = ? AND " + DedupeRepresentativeClause("candidates."), []interface{}{DiscoveryProcessingReady, DiscoveryEligibilityEligible, DiscoveryDedupeReady}},
 		{&stats.DuplicateCandidateCount, "candidates.representative_id IS NOT NULL AND candidates.representative_id <> candidates.id", nil},
 		{&stats.ExtractedCandidateCount, "candidates.processing_state = ?", []interface{}{DiscoveryProcessingReady}},
 	}

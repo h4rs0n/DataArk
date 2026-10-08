@@ -24,6 +24,7 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 		return err
 	}
 	handlers := jobqueue.Handlers{
+		Dedupe: discovery.RunDedupeTask,
 		FetchSource: func(ctx context.Context, sourceID uint) error {
 			return ignoreBlacklisted(discovery.RunFetchDiscoverySourceJob(ctx, sourceID))
 		},
@@ -69,6 +70,7 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 		now := time.Now()
 		return errors.Join(
 			discovery.RecoverDueJobs(ctx, queue, now),
+			discovery.RecoverDedupeJobs(ctx),
 			assessment.RecoverDueJobs(ctx, queue, now),
 			recommendation.RecoverDueJobs(ctx, queue, now),
 		)
@@ -81,7 +83,9 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 	if queue, ok := jobqueue.Default(); ok {
 		discovery.SetJobQueue(queue)
 	}
+	stopDedupeRecovery := discovery.StartDedupeRecovery(ctx)
 	return func() {
+		stopDedupeRecovery()
 		discovery.SetJobQueue(nil)
 		stop()
 	}, nil

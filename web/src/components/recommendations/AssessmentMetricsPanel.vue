@@ -6,15 +6,16 @@
         <span>文章爬取自动执行；LLM 评估排队等待，点击后单次消费当前待评估任务，不含 prompt 或正文</span>
       </div>
       <a-space wrap>
-        <span class="queue-state" :class="`queue-state-${queue.state}`">{{ queueStateLabel }}</span>
+        <span class="queue-state" :class="dedupeRun ? 'queue-state-running' : `queue-state-${queue.state}`">{{ queueStateLabel }}</span>
         <a-button :loading="loading" @click="refreshPanel">
           刷新指标
         </a-button>
-        <a-button type="primary" :loading="runningQueue" :disabled="!queue.canRun || queue.state === 'running'" @click="runQueue">
+        <a-button type="primary" :loading="runningQueue || dedupeRun !== null" :disabled="!queue.canRun || queue.state === 'running'" @click="runQueue">
           执行 LLM 评估
         </a-button>
       </a-space>
     </div>
+    <p v-if="dedupeRun" class="dedupe-banner">{{ dedupeProgressLabel }}</p>
     <a-spin :loading="loading" class="metrics-spin">
       <p v-if="errorMessage" class="ops-error">{{ errorMessage }}</p>
       <div v-else class="metrics-grid">
@@ -84,6 +85,29 @@ interface AssessmentQueueSnapshot {
   counts: { pending: number; running: number; succeeded24h: number; failed24h: number }
 }
 
+interface DedupeRunSummary {
+  id: number
+  status: string
+  highWaterId?: number
+  cursor?: number
+  indexed?: number
+  processed?: number
+  applied?: number
+}
+
+// 查重未生效时后端返回 { snapshot, dedupeRun }：评估被延迟到去重应用完成后自动开始。
+type AssessmentQueueRunResult =
+  | AssessmentQueueSnapshot
+  | { snapshot: AssessmentQueueSnapshot; dedupeRun: DedupeRunSummary }
+
+// 两个评估队列端点在延迟期都返回 { snapshot, dedupeRun } 形状，其余时候直接返回快照。
+const unwrapQueueData = (data: AssessmentQueueRunResult): { snapshot: AssessmentQueueSnapshot; run: DedupeRunSummary | null } => {
+  if (data && 'dedupeRun' in data) {
+    return { snapshot: data.snapshot, run: data.dedupeRun }
+  }
+  return { snapshot: data as AssessmentQueueSnapshot, run: null }
+}
+
 const emptyQueue = (): AssessmentQueueSnapshot => ({
   mode: 'manual',
   state: 'idle',
@@ -104,6 +128,7 @@ const emptyMetrics = (): AssessmentMetrics => ({
 
 const metrics = reactive(emptyMetrics())
 const queue = reactive(emptyQueue())
+const dedupeRun = ref<DedupeRunSummary | null>(null)
 const loading = ref(false)
 const running = ref(false)
 const runningQueue = ref(false)
@@ -113,11 +138,38 @@ const limit = ref(250)
 const retryFailures = ref(false)
 let queueTimer: ReturnType<typeof window.setTimeout> | null = null
 
-const queueStateLabel = computed(() => ({
-  idle: '队列空闲',
-  waiting: '等待手动执行',
-  running: '正在执行',
-}[queue.state]))
+const queueStateLabel = computed(() => {
+  if (dedupeRun.value) return '评估进行中'
+  return ({
+    idle: '队列空闲',
+    waiting: '等待手动执行',
+    running: '正在执行',
+  } as Record<string, string>)[queue.state]
+})
+
+const dedupePhaseLabels: Record<string, string> = {
+  indexing: '索引指纹',
+  previewing: '聚类匹配',
+  ready: '等待应用',
+  applying: '应用抑制',
+  active: '去重已生效',
+}
+
+// 延迟期把整个编排呈现为一次进行中的评估：查重构建只是它的第一个阶段。
+const dedupeProgressLabel = computed(() => {
+  const run = dedupeRun.value
+  if (!run || !run.id) return '评估进行中：全库查重构建登记中，完成后自动开始 LLM 评估'
+  const phase = dedupePhaseLabels[run.status] || run.status
+  if ((run.status === 'indexing' || run.status === 'previewing') && (run.highWaterId || 0) > 0) {
+    const pct = Math.min(100, Math.round(((run.cursor || 0) / (run.highWaterId as number)) * 100))
+    const done = run.status === 'indexing' ? run.indexed || 0 : run.processed || 0
+    return `评估进行中：全库查重（运行 #${run.id}）· ${phase} ${pct}%（已处理 ${done} 篇），完成后自动开始 LLM 评估`
+  }
+  if (run.status === 'applying') {
+    return `评估进行中：全库查重（运行 #${run.id}）· ${phase}（已应用 ${run.applied || 0} 组），完成后自动开始 LLM 评估`
+  }
+  return `评估进行中：全库查重（运行 #${run.id}）· ${phase}，即将自动开始 LLM 评估`
+})
 
 const remainingQueueJobs = computed(() => queue.counts.pending + queue.counts.running)
 
@@ -186,18 +238,20 @@ const clearQueueTimer = () => {
 const scheduleQueueRefresh = () => {
   clearQueueTimer()
   if (!props.active) return
-  const delay = queue.state === 'running' ? 2000 : 10000
+  const delay = queue.state === 'running' ? 2000 : dedupeRun.value ? 5000 : 10000
   queueTimer = window.setTimeout(() => { void loadQueue(true) }, delay)
 }
 
-// 加载暂停中的 LLM 评估作业快照；执行中顺带静默刷新本次任务指标。
+// 加载暂停中的 LLM 评估作业快照；延迟期一并刷新查重构建进度；执行中顺带静默刷新本次任务指标。
 const loadQueue = async (silent = false) => {
   const wasRunning = queue.state === 'running'
   try {
-    const data = await requestJSON<AssessmentQueueSnapshot>('/api/admin/assessment/queue?limit=50')
-    Object.assign(queue, emptyQueue(), data, {
-      counts: { ...emptyQueue().counts, ...(data?.counts || {}) },
+    const data = await requestJSON<AssessmentQueueRunResult>('/api/admin/assessment/queue?limit=50')
+    const { snapshot, run } = unwrapQueueData(data)
+    Object.assign(queue, emptyQueue(), snapshot, {
+      counts: { ...emptyQueue().counts, ...(snapshot?.counts || {}) },
     })
+    dedupeRun.value = run
   } catch (error) {
     if (!silent) {
       errorMessage.value = error instanceof Error ? error.message : '加载评估队列失败'
@@ -217,11 +271,17 @@ const refreshPanel = async () => {
 const runQueue = async () => {
   try {
     runningQueue.value = true
-    const data = await requestJSON<AssessmentQueueSnapshot>('/api/admin/assessment/queue/run', { method: 'POST' })
-    Object.assign(queue, emptyQueue(), data, {
-      counts: { ...emptyQueue().counts, ...(data?.counts || {}) },
+    const data = await requestJSON<AssessmentQueueRunResult>('/api/admin/assessment/queue/run', { method: 'POST' })
+    const { snapshot, run } = unwrapQueueData(data)
+    Object.assign(queue, emptyQueue(), snapshot, {
+      counts: { ...emptyQueue().counts, ...(snapshot?.counts || {}) },
     })
-    Message.success('评估任务队列已开始执行')
+    dedupeRun.value = run
+    if (run) {
+      Message.success('评估进行中：全库查重构建中，完成后自动开始 LLM 评估')
+    } else {
+      Message.success('评估任务队列已开始执行')
+    }
     void loadMetrics(true)
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '启动评估任务队列失败')
@@ -411,6 +471,15 @@ onUnmounted(() => {
 .queue-state-waiting {
   background: #fff7e8;
   color: #d46b08;
+}
+
+.dedupe-banner {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #e8f3ff;
+  color: #165dff;
+  font-size: 13px;
 }
 
 .queue-summary {

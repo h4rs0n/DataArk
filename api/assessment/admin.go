@@ -45,7 +45,6 @@ func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAsses
 	limit := normalizeArticleAssessmentBatchLimit(options.Limit)
 	query := discovery.Candidates(db.WithContext(ctx)).Model(&discovery.DiscoveryCandidate{}).
 		Where("processing_state = ? AND dedupe_state = ? AND content_version > 0", discovery.DiscoveryProcessingReady, discovery.DiscoveryDedupeReady).
-		Where("representative_id IS NULL OR representative_id = id").
 		Where(`NOT EXISTS (
 SELECT 1 FROM discovery_article_assessments active
 WHERE active.id = discovery_candidates.current_assessment_id
@@ -55,6 +54,11 @@ WHERE active.id = discovery_candidates.current_assessment_id
   AND active.assessor_version = ?
   AND active.policy_version = ?
 )`, assessor.Name(), assessor.Version(), assessor.PolicyVersion())
+	var filterErr error
+	query, filterErr = discovery.FilterDedupeAssessmentCandidates(query)
+	if filterErr != nil {
+		return result, filterErr
+	}
 	if !options.RetryFailures {
 		query = query.Where("assessment_error IS NULL OR assessment_error NOT LIKE ?", assessor.PolicyVersion()+":%")
 	}

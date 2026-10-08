@@ -1,7 +1,10 @@
 // Package material owns content identity independently of discovery and storage.
 package material
 
-import "time"
+import (
+	"DataArk/dedupe"
+	"time"
+)
 
 // Material describes a work, not its URL, file, extraction or assessment job.
 // Lists are JSON text in Go and JSONB in PostgreSQL.
@@ -142,5 +145,5 @@ type ArchiveLink struct {
 func (ArchiveLink) TableName() string { return "material_archive_links" }
 
 func Models() []interface{} {
-	return []interface{}{&Material{}, &Version{}, &Representation{}, &Identity{}, &Redirect{}, &Provenance{}, &ArticleState{}, &CandidateVersion{}, &ArchiveLink{}, &Embedding{}, &UserState{}}
+	return append(dedupe.Models(), []interface{}{&Material{}, &Version{}, &Representation{}, &Identity{}, &Redirect{}, &Provenance{}, &ArticleState{}, &CandidateVersion{}, &ArchiveLink{}, &Embedding{}, &UserState{}}...)
 }

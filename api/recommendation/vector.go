@@ -52,7 +52,7 @@ func EmbedReadyDiscoveryCandidates(ctx context.Context, limit int, provider Embe
 	var candidates []DiscoveryCandidate
 	if err := discovery.Candidates(db).Where("processing_state = ? AND eligibility_state = ? AND dedupe_state = ?",
 		discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady).
-		Where("representative_id IS NULL OR representative_id = id").
+		Where(discovery.DedupeRepresentativeClause("discovery_candidates.")).
 		Where("embedding_model = '' OR embedding_model IS NULL").
 		Order("last_seen_at desc, id desc").
 		Limit(limit).
@@ -116,7 +116,7 @@ func loadPGVectorCandidateIDs(ctx context.Context, profile *UserRecommendationPr
 			JOIN material_representations r ON r.version_id = m.current_version_id AND r.kind = 'text' AND r.role = 'body'
 			JOIN LATERAL (SELECT embedding FROM material_embeddings WHERE representation_id = r.id ORDER BY updated_at DESC LIMIT 1) e ON TRUE
 			WHERE processing_state = ? AND eligibility_state = ? AND dedupe_state = ?
-			  AND (representative_id IS NULL OR representative_id = c.id)
+			  AND `+discovery.DedupeRepresentativeClause("c.")+`
 			  AND embedding IS NOT NULL
 			ORDER BY embedding <=> ?::vector
 			LIMIT ?`,

@@ -20,6 +20,15 @@ func RunDatabaseMigrations(database *gorm.DB) error {
 		return err
 	}
 
+	// Application migrations may index River-owned tables. Initialize/upgrade
+	// River first so a fresh database follows the same path as an existing one.
+	migrator, err := rivermigrate.New(riverdatabasesql.New(sqlDB), nil)
+	if err != nil {
+		return err
+	}
+	if _, err := migrator.Migrate(context.Background(), rivermigrate.DirectionUp, nil); err != nil {
+		return err
+	}
 	goose.SetBaseFS(migrations.FS)
 	if err := goose.SetDialect("postgres"); err != nil {
 		return err
@@ -27,10 +36,5 @@ func RunDatabaseMigrations(database *gorm.DB) error {
 	if err := goose.Up(sqlDB, "."); err != nil {
 		return err
 	}
-	migrator, err := rivermigrate.New(riverdatabasesql.New(sqlDB), nil)
-	if err != nil {
-		return err
-	}
-	_, err = migrator.Migrate(context.Background(), rivermigrate.DirectionUp, nil)
-	return err
+	return nil
 }

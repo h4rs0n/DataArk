@@ -66,10 +66,16 @@ func assessMaterialRecord(ctx context.Context, candidate discovery.DiscoveryCand
 	if candidate.ProcessingState != discovery.DiscoveryProcessingReady || candidate.DedupeState != discovery.DiscoveryDedupeReady || candidate.ContentVersion == 0 {
 		return nil
 	}
+	qualification, err := discovery.ArticleDedupeQualification(db.WithContext(ctx), candidate.MaterialID)
+	if err != nil {
+		return err
+	}
+	if qualification.Active && (!qualification.Ready || !qualification.Representative) {
+		return nil
+	}
 	isRepresentative := candidate.RepresentativeID == nil || *candidate.RepresentativeID == candidate.ID
-	if !isRepresentative && candidate.EligibilityReasons == "duplicate_non_representative" {
+	if !qualification.ExactOnly && !isRepresentative && candidate.EligibilityReasons == "duplicate_non_representative" {
 		return updateAssessmentMaterial(candidate, map[string]interface{}{
-			"assessment_state": discovery.DiscoveryAssessmentReady, "assessment_error": "",
 			"eligibility_state":   discovery.DiscoveryEligibilityIneligible,
 			"eligibility_reasons": "duplicate_non_representative", "updated_at": discovery.Timestamp(),
 		}).Error
@@ -105,6 +111,13 @@ func assessMaterialRecord(ctx context.Context, candidate discovery.DiscoveryCand
 		}
 	} else if validationErr := validateAssessmentResult(result); validationErr != nil {
 		return retainCurrentModelOrFail(candidate, currentAssessment, hasCurrent, enhancedAssessmentError(assessor, validationErr))
+	}
+	qualification, err = discovery.ArticleDedupeQualification(db.WithContext(ctx), candidate.MaterialID)
+	if err != nil {
+		return err
+	}
+	if qualification.Active && (!qualification.Ready || !qualification.Representative) {
+		return nil
 	}
 	if err := applyAssessmentArticleMetadata(candidate, result); err != nil {
 		return err

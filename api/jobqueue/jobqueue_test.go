@@ -330,7 +330,7 @@ func TestCountRiverQueueJobsUsesUncappedSQLCounts(t *testing.T) {
 		"COUNT(*) FILTER (WHERE state IN ('available', 'pending', 'retryable', 'scheduled'))",
 		"COUNT(*) FILTER (WHERE state = 'running')",
 		"COUNT(*) FILTER (WHERE state = 'completed' AND finalized_at >= $2)",
-		"COUNT(*) FILTER (WHERE state IN ('cancelled', 'discarded') AND finalized_at >= $2)",
+		"COUNT(*) FILTER (WHERE state IN ('cancelled', 'discarded') AND finalized_at >= $2 AND NOT (metadata @> '{\"dedupe_superseded\":true}'::jsonb))",
 		"FROM river_job",
 		"WHERE queue = $1 AND kind IN ($3)",
 	} {
@@ -419,6 +419,31 @@ func TestReconcileManualAssessmentJobsMovesActiveAndResetsInterruptedWork(t *tes
 	}
 	if len(executor.args) != 2 || executor.args[0] != AssessmentQueueName || executor.args[1] != AssessArticleJobKind {
 		t.Fatalf("migration args = %#v", executor.args)
+	}
+}
+
+func TestReconcileDedupeJobsResetsInterruptedWork(t *testing.T) {
+	executor := &recordingSQLExecer{rows: 2}
+	reconciled, err := reconcileDedupeJobs(context.Background(), executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconciled != 2 {
+		t.Fatalf("reconciled jobs = %d, want 2", reconciled)
+	}
+	for _, fragment := range []string{
+		"UPDATE river_job",
+		"state = 'available'::river_job_state",
+		"kind = $1",
+		"queue = $2",
+		"AND state = 'running'",
+	} {
+		if !strings.Contains(executor.query, fragment) {
+			t.Fatalf("reconcile query missing %q: %s", fragment, executor.query)
+		}
+	}
+	if len(executor.args) != 2 || executor.args[0] != DedupeJobKind || executor.args[1] != DedupeQueueName {
+		t.Fatalf("reconcile args = %#v", executor.args)
 	}
 }
 

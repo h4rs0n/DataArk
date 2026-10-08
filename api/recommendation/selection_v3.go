@@ -260,6 +260,12 @@ func collectHardEligibleSelectionPool(userID uint, poolSize int, options recomme
 // recommendationEligibleCandidateQuery 构造推荐硬合格代表的有序查询；每页从干净的 DB 句柄重建，避免 GORM Where 累积。
 func recommendationEligibleCandidateQuery(userID uint, unseenOrUpdatedOnly bool) *gorm.DB {
 	query := discovery.ExcludeBlacklistedCandidateDomains(db, "")
+	var filterErr error
+	query, filterErr = discovery.FilterDedupeAssessmentCandidates(query)
+	if filterErr != nil {
+		query.AddError(filterErr)
+		return query
+	}
 	if unseenOrUpdatedOnly {
 		query = query.Select("discovery_candidates.*").
 			Joins("LEFT JOIN user_material_states AS candidate_exposure ON candidate_exposure.user_id = ? AND candidate_exposure.material_id = discovery_candidates.material_id", userID).
@@ -275,7 +281,7 @@ WHERE prior_item.user_id = ?
 )`, userID)
 	}
 	return query.Where("discovery_candidates.processing_state = ? AND discovery_candidates.eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
-		Where("discovery_candidates.dedupe_state = ? AND (discovery_candidates.representative_id IS NULL OR discovery_candidates.representative_id = discovery_candidates.id)", discovery.DiscoveryDedupeReady).
+		Where("discovery_candidates.dedupe_state = ?", discovery.DiscoveryDedupeReady).
 		Order("discovery_candidates.quality_score desc, discovery_candidates.last_seen_at desc, discovery_candidates.id asc")
 }
 

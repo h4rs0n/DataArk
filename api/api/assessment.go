@@ -10,27 +10,37 @@ import (
 
 // assessment.go 提供 LLM 评估队列、回填回滚与评估指标 HTTP 接口。
 
-// GetAssessmentQueue 返回暂停中的 LLM 评估队列快照。
+// GetAssessmentQueue 返回暂停中的 LLM 评估队列快照；评估被延迟到查重构建完成时
+// 一并返回构建中的去重运行，供面板显示持久进度。
 func GetAssessmentQueue(c *gin.Context) {
 	if !requireOwner(c) {
 		return
 	}
-	snapshot, err := getAssessmentQueue(c.Request.Context(), queryInt(c, "limit", 50))
+	snapshot, dedupeRun, err := getAssessmentQueue(c.Request.Context(), queryInt(c, "limit", 50))
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "查询评估任务队列失败", "Error": err.Error()})
+		return
+	}
+	if dedupeRun != nil {
+		c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询评估任务队列成功", "Data": gin.H{"snapshot": snapshot, "dedupeRun": dedupeRun}})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询评估任务队列成功", "Data": snapshot})
 }
 
-// RunAssessmentQueue 登记待评估文章并手动启动一次 LLM 评估消费。
+// RunAssessmentQueue 登记待评估文章并手动启动一次 LLM 评估消费。查重未生效时会
+// 先自动构建并应用全库去重运行，评估在该运行生效后自动开始，无需单独请求去重 API。
 func RunAssessmentQueue(c *gin.Context) {
 	if !requireOwner(c) {
 		return
 	}
-	snapshot, err := runAssessmentQueue(c.Request.Context())
+	snapshot, dedupeRun, err := runAssessmentQueue(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "启动评估任务队列失败", "Error": err.Error()})
+		return
+	}
+	if dedupeRun != nil {
+		c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "全库查重构建中，完成后自动开始评估", "Data": gin.H{"snapshot": snapshot, "dedupeRun": dedupeRun}})
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "评估任务队列已开始执行", "Data": snapshot})

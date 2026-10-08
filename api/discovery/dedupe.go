@@ -173,6 +173,17 @@ func duplicateMatches(tx *gorm.DB, target DiscoveryCandidate) ([]candidateDuplic
 		maximumSimilarity = 1
 	}
 
+	setting, err := dedupeSetting(tx)
+	if err != nil {
+		return nil, strongest, maximumSimilarity, err
+	}
+	if setting.Mode == "exact" {
+		matches := make([]candidateDuplicateMatch, 0, len(byID))
+		for _, match := range byID {
+			matches = append(matches, match)
+		}
+		return matches, strongest, maximumSimilarity, nil
+	}
 	minimumWords := target.WordCount / 2
 	maximumWords := target.WordCount * 2
 	if minimumWords < 20 {

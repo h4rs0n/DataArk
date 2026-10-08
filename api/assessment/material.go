@@ -56,6 +56,16 @@ func updateAssessmentMaterial(candidate discovery.DiscoveryCandidate, values map
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "material_id = ?", candidate.MaterialID).Error; err != nil {
 			return err
 		}
+		// The material state row lock orders this activation against cluster
+		// application for the same material. Checking qualification before
+		// acquiring it would let a concurrent apply invalidate the answer.
+		allowed, err := discovery.DedupeAssessmentAllowed(tx, candidate.MaterialID)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return nil
+		}
 		if current.ContentVersion != candidate.ContentVersion {
 			return nil
 		}
