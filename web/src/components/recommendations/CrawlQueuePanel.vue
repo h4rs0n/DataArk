@@ -3,11 +3,22 @@
     <div class="section-title">
       <div>
         <h2>爬取任务队列</h2>
-        <span>文章爬取由后台自动执行；此处只观察任务状态，LLM 评估请到「评估」页手动启动</span>
+        <span>{{ crawlQueue.mode === 'automatic' ? '自动启动已开启，后台持续执行爬取任务' : '自动启动已关闭，点击「开始」执行一轮，完成后等待下次手动启动' }}；LLM 评估请到「评估」页手动启动</span>
       </div>
       <a-space wrap>
+        <label class="auto-start-control">
+          <span>自动启动</span>
+          <a-switch
+            :model-value="crawlQueue.mode === 'automatic'"
+            :loading="crawlControlLoading"
+            :disabled="!crawlQueueLoaded || crawlQueueLoading || crawlControlLoading"
+            aria-label="爬取任务队列自动启动"
+            @change="setAutoStart"
+          />
+        </label>
         <span class="queue-state" :class="`queue-state-${crawlQueue.state}`">{{ crawlQueueStateLabel }}</span>
-        <a-button :loading="crawlQueueLoading || blacklistLoading" @click="refreshQueueTab">
+        <a-button v-if="crawlQueue.mode === 'manual'" type="primary" :loading="crawlControlLoading" :disabled="!crawlQueueLoaded || !crawlQueue.canRun || crawlQueueLoading || crawlControlLoading" @click="runCrawlQueue">开始</a-button>
+        <a-button :loading="crawlQueueLoading || blacklistLoading" :disabled="crawlControlLoading" @click="refreshQueueTab">
           <template #icon><icon-refresh /></template>
           刷新
         </a-button>
@@ -87,7 +98,7 @@
 </template>
 
 <script setup lang="ts">
-// Owner 爬取队列观察与域名黑名单。
+// Owner 爬取队列控制与域名黑名单。
 import { formatDateTime } from '@/components/recommendations/format'
 import { requestJSON } from '@/api/client'
 import {
@@ -107,6 +118,8 @@ const props = defineProps<{ active: boolean; isOwner: boolean }>()
 const emit = defineEmits<{ 'inventory-changed': [] }>()
 
 const crawlQueueLoading = ref(false)
+const crawlQueueLoaded = ref(false)
+const crawlControlLoading = ref(false)
 const blacklistLoading = ref(false)
 const addingBlacklist = ref(false)
 const deletingBlacklistId = ref<number | null>(null)
@@ -114,10 +127,11 @@ const crawlQueue = ref<CrawlQueueSnapshot>(emptyCrawlQueue())
 const domainBlacklist = ref<DomainBlacklistEntry[]>([])
 const blacklistForm = reactive({ domain: '', reason: '' })
 let crawlQueueTimer: ReturnType<typeof window.setTimeout> | null = null
+let crawlRequestVersion = 0
 
 const crawlQueueStateLabel = computed(() => ({
-  idle: '队列空闲',
-  waiting: '排队等待工人',
+  idle: crawlQueue.value.mode === 'manual' ? '等待手动开始' : '队列空闲',
+  waiting: crawlQueue.value.mode === 'manual' ? '等待手动开始' : '排队等待工人',
   running: '正在执行',
 }[crawlQueue.value.state]))
 
@@ -132,24 +146,60 @@ function clearCrawlQueueTimer() {
 
 function scheduleCrawlQueueRefresh() {
   clearCrawlQueueTimer()
-  if (!props.isOwner || !props.active) return
+  if (!props.isOwner || !props.active || crawlControlLoading.value) return
   const delay = crawlQueue.value.state === 'running' ? 2000 : 10000
   crawlQueueTimer = window.setTimeout(() => { void loadCrawlQueue(true) }, delay)
 }
 
 async function loadCrawlQueue(silent = false) {
-  if (!props.isOwner) return
+  if (!props.isOwner || crawlControlLoading.value) return
+  const version = ++crawlRequestVersion
   const wasRunning = crawlQueue.value.state === 'running'
   try {
     if (!silent) crawlQueueLoading.value = true
-    crawlQueue.value = await requestJSON<CrawlQueueSnapshot>('/api/admin/discovery/crawl-queue?limit=50')
+    const snapshot = await requestJSON<CrawlQueueSnapshot>('/api/admin/discovery/crawl-queue?limit=50')
+    if (version !== crawlRequestVersion) return
+    crawlQueue.value = snapshot
+    crawlQueueLoaded.value = true
     if (wasRunning && crawlQueue.value.state !== 'running') emit('inventory-changed')
   } catch (error) {
-    if (!silent) Message.error(error instanceof Error ? error.message : '加载爬取任务队列失败')
+    if (version === crawlRequestVersion && !silent) Message.error(error instanceof Error ? error.message : '加载爬取任务队列失败')
   } finally {
-    crawlQueueLoading.value = false
-    scheduleCrawlQueueRefresh()
+    if (version === crawlRequestVersion) {
+      crawlQueueLoading.value = false
+      scheduleCrawlQueueRefresh()
+    }
   }
+}
+
+async function updateCrawlControl(path: string, options: RequestInit, success: string) {
+  if (!props.isOwner || crawlControlLoading.value || !crawlQueueLoaded.value) return
+  crawlControlLoading.value = true
+  ++crawlRequestVersion
+  clearCrawlQueueTimer()
+  try {
+    crawlQueue.value = await requestJSON<CrawlQueueSnapshot>(path, options)
+    Message.success(success)
+  } catch (error) {
+    Message.error(error instanceof Error ? error.message : '更新爬取队列失败')
+    crawlQueueLoaded.value = false
+  } finally {
+    crawlControlLoading.value = false
+    crawlQueueLoading.value = false
+    await loadCrawlQueue(true)
+  }
+}
+
+async function setAutoStart(value: boolean | string | number) {
+  const autoStart = value === true
+  await updateCrawlControl('/api/admin/discovery/crawl-queue/settings', {
+    method: 'PUT', body: JSON.stringify({ autoStart }),
+  }, autoStart ? '爬取自动启动已开启' : '爬取自动启动已关闭，已开始的任务将正常完成')
+}
+
+async function runCrawlQueue() {
+  if (!crawlQueue.value.canRun) return
+  await updateCrawlControl('/api/admin/discovery/crawl-queue/run', { method: 'POST' }, '爬取任务队列已开始执行')
 }
 
 async function loadDomainBlacklist(silent = false) {
@@ -249,6 +299,12 @@ defineExpose({ reload: refreshQueueTab })
 
 <style scoped src="./panel-shared.css"></style>
 <style scoped>
+.auto-start-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .queue-state {
   padding: 5px 10px;
   border-radius: 999px;

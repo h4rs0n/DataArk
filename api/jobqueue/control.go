@@ -16,7 +16,7 @@ var (
 const (
 	DiscoveryQueueName  = "discovery_crawl"
 	AssessmentQueueName = "article_assessment"
-	CrawlQueueMode      = "automatic"
+	CrawlQueueMode      = "manual"
 	AssessmentQueueMode = "manual"
 )
 
@@ -52,9 +52,11 @@ type CrawlQueueSnapshot struct {
 	Tasks        []CrawlQueueTask `json:"tasks"`
 }
 
-// CrawlQueueController 只提供观察快照：文章爬取由工人自动消费。
+// CrawlQueueController 控制爬取自动启动和手动执行一轮。
 type CrawlQueueController interface {
 	Snapshot(context.Context, int) (*CrawlQueueSnapshot, error)
+	Run(context.Context) (*CrawlQueueSnapshot, error)
+	SetAutoStart(context.Context, bool) (*CrawlQueueSnapshot, error)
 }
 
 // AssessmentQueueController 提供 LLM 评估队列快照，并允许 owner 手动启动一次消费。

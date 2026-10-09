@@ -166,12 +166,19 @@ test('unread discovery candidates use a refreshable personalized feed', () => {
   for (const label of ['原文', '入库', '查看发现路径']) assert.match(recommendationCard, new RegExp(label))
 })
 
-test('owner UI exposes the automatic crawl queue in a dedicated tab', () => {
+test('owner UI controls automatic and manual crawling in a dedicated tab', () => {
   assert.match(queue, /爬取任务队列/)
   assert.doesNotMatch(surface, /执行待处理任务/)
-  assert.match(queue, /文章爬取由后台自动执行/)
+  assert.match(queue, /自动启动已关闭/)
+  assert.match(queue, /<a-switch/)
+  assert.match(queue, /等待手动开始/)
+  assert.match(queue, /crawlQueue.canRun/)
+  assert.match(queue, /crawlRequestVersion/)
+  assert.match(queue, /\/api\/admin\/discovery\/crawl-queue\/settings/)
+  assert.match(sources, /抓取任务已加入队列/)
+  assert.doesNotMatch(sources, /内容源刷新完成/)
   assert.match(queue, /\/api\/admin\/discovery\/crawl-queue\?limit=50/)
-  assert.doesNotMatch(surface, /\/api\/admin\/discovery\/crawl-queue\/run/)
+  assert.match(queue, /\/api\/admin\/discovery\/crawl-queue\/run/)
   assert.match(view, /<a-tab-pane v-if="isOwner" key="queue" title="任务队列">/)
   assert.ok(view.indexOf('key="queue"') > view.indexOf('key="discovery"'))
   assert.match(queue, /!props\.isOwner \|\| !props\.active/)

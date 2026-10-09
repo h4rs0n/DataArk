@@ -3,7 +3,7 @@
     <div class="section-title">
       <div>
         <h2>评估队列与 LLM 指标</h2>
-        <span>文章爬取自动执行；LLM 评估排队等待，点击后单次消费当前待评估任务，不含 prompt 或正文</span>
+        <span>文章爬取由「任务队列」控制；LLM 评估排队等待，点击后单次消费当前待评估任务，不含 prompt 或正文</span>
       </div>
       <a-space wrap>
         <span class="queue-state" :class="dedupeRun ? 'queue-state-running' : `queue-state-${queue.state}`">{{ queueStateLabel }}</span>

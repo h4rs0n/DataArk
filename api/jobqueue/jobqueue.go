@@ -204,12 +204,17 @@ var (
 )
 
 type riverQueue struct {
-	client       *river.Client[*sql.Tx]
-	db           *sql.DB
-	runMu        sync.Mutex
-	running      bool
-	runStartedAt time.Time
-	stop         chan struct{}
+	client          *river.Client[*sql.Tx]
+	db              *sql.DB
+	runMu           sync.Mutex
+	running         bool
+	runStartedAt    time.Time
+	stop            chan struct{}
+	crawlMu         sync.Mutex
+	crawlAutoStart  bool
+	crawlRunning    bool
+	crawlStartedAt  time.Time
+	crawlGeneration uint64
 }
 
 // riverQueueCountResult 是 river_job 全表计数，不受 JobList 1 万条上限影响。
@@ -281,6 +286,14 @@ type riverCrawlView struct {
 
 func (view riverCrawlView) Snapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
 	return view.queue.crawlSnapshot(ctx, limit)
+}
+
+func (view riverCrawlView) Run(ctx context.Context) (*CrawlQueueSnapshot, error) {
+	return view.queue.crawlRun(ctx)
+}
+
+func (view riverCrawlView) SetAutoStart(ctx context.Context, enabled bool) (*CrawlQueueSnapshot, error) {
+	return view.queue.setCrawlAutoStart(ctx, enabled)
 }
 
 type riverAssessmentView struct {
@@ -466,7 +479,7 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 			}
 		}
 		var once sync.Once
-		return func() { once.Do(restore) }, nil
+		return func() { once.Do(func() { queue.stop(); restore() }) }, nil
 	}
 
 	sqlDB, err := database.DB()
@@ -492,8 +505,12 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 		return func() {}, err
 	}
 	now := time.Now()
+	var crawlAutoStart bool
+	if err := sqlDB.QueryRowContext(ctx, "SELECT auto_start FROM discovery_crawl_settings WHERE id = 1").Scan(&crawlAutoStart); err != nil {
+		return func() {}, fmt.Errorf("load crawl queue settings: %w", err)
+	}
 	if _, err := client.Driver().GetExecutor().QueueCreateOrSetUpdatedAt(ctx, &riverdriver.QueueCreateOrSetUpdatedAtParams{
-		Metadata: []byte("{}"), Name: DiscoveryQueueName, UpdatedAt: &now,
+		Metadata: []byte("{}"), Name: DiscoveryQueueName, PausedAt: &now, UpdatedAt: &now,
 	}); err != nil {
 		return func() {}, err
 	}
@@ -502,8 +519,11 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 	}); err != nil {
 		return func() {}, err
 	}
-	// 升级后若发现队列仍处于上一版本的暂停状态，则恢复自动消费。
-	if err := client.QueueResume(ctx, DiscoveryQueueName, nil); err != nil {
+	setCrawlState := client.QueuePause
+	if crawlAutoStart {
+		setCrawlState = client.QueueResume
+	}
+	if err := setCrawlState(ctx, DiscoveryQueueName, nil); err != nil {
 		return func() {}, err
 	}
 	if err := client.QueuePause(ctx, AssessmentQueueName, nil); err != nil {
@@ -514,7 +534,7 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 		return func() {}, fmt.Errorf("reconcile discovery jobs: %w", err)
 	}
 	if reconciledJobs > 0 {
-		log.Printf("reconciled %d legacy or interrupted discovery jobs into automatic queue %s", reconciledJobs, DiscoveryQueueName)
+		log.Printf("reconciled %d legacy or interrupted discovery jobs into queue %s", reconciledJobs, DiscoveryQueueName)
 	}
 	reconciledAssessments, err := reconcileManualAssessmentJobs(ctx, sqlDB)
 	if err != nil {
@@ -533,7 +553,7 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 	if err := client.Start(ctx); err != nil {
 		return func() {}, err
 	}
-	queue := &riverQueue{client: client, db: sqlDB, stop: make(chan struct{})}
+	queue := &riverQueue{client: client, db: sqlDB, stop: make(chan struct{}), crawlAutoStart: crawlAutoStart}
 	restore := installDefault(queue, riverCrawlView{queue: queue}, riverAssessmentView{queue: queue})
 	if recover != nil {
 		if err := recover(ctx, queue); err != nil {
@@ -559,6 +579,12 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 }
 
 func (queue *riverQueue) crawlSnapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
+	queue.crawlMu.Lock()
+	defer queue.crawlMu.Unlock()
+	return queue.crawlSnapshotLocked(ctx, limit)
+}
+
+func (queue *riverQueue) crawlSnapshotLocked(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
 	limit = normalizeSnapshotLimit(limit)
 	now := time.Now()
 	counted, err := countRiverQueueJobs(ctx, stdSQLQuerier{db: queue.db}, DiscoveryQueueName, discoveryJobKinds, now.Add(-24*time.Hour))
@@ -573,7 +599,17 @@ func (queue *riverQueue) crawlSnapshot(ctx context.Context, limit int) (*CrawlQu
 	if err != nil {
 		return nil, err
 	}
-	return buildQueueSnapshot(result.Jobs, limit, CrawlQueueMode, false, now, counted.Counts), nil
+	mode := CrawlQueueMode
+	if queue.crawlAutoStart {
+		mode = "automatic"
+	}
+	snapshot := buildQueueSnapshot(result.Jobs, limit, mode, queue.crawlRunning, now, counted.Counts)
+	snapshot.CanRun = !queue.crawlAutoStart && !queue.crawlRunning && counted.Counts.Running == 0
+	if queue.crawlRunning {
+		started := queue.crawlStartedAt
+		snapshot.RunStartedAt = &started
+	}
+	return snapshot, nil
 }
 
 func (queue *riverQueue) assessmentSnapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {

@@ -129,8 +129,7 @@ async function fetchSource(sourceId: number) {
     fetchingSourceId.value = sourceId
     await requestJSON(`/api/discovery/sources/${sourceId}/fetch`, { method: 'POST' })
     await loadSources()
-    emit('inventory-changed')
-    Message.success('内容源刷新完成')
+    Message.success('抓取任务已加入队列；自动启动关闭时，请到「任务队列」点击「开始」')
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '刷新内容源失败')
   } finally {

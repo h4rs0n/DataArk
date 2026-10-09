@@ -102,6 +102,10 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 		}
 	}
 	verifyPostgresWorkflowRemoval(t, database)
+	assertPostgresScalar(t, database, "SELECT auto_start::text FROM discovery_crawl_settings WHERE id = 1", "false")
+	if err := goose.Down(sqlDB, "."); err != nil {
+		t.Fatalf("rollback crawl queue settings: %v", err)
+	}
 	if err := goose.Down(sqlDB, "."); err != nil {
 		t.Fatalf("rollback material current-version index: %v", err)
 	}
@@ -149,7 +153,7 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 		fmt.Sprintf("SELECT count(*)::text FROM material_migration_checkpoints WHERE name = '%s'", v3CompatibilityCheckpoint), "1")
 
 	assertPostgresScalar(t, database,
-		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "39")
+		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "40")
 	assertPostgresScalar(t, database,
 		"SELECT extname FROM pg_extension WHERE extname = 'vector'", "vector")
 	assertPostgresScalar(t, database,
@@ -247,6 +251,9 @@ VALUES
 
 	var crawlExecutions atomic.Int32
 	var assessmentJobs atomic.Int32
+	if err := database.Exec("UPDATE discovery_crawl_settings SET auto_start = true WHERE id = 1").Error; err != nil {
+		t.Fatal(err)
+	}
 	crawlStop, err := jobqueue.Start(context.Background(), database, jobqueue.Handlers{
 		FetchSource: func(context.Context, uint) error {
 			crawlExecutions.Add(1)
@@ -274,7 +281,7 @@ VALUES
 		t.Fatal("crawl controller unavailable")
 	}
 	snapshot, err := controller.Snapshot(context.Background(), 50)
-	if err != nil || snapshot.Mode != jobqueue.CrawlQueueMode || snapshot.CanRun {
+	if err != nil || snapshot.Mode != "automatic" || snapshot.CanRun {
 		crawlStop()
 		t.Fatalf("automatic PostgreSQL crawl snapshot = %#v err=%v", snapshot, err)
 	}
@@ -295,6 +302,7 @@ VALUES
 	crawlStop()
 	assertPostgresScalar(t, database,
 		"SELECT count(*)::text FROM river_job WHERE kind = 'discovery_fetch_source' AND state = 'completed'", "3")
+	verifyPostgresCrawlControl(t, database)
 	verifyPostgresDedupe(t, database)
 }
 

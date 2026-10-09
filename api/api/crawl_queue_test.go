@@ -67,6 +67,83 @@ func TestRunDiscoveryCrawlQueueIsOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestSetDiscoveryCrawlQueueSettings(t *testing.T) {
+	oldSet := setDiscoveryCrawlAutoStart
+	t.Cleanup(func() { setDiscoveryCrawlAutoStart = oldSet })
+	owner := &auth.User{ID: 1, Role: auth.UserRoleOwner}
+	member := &auth.User{ID: 2, Role: auth.UserRoleMember}
+	calls := 0
+	var enabled bool
+	setDiscoveryCrawlAutoStart = func(_ context.Context, value bool) (*jobqueue.CrawlQueueSnapshot, error) {
+		calls++
+		enabled = value
+		mode := "manual"
+		if value {
+			mode = "automatic"
+		}
+		return &jobqueue.CrawlQueueSnapshot{Mode: mode, State: "waiting", CanRun: !value}, nil
+	}
+	path := "/admin/discovery/crawl-queue/settings"
+	if response := performUserControllerRequest(http.MethodPut, path, []byte(`{"autoStart":true}`), member, SetDiscoveryCrawlQueueSettings); response.Code != http.StatusForbidden || calls != 0 {
+		t.Fatalf("member status=%d calls=%d", response.Code, calls)
+	}
+	for _, body := range []string{`{}`, `{"autoStart":null}`, `{"autoStart":"false"}`, `{"autoStart":0}`, `{`} {
+		response := performUserControllerRequest(http.MethodPut, path, []byte(body), owner, SetDiscoveryCrawlQueueSettings)
+		if response.Code != http.StatusBadRequest || calls != 0 {
+			t.Fatalf("body=%s status=%d calls=%d", body, response.Code, calls)
+		}
+	}
+	for _, body := range []string{`{"autoStart":true}`, `{"autoStart":false}`} {
+		response := performUserControllerRequest(http.MethodPut, path, []byte(body), owner, SetDiscoveryCrawlQueueSettings)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+		data := decodeResponse(t, response)["Data"].(map[string]interface{})
+		if data["canRun"] != !enabled {
+			t.Fatalf("snapshot=%#v", data)
+		}
+	}
+	setDiscoveryCrawlAutoStart = func(context.Context, bool) (*jobqueue.CrawlQueueSnapshot, error) {
+		return nil, errors.New("queue offline")
+	}
+	response := performUserControllerRequest(http.MethodPut, path, []byte(`{"autoStart":false}`), owner, SetDiscoveryCrawlQueueSettings)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d", response.Code)
+	}
+}
+
+func TestFetchDiscoverySourceOnlyRegistersTask(t *testing.T) {
+	oldRequest := requestDiscoverySourceFetch
+	t.Cleanup(func() { requestDiscoverySourceFetch = oldRequest })
+	calls := 0
+	requestDiscoverySourceFetch = func(_ context.Context, id uint) error {
+		calls++
+		if id != 7 {
+			t.Fatalf("source id=%d", id)
+		}
+		return nil
+	}
+	path := "/discovery/sources/:id/fetch"
+	target := "/discovery/sources/7/fetch"
+	member := performUserPathControllerRequest(http.MethodPost, path, target, &auth.User{ID: 2, Role: auth.UserRoleMember}, FetchDiscoverySource)
+	if member.Code != http.StatusForbidden || calls != 0 {
+		t.Fatalf("member status=%d calls=%d", member.Code, calls)
+	}
+	owner := performUserPathControllerRequest(http.MethodPost, path, target, &auth.User{ID: 1, Role: auth.UserRoleOwner}, FetchDiscoverySource)
+	if owner.Code != http.StatusAccepted || calls != 1 {
+		t.Fatalf("status=%d calls=%d", owner.Code, calls)
+	}
+	data := decodeResponse(t, owner)["Data"].(map[string]interface{})
+	if data["queued"] != true || data["sourceId"] != float64(7) {
+		t.Fatalf("data=%#v", data)
+	}
+	requestDiscoverySourceFetch = func(context.Context, uint) error { return errors.New("enqueue failed") }
+	failure := performUserPathControllerRequest(http.MethodPost, path, target, &auth.User{ID: 1, Role: auth.UserRoleOwner}, FetchDiscoverySource)
+	if failure.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d", failure.Code)
+	}
+}
+
 func TestAssessmentQueueRequiresOwnerAndManualRun(t *testing.T) {
 	oldGet := getAssessmentQueue
 	oldRun := runAssessmentQueue

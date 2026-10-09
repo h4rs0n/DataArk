@@ -238,9 +238,36 @@ func FetchDiscoverySourceByID(ctx context.Context, id uint) (*DiscoveryFetchResu
 	return FetchDiscoverySource(ctx, &source)
 }
 
+// RequestDiscoverySourceFetch 只登记任务，抓取统一受爬取队列控制。
+func RequestDiscoverySourceFetch(ctx context.Context, id uint) error {
+	queue, available := jobQueue()
+	if !available {
+		return errors.New("discovery crawl queue is unavailable")
+	}
+	if db == nil {
+		return errors.New("discovery database is unavailable")
+	}
+	var source DiscoverySource
+	if err := db.WithContext(ctx).First(&source, id).Error; err != nil {
+		return err
+	}
+	if !source.Enabled || !discoverySourceOperationallyCrawlable(&source) {
+		return errors.New("discovery source is disabled or paused")
+	}
+	if err := ensureDiscoveryURLNotBlacklisted(ctx, source.URL); err != nil {
+		return err
+	}
+	now := discoveryClock.Now()
+	if err := db.WithContext(ctx).Model(&source).Updates(map[string]interface{}{
+		"next_due_at": now, "next_fetch_at": now,
+	}).Error; err != nil {
+		return err
+	}
+	return queue.EnqueueFetchSource(ctx, id)
+}
+
 // RunFetchDiscoverySourceJob discards stale queued work without issuing a
-// network request. Direct owner refreshes continue to use
-// FetchDiscoverySourceByID and intentionally bypass the schedule check.
+// network request. Owner refresh requests mark the source due before enqueueing.
 func RunFetchDiscoverySourceJob(ctx context.Context, id uint) error {
 	if db == nil {
 		return nil

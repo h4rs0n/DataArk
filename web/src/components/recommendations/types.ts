@@ -197,7 +197,7 @@ export type FeedbackByItem = Record<number, { action: string } | undefined>
 
 export function emptyCrawlQueue(): CrawlQueueSnapshot {
   return {
-    mode: 'automatic',
+    mode: 'manual',
     state: 'idle',
     canRun: false,
     updatedAt: '',

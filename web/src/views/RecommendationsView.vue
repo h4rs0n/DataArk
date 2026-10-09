@@ -12,7 +12,7 @@
         <div class="header-mark"><icon-robot /></div>
         <div>
           <h1>推荐中心</h1>
-          <p>发现、评估、推荐三条流水线独立运行：文章爬取自动执行，LLM 评估需手动启动，推荐只消费已评估库存。</p>
+          <p>发现、评估、推荐三条流水线独立运行：文章爬取可手动开始或开启自动启动，LLM 评估需手动启动，推荐只消费已评估库存。</p>
         </div>
         <a-button :loading="loading" @click="loadAll">
           <template #icon><icon-refresh /></template>

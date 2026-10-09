@@ -45,6 +45,7 @@ func registerAPIRoutes(router *gin.Engine, authController *AuthController) {
 		protected.GET("/admin/discovery/dedupe/clusters/:id", GetDedupeCluster)
 		protected.GET("/admin/discovery/crawl-queue", GetDiscoveryCrawlQueue)
 		protected.POST("/admin/discovery/crawl-queue/run", RunDiscoveryCrawlQueue)
+		protected.PUT("/admin/discovery/crawl-queue/settings", SetDiscoveryCrawlQueueSettings)
 		protected.POST("/admin/discovery/article-assessments/backfill", BackfillArticleAssessments)
 		protected.POST("/admin/discovery/article-assessments/rollback", RollbackArticleAssessments)
 		protected.GET("/admin/assessment/metrics", GetAssessmentMetrics)

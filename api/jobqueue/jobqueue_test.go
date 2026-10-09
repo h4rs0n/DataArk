@@ -449,6 +449,7 @@ func TestReconcileDedupeJobsResetsInterruptedWork(t *testing.T) {
 
 func TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures(t *testing.T) {
 	store := NewMemoryStore()
+	store.crawlAutoStart = true
 	var mu sync.Mutex
 	attempts := map[uint]int{}
 	handlers := Handlers{FetchSource: func(_ context.Context, sourceID uint) error {
@@ -502,6 +503,7 @@ func TestMemoryQueueRetriesInterruptedJobsAndIsolatesFailures(t *testing.T) {
 
 func TestMemoryQueueConcurrentDuplicateExecutesOnce(t *testing.T) {
 	store := NewMemoryStore()
+	store.crawlAutoStart = true
 	var executions atomic.Int32
 	var startedOnce sync.Once
 	started := make(chan struct{})
@@ -561,12 +563,15 @@ func TestMemoryQueueCrawlEnqueueDrainsDerivedJobs(t *testing.T) {
 	if err := queue.EnqueueFetchSource(context.Background(), 5); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := (memoryCrawlView{queue: queue}).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	waitForMemoryQueueIdle(t, queue)
 	if processed.Load() != 1 {
 		t.Fatalf("processed = %d, want 1", processed.Load())
 	}
 	snapshot, err := memoryCrawlView{queue: queue}.Snapshot(context.Background(), 50)
-	if err != nil || snapshot.Counts.Succeeded24h != 2 || snapshot.Counts.Pending != 0 || snapshot.State != "idle" || snapshot.Mode != CrawlQueueMode || snapshot.CanRun {
+	if err != nil || snapshot.Counts.Succeeded24h != 2 || snapshot.Counts.Pending != 0 || snapshot.State != "idle" || snapshot.Mode != CrawlQueueMode || !snapshot.CanRun {
 		t.Fatalf("snapshot = %#v err=%v", snapshot, err)
 	}
 }
@@ -698,36 +703,63 @@ func TestMemoryQueueGenerateDigestSummaryRunsSynchronously(t *testing.T) {
 	}
 }
 
-func TestStartSQLiteRecoveryRunsCrawlAutomatically(t *testing.T) {
+func TestStartSQLiteRecoveryWaitsForManualStart(t *testing.T) {
 	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var executions atomic.Int32
-	handlers := Handlers{FetchSource: func(context.Context, uint) error {
-		executions.Add(1)
-		return nil
-	}}
-	recover := func(ctx context.Context, queue JobEnqueuer) error {
-		return queue.EnqueueFetchSource(ctx, 99)
-	}
-	stopFirst, err := Start(context.Background(), database, handlers, recover)
+	handlers := Handlers{FetchSource: func(context.Context, uint) error { executions.Add(1); return nil }}
+	recover := func(ctx context.Context, queue JobEnqueuer) error { return queue.EnqueueFetchSource(ctx, 99) }
+	stop, err := Start(context.Background(), database, handlers, recover)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(stop)
 	controller, available := CrawlControl()
 	if !available {
 		t.Fatal("crawl queue controller unavailable")
 	}
+	snapshot, err := controller.Snapshot(context.Background(), 50)
+	if err != nil || snapshot.Mode != "manual" || !snapshot.CanRun || snapshot.Counts.Pending != 1 || executions.Load() != 0 {
+		t.Fatalf("manual startup snapshot = %#v err=%v executions=%d", snapshot, err, executions.Load())
+	}
+	if _, err := controller.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	waitForSnapshotIdle(t, controller)
 	if executions.Load() != 1 {
-		t.Fatalf("automatic crawl executions = %d, want 1", executions.Load())
+		t.Fatalf("executions=%d", executions.Load())
 	}
-	snapshot, err := controller.Snapshot(context.Background(), 50)
-	if err != nil || snapshot.Mode != CrawlQueueMode || snapshot.CanRun {
-		t.Fatalf("snapshot = %#v err=%v", snapshot, err)
+	if _, err := controller.SetAutoStart(context.Background(), true); err != nil {
+		t.Fatal(err)
 	}
-	stopFirst()
+	stop()
+	stopAgain, err := Start(context.Background(), database, handlers, recover)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stopAgain)
+	controller, _ = CrawlControl()
+	waitForSnapshotIdle(t, controller)
+	snapshot, err = controller.Snapshot(context.Background(), 50)
+	if err != nil || snapshot.Mode != "automatic" || executions.Load() != 2 {
+		t.Fatalf("automatic restart snapshot=%#v err=%v executions=%d", snapshot, err, executions.Load())
+	}
+	if _, err := controller.SetAutoStart(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	stopAgain()
+	stopThird, err := Start(context.Background(), database, handlers, recover)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stopThird)
+	controller, _ = CrawlControl()
+	snapshot, err = controller.Snapshot(context.Background(), 50)
+	if err != nil || snapshot.Mode != "manual" || snapshot.Counts.Pending != 1 || executions.Load() != 2 {
+		t.Fatalf("paused restart snapshot=%#v err=%v executions=%d", snapshot, err, executions.Load())
+	}
 }
 
 func TestStartSQLiteAssessmentWaitsForManualRun(t *testing.T) {

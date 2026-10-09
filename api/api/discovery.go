@@ -77,7 +77,7 @@ func DeleteDiscoverySource(c *gin.Context) {
 	c.JSON(200, gin.H{"Status": "1", "Message": "删除内容源成功"})
 }
 
-// FetchDiscoverySource 立即抓取指定内容源（owner）。
+// FetchDiscoverySource 登记指定内容源抓取任务（owner）。
 func FetchDiscoverySource(c *gin.Context) {
 	if !requireOwner(c) {
 		return
@@ -86,12 +86,11 @@ func FetchDiscoverySource(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := fetchDiscoverySourceByID(c.Request.Context(), sourceID)
-	if err != nil {
-		c.JSON(500, gin.H{"Status": "0", "Message": "刷新内容源失败", "Error": err.Error(), "Data": result})
+	if err := requestDiscoverySourceFetch(c.Request.Context(), sourceID); err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "登记内容源抓取任务失败", "Error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"Status": "1", "Message": "刷新内容源成功", "Data": result})
+	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "抓取任务已加入队列", "Data": gin.H{"sourceId": sourceID, "queued": true}})
 }
 
 // GetDiscoverySiteGraph 返回站点 blogroll 图谱。
@@ -197,17 +196,37 @@ func GetDiscoveryCrawlQueue(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "查询爬取任务队列成功", "Data": snapshot})
 }
 
-// RunDiscoveryCrawlQueue 登记到期爬取任务（owner）。
+// RunDiscoveryCrawlQueue 登记到期任务并启动一轮爬取（owner）。
 func RunDiscoveryCrawlQueue(c *gin.Context) {
 	if !requireOwner(c) {
 		return
 	}
 	snapshot, err := runDiscoveryCrawlQueue(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "登记到期爬取任务失败", "Error": err.Error()})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "启动爬取任务队列失败", "Error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "到期爬取任务已登记，将自动执行", "Data": snapshot})
+	c.JSON(http.StatusAccepted, gin.H{"Status": "1", "Message": "爬取任务队列已开始执行", "Data": snapshot})
+}
+
+// SetDiscoveryCrawlQueueSettings 更新全局自动启动设置（owner）。
+func SetDiscoveryCrawlQueueSettings(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	var req struct {
+		AutoStart *bool `json:"autoStart" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"Status": "0", "Message": "请求参数错误"})
+		return
+	}
+	snapshot, err := setDiscoveryCrawlAutoStart(c.Request.Context(), *req.AutoStart)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"Status": "0", "Message": "保存爬取自动启动设置失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"Status": "1", "Message": "爬取自动启动设置已保存", "Data": snapshot})
 }
 
 // ListDiscoveryDomainBlacklist 列出域名黑名单（owner）。

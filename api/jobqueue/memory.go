@@ -34,6 +34,10 @@ type MemoryStore struct {
 	mu                     sync.Mutex
 	jobs                   map[string]MemoryJob
 	crawlRunning           bool
+	crawlAutoStart         bool
+	crawlManual            bool
+	crawlRunStartedAt      time.Time
+	crawlGeneration        uint64
 	assessmentRunning      bool
 	assessmentRunStartedAt time.Time
 }
@@ -55,6 +59,7 @@ func (store *MemoryStore) Snapshot() []MemoryJob {
 type MemoryQueue struct {
 	store    *MemoryStore
 	handlers Handlers
+	stopped  bool
 }
 
 type memoryCrawlView struct {
@@ -63,6 +68,37 @@ type memoryCrawlView struct {
 
 func (view memoryCrawlView) Snapshot(ctx context.Context, limit int) (*CrawlQueueSnapshot, error) {
 	return view.queue.snapshot(limit, isCrawlJobKind, CrawlQueueMode, false)
+}
+
+func (view memoryCrawlView) Run(ctx context.Context) (*CrawlQueueSnapshot, error) {
+	queue := view.queue
+	queue.store.mu.Lock()
+	if !queue.store.crawlAutoStart && !queue.store.crawlManual {
+		queue.store.crawlManual = true
+		queue.store.crawlRunStartedAt = time.Now()
+		queue.store.crawlGeneration++
+	}
+	queue.store.mu.Unlock()
+	queue.kickCrawl()
+	return view.Snapshot(ctx, 50)
+}
+
+func (view memoryCrawlView) SetAutoStart(ctx context.Context, enabled bool) (*CrawlQueueSnapshot, error) {
+	queue := view.queue
+	queue.store.mu.Lock()
+	queue.store.crawlAutoStart = enabled
+	queue.store.crawlManual = false
+	queue.store.crawlRunStartedAt = time.Time{}
+	queue.store.crawlGeneration++
+	queue.store.mu.Unlock()
+	queue.kickCrawl()
+	return view.Snapshot(ctx, 50)
+}
+
+func (queue *MemoryQueue) stop() {
+	queue.store.mu.Lock()
+	queue.stopped = true
+	queue.store.mu.Unlock()
 }
 
 type memoryAssessmentView struct {
@@ -83,6 +119,9 @@ func NewMemoryQueue(store *MemoryStore, handlers Handlers) *MemoryQueue {
 	}
 	store.mu.Lock()
 	store.crawlRunning = false
+	store.crawlManual = false
+	store.crawlRunStartedAt = time.Time{}
+	store.crawlGeneration++
 	store.assessmentRunning = false
 	store.assessmentRunStartedAt = time.Time{}
 	for key, job := range store.jobs {
@@ -97,7 +136,7 @@ func NewMemoryQueue(store *MemoryStore, handlers Handlers) *MemoryQueue {
 	}
 	store.mu.Unlock()
 	queue := &MemoryQueue{store: store, handlers: handlers}
-	// 中断的爬取作业在重启后自动继续，不需要 owner 再点一次。
+	// 仅自动模式在重启后继续；手动模式等待 owner 启动。
 	queue.kickCrawl()
 	return queue
 }
@@ -182,19 +221,26 @@ func (queue *MemoryQueue) stage(kind, identity, targetType string, targetID uint
 
 func (queue *MemoryQueue) kickCrawl() {
 	queue.store.mu.Lock()
-	if queue.store.crawlRunning {
+	if queue.stopped || queue.store.crawlRunning || (!queue.store.crawlAutoStart && !queue.store.crawlManual) {
 		queue.store.mu.Unlock()
 		return
 	}
 	if !queue.hasPendingLocked(isCrawlJobKind) {
+		queue.store.crawlManual = false
+		queue.store.crawlRunStartedAt = time.Time{}
 		queue.store.mu.Unlock()
 		return
 	}
 	queue.store.crawlRunning = true
+	generation := queue.store.crawlGeneration
 	queue.store.mu.Unlock()
 	go queue.drain(isCrawlJobKind, func() {
 		queue.store.mu.Lock()
 		queue.store.crawlRunning = false
+		if queue.store.crawlGeneration == generation {
+			queue.store.crawlManual = false
+			queue.store.crawlRunStartedAt = time.Time{}
+		}
 		stillPending := queue.hasPendingLocked(isCrawlJobKind)
 		queue.store.mu.Unlock()
 		if stillPending {
@@ -238,12 +284,6 @@ func (queue *MemoryQueue) drain(match func(string) bool, finish func()) {
 			time.Sleep(500 * time.Millisecond)
 			jobs = queue.takePending(4, match)
 			if len(jobs) == 0 {
-				queue.store.mu.Lock()
-				stillPending := queue.hasPendingLocked(match)
-				queue.store.mu.Unlock()
-				if stillPending {
-					continue
-				}
 				return
 			}
 		}
@@ -262,6 +302,9 @@ func (queue *MemoryQueue) drain(match func(string) bool, finish func()) {
 func (queue *MemoryQueue) takePending(limit int, match func(string) bool) []MemoryJob {
 	queue.store.mu.Lock()
 	defer queue.store.mu.Unlock()
+	if queue.stopped || (match(FetchSourceJobKind) && !queue.store.crawlAutoStart && !queue.store.crawlManual) {
+		return nil
+	}
 	keys := make([]string, 0)
 	for key, job := range queue.store.jobs {
 		if match(job.Kind) && job.Status == MemoryJobPending {
@@ -348,6 +391,10 @@ func (queue *MemoryQueue) snapshot(limit int, match func(string) bool, mode stri
 	var runStartedAt time.Time
 	if match(FetchSourceJobKind) {
 		running = queue.store.crawlRunning
+		runStartedAt = queue.store.crawlRunStartedAt
+		if queue.store.crawlAutoStart {
+			mode = "automatic"
+		}
 	}
 	if match(AssessArticleJobKind) {
 		running = queue.store.assessmentRunning
@@ -373,6 +420,13 @@ func (queue *MemoryQueue) snapshot(limit int, match func(string) bool, mode stri
 	if manual && running && !runStartedAt.IsZero() {
 		started := runStartedAt
 		snapshot.RunStartedAt = &started
+	}
+	if match(FetchSourceJobKind) {
+		snapshot.CanRun = mode == "manual" && !running
+		if running && !runStartedAt.IsZero() {
+			started := runStartedAt
+			snapshot.RunStartedAt = &started
+		}
 	}
 	for _, job := range jobs {
 		task := CrawlQueueTask{

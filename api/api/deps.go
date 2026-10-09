@@ -58,7 +58,7 @@ var (
 	createDiscoverySource              = discovery.CreateDiscoverySource
 	updateDiscoverySource              = discovery.UpdateDiscoverySource
 	deleteDiscoverySource              = discovery.DeleteDiscoverySource
-	fetchDiscoverySourceByID           = discovery.FetchDiscoverySourceByID
+	requestDiscoverySourceFetch        = discovery.RequestDiscoverySourceFetch
 	getDiscoverySiteGraph              = discovery.GetSiteGraph
 	listBackfillCoverage               = discovery.ListBackfillCoverage
 	updateDiscoverySiteStatus          = discovery.UpdateDiscoverySiteOperationalStatus
@@ -107,7 +107,14 @@ var (
 		if err := discovery.RecoverDueJobs(ctx, queue, time.Now()); err != nil {
 			return nil, err
 		}
-		return controller.Snapshot(ctx, 50)
+		return controller.Run(ctx)
+	}
+	setDiscoveryCrawlAutoStart = func(ctx context.Context, enabled bool) (*jobqueue.CrawlQueueSnapshot, error) {
+		controller, available := jobqueue.CrawlControl()
+		if !available {
+			return nil, errors.New("discovery crawl queue is unavailable")
+		}
+		return controller.SetAutoStart(ctx, enabled)
 	}
 	getAssessmentQueue = func(ctx context.Context, limit int) (*jobqueue.CrawlQueueSnapshot, *dedupe.Run, error) {
 		controller, available := jobqueue.AssessmentControl()
