@@ -728,33 +728,43 @@ func enqueueCurrentDedupeRepresentatives(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	var cursor uint
-	for {
-		query, err := FilterDedupeAssessmentCandidates(Candidates(db.WithContext(ctx)).Select(assessmentDedupeColumns).Where("processing_state=? AND assessment_state=?", DiscoveryProcessingReady, DiscoveryAssessmentPending))
-		if err != nil {
-			return err
+	query, err := FilterDedupeAssessmentCandidates(Candidates(db.WithContext(ctx)).Select(assessmentDedupeColumns).Where("processing_state=? AND assessment_state=?", DiscoveryProcessingReady, DiscoveryAssessmentPending))
+	if err != nil {
+		return err
+	}
+	query = ExcludeBlacklistedCandidateDomains(query, "")
+	// One pass instead of cursor pagination: the filtered plan drives from an
+	// aggregate over every applied member and sorts the whole match set, so
+	// each 250-row page used to re-pay that full-library work (~1.4s a page on
+	// 137k candidates). Three uints per target keep the materialized set small.
+	var rows []dedupeAssessmentTargetRow
+	if err := query.Order("id").Scan(&rows).Error; err != nil {
+		return err
+	}
+	targets := make([]jobqueue.AssessmentTarget, 0, dedupeBatchSize)
+	seen := make(map[uint]bool, len(rows))
+	for _, row := range rows {
+		if !seen[row.MaterialID] {
+			seen[row.MaterialID] = true
+			targets = append(targets, jobqueue.AssessmentTarget{MaterialID: row.MaterialID, ContentVersion: fmt.Sprint(row.ContentVersion)})
 		}
-		query = ExcludeBlacklistedCandidateDomains(query, "")
-		var candidates []DiscoveryCandidate
-		if err := query.Where("id>?", cursor).Order("id").Limit(dedupeBatchSize).Find(&candidates).Error; err != nil {
-			return err
-		}
-		if len(candidates) == 0 {
-			return nil
-		}
-		targets := make([]jobqueue.AssessmentTarget, 0, len(candidates))
-		seen := map[uint]bool{}
-		for _, candidate := range candidates {
-			cursor = candidate.ID
-			if !seen[candidate.MaterialID] {
-				targets = append(targets, jobqueue.AssessmentTarget{MaterialID: candidate.MaterialID, ContentVersion: fmt.Sprint(candidate.ContentVersion)})
-				seen[candidate.MaterialID] = true
+		if len(targets) == dedupeBatchSize {
+			if err := queue.EnqueueAssessArticles(ctx, targets); err != nil {
+				return err
 			}
-		}
-		if err := queue.EnqueueAssessArticles(ctx, targets); err != nil {
-			return err
+			targets = targets[:0]
 		}
 	}
+	if len(targets) == 0 {
+		return nil
+	}
+	return queue.EnqueueAssessArticles(ctx, targets)
+}
+
+type dedupeAssessmentTargetRow struct {
+	ID             uint
+	MaterialID     uint
+	ContentVersion uint
 }
 
 var assessmentDedupeColumns = []string{"id", "material_id", "content_version"}
