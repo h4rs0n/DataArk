@@ -64,7 +64,23 @@ func ParseFlag() {
 	ArticleAssessmentConcurrencyFlag := stdflag.Int("article-assessment-concurrency", 2, "Assign maximum concurrent article assessment LLM calls")
 	EmbeddingDimensionFlag := stdflag.Int("embedding-dimension", 0, "Assign embedding vector dimension")
 	RSSHubBaseURLFlag := stdflag.String("rsshub-base-url", "", "Assign optional RSSHub base URL")
+	batchProvider := stdflag.String("llm-batch-provider", "", "Assign optional article assessment Batch provider")
+	batchBaseUrl := stdflag.String("llm-batch-base-url", config.DefaultBatchBaseURL, "Assign optional article assessment Batch base-url")
+	batchApiKey := stdflag.String("llm-batch-api-key", "", "Assign optional article assessment Batch api-key")
+	batchModel := stdflag.String("llm-batch-model", "", "Assign optional article assessment Batch model")
+	batchSize := stdflag.Int("llm-batch-size", 100, "Assign optional article assessment Batch size")
+	batchConcurrency := stdflag.Int("llm-batch-concurrency", 10, "Assign optional article assessment Batch concurrency")
+	batchPollInterval := stdflag.String("llm-batch-poll-interval", "90s", "Assign optional article assessment Batch poll-interval")
+	batchRequestTimeout := stdflag.String("llm-batch-request-timeout", "60s", "Assign optional article assessment Batch request-timeout")
 	stdflag.Parse()
+	config.LLMBATCHPROVIDER = strings.TrimSpace(*batchProvider)
+	config.LLMBATCHBASEURL = strings.TrimSpace(*batchBaseUrl)
+	config.LLMBATCHAPIKEY = strings.TrimSpace(*batchApiKey)
+	config.LLMBATCHMODEL = strings.TrimSpace(*batchModel)
+	config.LLMBATCHSIZE = *batchSize
+	config.LLMBATCHCONCURRENCY = *batchConcurrency
+	config.LLMBATCHPOLLINTERVAL = strings.TrimSpace(*batchPollInterval)
+	config.LLMBATCHREQUESTTIMEOUT = strings.TrimSpace(*batchRequestTimeout)
 	config.DEBUG = *debugFlag
 	config.LOGDIR = strings.TrimSpace(*LogDirFlag)
 	config.LOGRETENTIONDAYS = *LogRetentionDaysFlag

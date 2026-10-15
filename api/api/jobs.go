@@ -17,6 +17,9 @@ import (
 
 // startApplicationJobQueue 注册发现/评估/日报任务处理器并启动共享队列。
 func startApplicationJobQueue(ctx context.Context) (func(), error) {
+	if err := assessment.ValidateBatchRecovery(ctx); err != nil {
+		return nil, err
+	}
 	ignoreBlacklisted := func(err error) error {
 		if errors.Is(err, discovery.ErrDiscoveryDomainBlacklisted) {
 			return nil
@@ -24,7 +27,9 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 		return err
 	}
 	handlers := jobqueue.Handlers{
-		Dedupe: discovery.RunDedupeTask,
+		BatchTick:           assessment.ProcessBatchTick,
+		ReservedAssessments: assessment.ReservedBatchTargets,
+		Dedupe:              discovery.RunDedupeTask,
 		FetchSource: func(ctx context.Context, sourceID uint) error {
 			return ignoreBlacklisted(discovery.RunFetchDiscoverySourceJob(ctx, sourceID))
 		},
@@ -45,6 +50,13 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 			return ignoreBlacklisted(assessment.EnqueuePending(ctx, queue, candidateID))
 		},
 		AssessArticle: func(ctx context.Context, materialID uint, contentVersion string) error {
+			reserved, err := assessment.BatchActiveTarget(database.DB().WithContext(ctx), materialID, contentVersion)
+			if err != nil {
+				return err
+			}
+			if reserved {
+				return nil
+			}
 			return ignoreBlacklisted(assessment.AssessMaterial(ctx, materialID, contentVersion, assessment.ConfiguredArticleAssessor()))
 		},
 		AssessLegacyCandidate: func(ctx context.Context, candidateID uint, contentVersion string) error {
@@ -73,6 +85,7 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 			discovery.RecoverDedupeJobs(ctx),
 			assessment.RecoverDueJobs(ctx, queue, now),
 			recommendation.RecoverDueJobs(ctx, queue, now),
+			assessment.RecoverBatchJobs(ctx),
 		)
 	}
 	stop, err := jobqueue.Start(ctx, database.DB(), handlers, recover)
@@ -84,7 +97,21 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 		discovery.SetJobQueue(queue)
 	}
 	stopDedupeRecovery := discovery.StartDedupeRecovery(ctx)
+	recoveryCtx, cancelRecovery := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-recoveryCtx.Done():
+				return
+			case <-ticker.C:
+				_ = assessment.RecoverBatchJobs(recoveryCtx)
+			}
+		}
+	}()
 	return func() {
+		cancelRecovery()
 		stopDedupeRecovery()
 		discovery.SetJobQueue(nil)
 		stop()

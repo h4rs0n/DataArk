@@ -102,18 +102,12 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 		}
 	}
 	verifyPostgresWorkflowRemoval(t, database)
+	if err := goose.DownTo(sqlDB, ".", 40); err != nil {
+		t.Fatalf("rollback Batch and dedupe recovery migrations: %v", err)
+	}
 	assertPostgresScalar(t, database, "SELECT auto_start::text FROM discovery_crawl_settings WHERE id = 1", "false")
-	if err := goose.Down(sqlDB, "."); err != nil {
-		t.Fatalf("rollback crawl queue settings: %v", err)
-	}
-	if err := goose.Down(sqlDB, "."); err != nil {
-		t.Fatalf("rollback material current-version index: %v", err)
-	}
-	if err := goose.Down(sqlDB, "."); err != nil {
-		t.Fatalf("rollback dedupe auto-assessment migration: %v", err)
-	}
-	if err := goose.Down(sqlDB, "."); err != nil {
-		t.Fatalf("rollback dedupe index migration: %v", err)
+	if err := goose.DownTo(sqlDB, ".", 36); err != nil {
+		t.Fatalf("rollback crawl and dedupe migrations: %v", err)
 	}
 	if err := goose.Down(sqlDB, "."); err == nil || !strings.Contains(err.Error(), "pre-workflow-removal database backup") {
 		t.Fatalf("workflow removal rollback should require a backup, got %v", err)
@@ -153,7 +147,7 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 		fmt.Sprintf("SELECT count(*)::text FROM material_migration_checkpoints WHERE name = '%s'", v3CompatibilityCheckpoint), "1")
 
 	assertPostgresScalar(t, database,
-		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "40")
+		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "44")
 	assertPostgresScalar(t, database,
 		"SELECT extname FROM pg_extension WHERE extname = 'vector'", "vector")
 	assertPostgresScalar(t, database,

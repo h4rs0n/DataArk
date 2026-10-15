@@ -232,7 +232,7 @@ func GetDedupeReport(ctx context.Context, id, cursor uint, limit int) (DedupeRep
 			Joins("JOIN material_versions v ON v.id=d.version_id").
 			Joins("JOIN material_article_states s ON s.material_id=d.material_id").
 			Joins("JOIN discovery_article_assessments a ON a.id=s.current_assessment_id AND a.material_id=d.material_id AND a.content_version=v.version AND a.assessor=? AND a.assessor_version=? AND a.policy_version=?",
-				dedupeAssessorName, dedupeAssessorVersion(), articlevalue.PolicyVersion).
+				dedupeAssessorName(), dedupeAssessorVersion(), articlevalue.PolicyVersion).
 			Where("d.representation_id=d.representative_id").
 			Scan(&result.ExistingAssessmentReused).Error; err != nil {
 			return result, err
@@ -377,7 +377,9 @@ func applyDedupeGroup(database *gorm.DB, runID, representativeID uint) error {
 	}
 
 	var members []dedupe.Member
-	if err := database.Where("run_id=? AND representative_id=? AND applied=?", runID, representativeID, false).Order("representation_id").Find(&members).Error; err != nil {
+	if err := database.Where("run_id=? AND representative_id=?", runID, representativeID).
+		Where("NOT applied OR EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.material_id=article_dedupe_members.material_id AND c.processing_state='ready' AND c.dedupe_state<>'ready')").
+		Order("representation_id").Find(&members).Error; err != nil {
 		return err
 	}
 	clusterID := fmt.Sprintf("idx-%d-%d", runID, representativeID)
@@ -728,46 +730,17 @@ func enqueueCurrentDedupeRepresentatives(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	query, err := FilterDedupeAssessmentCandidates(Candidates(db.WithContext(ctx)).Select(assessmentDedupeColumns).Where("processing_state=? AND assessment_state=?", DiscoveryProcessingReady, DiscoveryAssessmentPending))
+	targets, err := PendingAssessmentTargets(ctx, db, false, nil)
 	if err != nil {
 		return err
 	}
-	query = ExcludeBlacklistedCandidateDomains(query, "")
-	// One pass instead of cursor pagination: the filtered plan drives from an
-	// aggregate over every applied member and sorts the whole match set, so
-	// each 250-row page used to re-pay that full-library work (~1.4s a page on
-	// 137k candidates). Three uints per target keep the materialized set small.
-	var rows []dedupeAssessmentTargetRow
-	if err := query.Order("id").Scan(&rows).Error; err != nil {
-		return err
-	}
-	targets := make([]jobqueue.AssessmentTarget, 0, dedupeBatchSize)
-	seen := make(map[uint]bool, len(rows))
-	for _, row := range rows {
-		if !seen[row.MaterialID] {
-			seen[row.MaterialID] = true
-			targets = append(targets, jobqueue.AssessmentTarget{MaterialID: row.MaterialID, ContentVersion: fmt.Sprint(row.ContentVersion)})
-		}
-		if len(targets) == dedupeBatchSize {
-			if err := queue.EnqueueAssessArticles(ctx, targets); err != nil {
-				return err
-			}
-			targets = targets[:0]
+	for start := 0; start < len(targets); start += dedupeBatchSize {
+		if err := queue.EnqueueAssessArticles(ctx, targets[start:min(start+dedupeBatchSize, len(targets))]); err != nil {
+			return err
 		}
 	}
-	if len(targets) == 0 {
-		return nil
-	}
-	return queue.EnqueueAssessArticles(ctx, targets)
+	return nil
 }
-
-type dedupeAssessmentTargetRow struct {
-	ID             uint
-	MaterialID     uint
-	ContentVersion uint
-}
-
-var assessmentDedupeColumns = []string{"id", "material_id", "content_version"}
 
 // ReleaseDeferredAssessment resumes an assessment run that was deferred until
 // suppression went live. The composition root installs it because discovery
@@ -859,42 +832,39 @@ func recoverDedupeJobs(ctx context.Context, full bool) (int, error) {
 	if err != nil {
 		return enqueued, err
 	}
-	if !full {
-		drift, err := dedupeRecoveryDrift(ctx, setting.ActiveRunID)
-		if err != nil {
-			return enqueued, err
-		}
-		if drift == 0 && !setting.PendingAssessment {
-			return enqueued, nil
-		}
-	}
-	if err := enqueueBlockedDedupeRepresentatives(ctx, setting.ActiveRunID); err != nil {
+	drift, inactive, err := dedupeRecoveryDriftCounts(ctx, setting.ActiveRunID)
+	if err != nil {
 		return enqueued, err
 	}
-	var cursor uint
-	for {
-		var articles []dedupeArticle
-		query := dedupeArticles(db.WithContext(ctx)).Where("r.id>?", cursor).
-			Where(`EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.material_id=m.id AND c.processing_state='ready' AND c.dedupe_state<>'ready') OR NOT EXISTS (SELECT 1 FROM article_dedupe_members d JOIN material_representations pr ON pr.id=d.representative_id
-   JOIN material pm ON pm.current_version_id=pr.version_id
- JOIN article_dedupe_members rd ON rd.run_id=d.run_id AND rd.representation_id=d.representative_id AND rd.representative_id=rd.representation_id AND rd.applied=TRUE WHERE d.run_id=? AND d.representation_id=r.id AND d.applied=?)`, setting.ActiveRunID, true)
-		if err := query.Order("r.id").Limit(dedupeBatchSize).Scan(&articles).Error; err != nil {
+	if !full && drift == 0 && !setting.PendingAssessment {
+		return enqueued, nil
+	}
+	started := time.Now()
+	var scanned, cancelled int64
+	gapTargets := 0
+	var gapMS, enqueueMS, pruneMS int64
+	defer func() {
+		log.Printf("dedupe recovery sweep run_id=%d full=%t actionable_drift=%d inactive_unapplied=%d gap_targets=%d assessment_jobs_scanned=%d cancelled=%d gap_ms=%d enqueue_ms=%d prune_ms=%d duration_ms=%d", setting.ActiveRunID, full, drift, inactive, gapTargets, scanned, cancelled, gapMS, enqueueMS, pruneMS, time.Since(started).Milliseconds())
+	}()
+	// Read the narrow repair set once. LIMIT pagination used to re-evaluate
+	// coverage for the whole corpus on every page, including blocked members.
+	var articles []struct{ RepresentationID uint }
+	if err := dedupeRecoveryCandidates(db.WithContext(ctx), setting.ActiveRunID).Scan(&articles).Error; err != nil {
+		return enqueued, err
+	}
+	gapMS = time.Since(started).Milliseconds()
+	for _, article := range articles {
+		if err := enqueueDedupeTask(ctx, jobqueue.DedupeArgs{RepresentationID: article.RepresentationID, Algorithm: dedupe.Algorithm}); err != nil {
 			return enqueued, err
 		}
-		if len(articles) == 0 {
-			break
-		}
-		for _, article := range articles {
-			cursor = article.RepresentationID
-			if err := enqueueDedupeTask(ctx, jobqueue.DedupeArgs{RepresentationID: article.RepresentationID, Algorithm: dedupe.Algorithm}); err != nil {
-				return enqueued, err
-			}
-			enqueued++
-		}
+		enqueued++
+		gapTargets++
 	}
+	enqueueStarted := time.Now()
 	if err := enqueueCurrentDedupeRepresentatives(ctx); err != nil {
 		return enqueued, err
 	}
+	enqueueMS = time.Since(enqueueStarted).Milliseconds()
 	queue, ok := jobqueue.Default()
 	if !ok {
 		return enqueued, nil
@@ -903,10 +873,12 @@ func recoverDedupeJobs(ctx context.Context, full bool) (int, error) {
 	if !ok {
 		return enqueued, nil
 	}
-	cancelled, err := cleaner.PruneAssessments(ctx, func(materialID uint, version string) (bool, error) {
-		qualification, err := ArticleDedupeQualification(db.WithContext(ctx), materialID)
-		return qualification.Active && qualification.Ready && !qualification.Representative, err
+	pruneStarted := time.Now()
+	cancelled, err = cleaner.PruneAssessments(ctx, func(targets []jobqueue.AssessmentTarget) (map[uint]bool, error) {
+		scanned += int64(len(targets))
+		return suppressedDedupeAssessmentTargets(db.WithContext(ctx), setting.ActiveRunID, targets)
 	})
+	pruneMS = time.Since(pruneStarted).Milliseconds()
 	if err != nil {
 		return enqueued, err
 	}
@@ -926,20 +898,38 @@ func recoverDedupeJobs(ctx context.Context, full bool) (int, error) {
 	return enqueued + int(cancelled), nil
 }
 
-// dedupeRecoveryDrift is the cheap probe deciding whether a full sweep is
-// warranted. Both counts are backed by partial indexes, so a converged library
-// costs O(drift) instead of O(library).
+// Only current, usable articles can advance. Blocked/obsolete members remain
+// unapplied so they cannot qualify for assessment; removal of a blacklist rule
+// or a ready candidate makes them actionable again without a state rewrite.
 func dedupeRecoveryDrift(ctx context.Context, runID uint) (int64, error) {
-	var unapplied int64
-	if err := db.WithContext(ctx).Model(&dedupe.Member{}).Where("run_id=? AND applied=?", runID, false).Count(&unapplied).Error; err != nil {
-		return 0, err
+	actionable, _, err := dedupeRecoveryDriftCounts(ctx, runID)
+	return actionable, err
+}
+
+func dedupeRecoveryDriftCounts(ctx context.Context, runID uint) (int64, int64, error) {
+	var counts struct{ Total, Actionable int64 }
+	query := db.WithContext(ctx).Table("article_dedupe_members d").
+		Joins("LEFT JOIN material m ON m.id=d.material_id AND m.current_version_id=d.version_id").
+		Joins("LEFT JOIN material_representations r ON r.id=d.representation_id AND r.version_id=d.version_id").
+		Joins("LEFT JOIN material_article_states s ON s.material_id=m.id").
+		Where("d.run_id=? AND NOT d.applied", runID).
+		Select("COUNT(*) AS total, COALESCE(SUM(CASE WHEN m.id IS NOT NULL AND s.material_id IS NOT NULL AND r.kind='text' AND r.role='body' AND r.text<>'' AND " + usableDedupeMaterialSQL("m") + " THEN 1 ELSE 0 END),0) AS actionable")
+	if err := query.Scan(&counts).Error; err != nil {
+		return 0, 0, err
 	}
-	if unapplied > 0 {
-		return unapplied, nil
+	inactive := counts.Total - counts.Actionable
+	if counts.Actionable > 0 {
+		return counts.Actionable, inactive, nil
 	}
 	var pending int64
-	err := db.WithContext(ctx).Model(&DiscoveryCandidate{}).Where("processing_state=? AND dedupe_state<>?", DiscoveryProcessingReady, DiscoveryDedupeReady).Count(&pending).Error
-	return pending, err
+	err := db.WithContext(ctx).Table("discovery_candidates c").
+		Joins("JOIN material m ON m.id=c.material_id").
+		Joins("JOIN material_representations r ON r.version_id=m.current_version_id").
+		Joins("JOIN material_article_states s ON s.material_id=m.id").
+		Where("c.processing_state='ready' AND c.dedupe_state<>'ready'").
+		Where("r.kind='text' AND r.role='body' AND r.text<>''").
+		Where(usableDedupeMaterialSQL("m")).Count(&pending).Error
+	return pending, inactive, err
 }
 
 func enqueueDedupeRepresentative(ctx context.Context, representationID uint) error {
@@ -1019,30 +1009,4 @@ func StartDedupeRecovery(ctx context.Context) func() {
 		}
 	}()
 	return cancel
-}
-
-func enqueueBlockedDedupeRepresentatives(ctx context.Context, runID uint) error {
-	var cursor uint
-	for {
-		var rows []dedupe.Member
-		if err := db.WithContext(ctx).Table("article_dedupe_members d").Select("d.*").Joins("JOIN discovery_candidates c ON c.id=d.candidate_id").Where("d.run_id=? AND d.representation_id=d.representative_id AND d.representation_id>?", runID, cursor).Where(`c.processing_state<>'ready' OR EXISTS (SELECT 1 FROM discovery_domain_blacklist_entries b WHERE c.crawl_host=b.domain OR c.crawl_host LIKE '%.' || b.domain)`).Order("d.representation_id").Limit(dedupeBatchSize).Scan(&rows).Error; err != nil {
-			return err
-		}
-		if len(rows) == 0 {
-			return nil
-		}
-		for _, member := range rows {
-			cursor = member.RepresentationID
-			// Repair a surviving member when the original representative is no longer ready.
-			var replacement dedupe.Member
-			if err := db.WithContext(ctx).Table("article_dedupe_members d").Select("d.*").Joins("JOIN material m ON m.id=d.material_id AND m.current_version_id=d.version_id").Joins("JOIN discovery_candidates c ON c.material_id=m.id AND c.processing_state='ready'").Where("d.run_id=? AND d.representative_id=?", runID, member.RepresentationID).Where(`NOT EXISTS (SELECT 1 FROM discovery_domain_blacklist_entries b WHERE c.crawl_host=b.domain OR c.crawl_host LIKE '%.' || b.domain)`).Order("d.representation_id").Limit(1).Scan(&replacement).Error; err != nil {
-				return err
-			}
-			if replacement.RepresentationID != 0 {
-				if err := enqueueDedupeTask(ctx, jobqueue.DedupeArgs{RepresentationID: replacement.RepresentationID, Algorithm: dedupe.Algorithm}); err != nil {
-					return err
-				}
-			}
-		}
-	}
 }

@@ -167,14 +167,8 @@ func candidateDedupeRepresentatives(database *gorm.DB, runID uint, article dedup
 
 // Assessor identity must match assessment/article_assessor.go. The per-article
 // check and the report aggregate both derive it here so they cannot drift.
-const dedupeAssessorName = "openai_compatible"
-
-func dedupeAssessorVersion() string {
-	if model := strings.TrimSpace(config.LLMCHATMODEL); model != "" {
-		return model
-	}
-	return "configured"
-}
+func dedupeAssessorName() string    { name, _ := config.ArticleAssessmentIdentity(); return name }
+func dedupeAssessorVersion() string { _, model := config.ArticleAssessmentIdentity(); return model }
 
 func hasValidDedupeAssessment(database *gorm.DB, article dedupeArticle) (bool, error) {
 	if !database.Migrator().HasTable("discovery_article_assessments") {
@@ -182,7 +176,7 @@ func hasValidDedupeAssessment(database *gorm.DB, article dedupeArticle) (bool, e
 	}
 	var count int64
 	err := database.Table("material_article_states s").Joins("JOIN discovery_article_assessments a ON a.id=s.current_assessment_id").
-		Where("s.material_id=? AND a.material_id=? AND a.content_version=? AND a.assessor=? AND a.assessor_version=? AND a.policy_version=?", article.MaterialID, article.MaterialID, article.ContentVersion, dedupeAssessorName, dedupeAssessorVersion(), articlevalue.PolicyVersion).Count(&count).Error
+		Where("s.material_id=? AND a.material_id=? AND a.content_version=? AND a.assessor=? AND a.assessor_version=? AND a.policy_version=?", article.MaterialID, article.MaterialID, article.ContentVersion, dedupeAssessorName(), dedupeAssessorVersion(), articlevalue.PolicyVersion).Count(&count).Error
 	return count > 0, err
 }
 func usableDedupeArticle(database *gorm.DB, article dedupeArticle) (bool, error) {
@@ -537,8 +531,8 @@ func FilterDedupeAssessmentCandidates(query *gorm.DB) (*gorm.DB, error) {
 	}
 	query = query.Where(DedupeRepresentativeClause("discovery_candidates."))
 	if setting.Mode == "active" && setting.ActiveRunID != 0 {
-		query = query.Where(`EXISTS (SELECT 1 FROM article_dedupe_members d JOIN material m ON m.id=d.material_id AND m.current_version_id=d.version_id
-  WHERE d.run_id=? AND d.material_id=discovery_candidates.material_id AND d.representation_id=d.representative_id AND d.applied=?)`, setting.ActiveRunID, true)
+		query = query.Where(`EXISTS (SELECT 1 FROM article_dedupe_members d JOIN material m ON m.id=d.material_id AND CASE WHEN m.current_version_id=d.version_id THEN TRUE ELSE FALSE END
+  WHERE d.run_id=? AND d.material_id=discovery_candidates.material_id AND (d.representation_id=d.representative_id) IS TRUE AND d.applied=?)`, setting.ActiveRunID, true)
 	} else if setting.Mode == "exact" {
 		// Rollback disables near-duplicate suppression without undoing strong identities.
 		query = query.Where("discovery_candidates.id=(SELECT MIN(c.id) FROM discovery_candidates c WHERE c.material_id=discovery_candidates.material_id AND c.processing_state='ready')")

@@ -1,6 +1,10 @@
 .git
 .codex
 passwd.txt
+**/passwd.txt
+.env
+**/.env
+**/.env.*
 bin
 web/node_modules
 web/dist

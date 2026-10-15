@@ -3,6 +3,7 @@ package jobqueue
 import (
 	"context"
 	"fmt"
+	"gorm.io/gorm"
 	"sort"
 	"sync"
 	"time"
@@ -57,6 +58,7 @@ func (store *MemoryStore) Snapshot() []MemoryJob {
 }
 
 type MemoryQueue struct {
+	database *gorm.DB
 	store    *MemoryStore
 	handlers Handlers
 	stopped  bool
@@ -173,7 +175,17 @@ func (queue *MemoryQueue) EnqueueProcessCandidate(_ context.Context, candidateID
 	return nil
 }
 
-func (queue *MemoryQueue) EnqueueAssessArticle(_ context.Context, materialID uint, contentVersion string) error {
+func (queue *MemoryQueue) EnqueueAssessArticle(ctx context.Context, materialID uint, contentVersion string) error {
+	if queue.handlers.ReservedAssessments != nil {
+		target := AssessmentTarget{MaterialID: materialID, ContentVersion: contentVersion}
+		reserved, err := queue.handlers.ReservedAssessments(ctx, []AssessmentTarget{target})
+		if err != nil {
+			return err
+		}
+		if reserved[target] {
+			return nil
+		}
+	}
 	if queue.handlers.AssessArticle == nil {
 		return fmt.Errorf("%w: %s", ErrHandlerUnavailable, AssessArticleJobKind)
 	}

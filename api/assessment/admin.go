@@ -55,6 +55,9 @@ WHERE active.id = discovery_candidates.current_assessment_id
   AND active.policy_version = ?
 )`, assessor.Name(), assessor.Version(), assessor.PolicyVersion())
 	var filterErr error
+	if db.Migrator().HasTable(&BatchItem{}) {
+		query = query.Where("NOT EXISTS (SELECT 1 FROM assessment_batch_items bi WHERE bi.material_id=discovery_candidates.material_id AND bi.content_version=discovery_candidates.content_version AND bi.active_identity IS NOT NULL)")
+	}
 	query, filterErr = discovery.FilterDedupeAssessmentCandidates(query)
 	if filterErr != nil {
 		return result, filterErr

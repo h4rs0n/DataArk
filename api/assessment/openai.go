@@ -141,6 +141,10 @@ type articleAssessmentOutput struct {
 }
 
 func (output articleAssessmentOutput) result() (ChatAssessmentResult, error) {
+	return output.resultWithReasonLimits(2, 120)
+}
+
+func (output articleAssessmentOutput) resultWithReasonLimits(minReasons, maxReasonRunes int) (ChatAssessmentResult, error) {
 	if missing := articleAssessmentMissingFields(output); len(missing) > 0 {
 		return ChatAssessmentResult{}, fmt.Errorf("Missing required fields: %s.", strings.Join(missing, ", "))
 	}
@@ -149,7 +153,7 @@ func (output articleAssessmentOutput) result() (ChatAssessmentResult, error) {
 		Reasons: append([]string(nil), (*output.Reasons)...), Summary: *output.Summary,
 		Keywords: append([]string(nil), (*output.Keywords)...),
 	}
-	if err := validateArticleAssessmentResult(&result); err != nil {
+	if err := validateArticleAssessmentResultWithReasons(&result, minReasons, maxReasonRunes); err != nil {
 		return ChatAssessmentResult{}, err
 	}
 	return result, nil
@@ -242,16 +246,23 @@ keywords：3 到 8 个简体中文主题关键词。每个 1 到 20 个字符。
 }
 
 func validateArticleAssessmentResult(result *ChatAssessmentResult) error {
+	return validateArticleAssessmentResultWithReasons(result, 2, 120)
+}
+
+func validateArticleAssessmentResultWithReasons(result *ChatAssessmentResult, minReasons, maxReasonRunes int) error {
 	if result.QualityScore < 0 || result.QualityScore > 100 || result.DepthScore < 0 || result.DepthScore > 100 || result.EvergreenScore < 0 || result.EvergreenScore > 100 {
 		return errors.New("article assessment scores must be integers between 0 and 100")
 	}
-	if len(result.Reasons) != 2 {
-		return errors.New("article assessment requires exactly two reasons")
+	if len(result.Reasons) < minReasons || len(result.Reasons) > 2 {
+		if minReasons == 2 {
+			return errors.New("article assessment requires exactly two reasons")
+		}
+		return fmt.Errorf("article assessment requires %d to 2 reasons", minReasons)
 	}
 	for index, reason := range result.Reasons {
 		reason = strings.TrimSpace(reason)
-		if reason == "" || len([]rune(reason)) > 120 {
-			return errors.New("article assessment reasons must be 1 to 120 characters")
+		if reason == "" || len([]rune(reason)) > maxReasonRunes {
+			return fmt.Errorf("article assessment reasons must be 1 to %d characters", maxReasonRunes)
 		}
 		result.Reasons[index] = reason
 	}
@@ -289,7 +300,7 @@ func articleAssessmentResponseFormat() map[string]interface{} {
 					"evergreenScore": map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 100},
 					"reasons": map[string]interface{}{
 						"type": "array", "minItems": 2, "maxItems": 2,
-						"items": map[string]interface{}{"type": "string", "maxLength": 120},
+						"items": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 120},
 					},
 					"summary": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": summaryMaxRunes},
 					"keywords": map[string]interface{}{

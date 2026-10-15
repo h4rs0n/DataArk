@@ -54,6 +54,8 @@ type JobEnqueuer interface {
 }
 
 type Handlers struct {
+	ReservedAssessments   func(context.Context, []AssessmentTarget) (map[AssessmentTarget]bool, error)
+	BatchTick             func(context.Context) error
 	Dedupe                func(context.Context, DedupeArgs) error
 	FetchSource           func(context.Context, uint) error
 	ScanBlogroll          func(context.Context, uint) error
@@ -204,6 +206,8 @@ var (
 )
 
 type riverQueue struct {
+	handlers        Handlers
+	database        *gorm.DB
 	client          *river.Client[*sql.Tx]
 	db              *sql.DB
 	runMu           sync.Mutex
@@ -410,8 +414,7 @@ func (queue *riverQueue) EnqueueProcessCandidate(ctx context.Context, candidateI
 }
 
 func (queue *riverQueue) EnqueueAssessArticle(ctx context.Context, materialID uint, contentVersion string) error {
-	_, err := queue.client.Insert(ctx, AssessArticleArgs{MaterialID: materialID, ContentVersion: contentVersion}, nil)
-	return err
+	return queue.EnqueueAssessArticles(ctx, []AssessmentTarget{{MaterialID: materialID, ContentVersion: contentVersion}})
 }
 
 // EnqueueAssessArticles 批量登记评估作业：先剔除队列里已存活的 (material, version)，
@@ -430,6 +433,15 @@ func (queue *riverQueue) EnqueueAssessArticles(ctx context.Context, targets []As
 		live, err := liveAssessmentTargetsFor(ctx, queue.db, chunk)
 		if err != nil {
 			return err
+		}
+		if queue.handlers.ReservedAssessments != nil {
+			reserved, e := queue.handlers.ReservedAssessments(ctx, chunk)
+			if e != nil {
+				return e
+			}
+			for target := range reserved {
+				live[target] = true
+			}
 		}
 		for _, batch := range assessmentInsertBatches(chunk, live) {
 			if _, err := queue.client.InsertMany(ctx, batch); err != nil {
@@ -471,6 +483,7 @@ func (queue *riverQueue) EnqueueGenerateDigestSummary(ctx context.Context, userI
 func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover RecoveryFunc) (func(), error) {
 	if database == nil || database.Dialector.Name() != "postgres" {
 		queue := NewMemoryQueue(fallbackMemoryStore(database), handlers)
+		queue.database = database
 		restore := installDefault(queue, memoryCrawlView{queue: queue}, memoryAssessmentView{queue: queue})
 		if recover != nil {
 			if err := recover(ctx, queue); err != nil {
@@ -496,6 +509,7 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault:  {MaxWorkers: 4},
 			DedupeQueueName:     {MaxWorkers: 2},
+			BatchQueueName:      {MaxWorkers: 1},
 			DiscoveryQueueName:  {MaxWorkers: 4},
 			AssessmentQueueName: {MaxWorkers: assessmentWorkers},
 		},
@@ -553,7 +567,7 @@ func Start(ctx context.Context, database *gorm.DB, handlers Handlers, recover Re
 	if err := client.Start(ctx); err != nil {
 		return func() {}, err
 	}
-	queue := &riverQueue{client: client, db: sqlDB, stop: make(chan struct{}), crawlAutoStart: crawlAutoStart}
+	queue := &riverQueue{database: database, handlers: handlers, client: client, db: sqlDB, stop: make(chan struct{}), crawlAutoStart: crawlAutoStart}
 	restore := installDefault(queue, riverCrawlView{queue: queue}, riverAssessmentView{queue: queue})
 	if recover != nil {
 		if err := recover(ctx, queue); err != nil {
@@ -968,6 +982,7 @@ func workerEvent(name string, jobID string, event observability.Event, err error
 }
 
 func registerWorkers(workers *river.Workers, handlers Handlers) {
+	river.AddWorker(workers, &batchTickWorker{handler: handlers.BatchTick})
 	river.AddWorker(workers, &dedupeWorker{handler: handlers.Dedupe})
 	river.AddWorker(workers, &fetchSourceWorker{handler: handlers.FetchSource})
 	river.AddWorker(workers, &scanBlogrollWorker{handler: handlers.ScanBlogroll})

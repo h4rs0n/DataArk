@@ -3,7 +3,7 @@
     <div class="section-title">
       <div>
         <h2>评估队列与 LLM 指标</h2>
-        <span>文章爬取由「任务队列」控制；LLM 评估排队等待，点击后单次消费当前待评估任务，不含 prompt 或正文</span>
+        <span>{{ isBatch ? '百炼 Batch：点击后提交本轮文章，后台异步回收；新文章等待下一轮' : '文章爬取由「任务队列」控制；LLM 评估排队等待，点击后单次消费当前待评估任务，不含 prompt 或正文' }}</span>
       </div>
       <a-space wrap>
         <span class="queue-state" :class="dedupeRun ? 'queue-state-running' : `queue-state-${queue.state}`">{{ queueStateLabel }}</span>
@@ -11,9 +11,13 @@
           刷新指标
         </a-button>
         <a-button type="primary" :loading="runningQueue || dedupeRun !== null" :disabled="!queue.canRun || queue.state === 'running'" @click="runQueue">
-          执行 LLM 评估
+          {{ queue.batchRun?.status === 'paused' ? '继续本轮评估' : '执行 LLM 评估' }}
         </a-button>
       </a-space>
+    </div>
+    <div class="inference-mode" role="status">
+      <strong>{{ inferenceModeLabel }}</strong>
+      <span v-if="inferenceMode">{{ isBatch ? '阿里云百炼 Batch API · 异步提交，后台回收结果' : '逐篇调用 LLM，返回结果后完成该篇评估' }}</span>
     </div>
     <p v-if="dedupeRun" class="dedupe-banner">{{ dedupeProgressLabel }}</p>
     <a-spin :loading="loading" class="metrics-spin">
@@ -22,17 +26,19 @@
         <div><strong>{{ metrics.pendingQueue }}</strong><span>待评估队列</span></div>
         <div><strong>{{ queue.counts.succeeded24h }}</strong><span>本次成功</span></div>
         <div><strong>{{ queue.counts.failed24h }}</strong><span>本次失败</span></div>
-        <div><strong>{{ metrics.articlesPerHour.toFixed(2) }}</strong><span>articles/hour</span></div>
+        <div><strong>{{ isBatch ? '—' : metrics.articlesPerHour.toFixed(2) }}</strong><span>articles/hour</span></div>
         <div><strong>{{ metrics.tokenTotals.total }}</strong><span>token 合计</span></div>
         <div><strong>{{ metrics.tokenTotals.prompt }} / {{ metrics.tokenTotals.completion }}</strong><span>prompt / completion</span></div>
-        <div><strong>{{ metrics.duration.p50Ms }} / {{ metrics.duration.p95Ms }}</strong><span>耗时 p50 / p95 ms</span></div>
-        <div><strong>{{ (metrics.schemaRetryRate * 100).toFixed(1) }}%</strong><span>schema 重试率</span></div>
+        <div><strong>{{ isBatch ? '—' : `${metrics.duration.p50Ms} / ${metrics.duration.p95Ms}` }}</strong><span>耗时 p50 / p95 ms</span></div>
+        <div><strong>{{ isBatch ? '—' : `${(metrics.schemaRetryRate * 100).toFixed(1)}%` }}</strong><span>schema 重试率</span></div>
       </div>
       <div class="queue-summary">
         <div><strong>{{ tokenRateLabel }}</strong><span>decode token/s</span></div>
-        <div><strong>{{ estimatedCompletionLabel }}</strong><span>预计完成</span></div>
+        <div><strong>{{ estimatedCompletionLabel }}</strong><span>{{ isBatch ? '供应商异步调度' : '预计完成' }}</span></div>
       </div>
     </a-spin>
+
+    <AssessmentBatchPanel v-if="isBatch || queue.batchRun || queue.batchCleanup" :active="props.active" :run="queue.batchRun" :execution-mode="queue.executionMode" :cleanup="queue.batchCleanup ?? null" @cleanup-resumed="refreshPanel" />
 
     <div class="section-title backfill-title">
       <div>
@@ -64,6 +70,8 @@
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { requestJSON } from '@/api/client'
+import AssessmentBatchPanel from './AssessmentBatchPanel.vue'
+import type { BatchRunSummary, BatchCleanupPause } from './batch-types'
 
 const props = defineProps<{ active: boolean }>()
 
@@ -79,8 +87,11 @@ interface AssessmentMetrics {
 }
 
 interface AssessmentQueueSnapshot {
+  executionMode: 'realtime' | 'batch'
+  batchRun: BatchRunSummary | null
+  batchCleanup?: BatchCleanupPause | null
   mode: 'automatic' | 'manual'
-  state: 'idle' | 'waiting' | 'running'
+  state: 'idle' | 'waiting' | 'running' | 'paused'
   canRun: boolean
   counts: { pending: number; running: number; succeeded24h: number; failed24h: number }
 }
@@ -109,6 +120,9 @@ const unwrapQueueData = (data: AssessmentQueueRunResult): { snapshot: Assessment
 }
 
 const emptyQueue = (): AssessmentQueueSnapshot => ({
+  executionMode: 'realtime',
+  batchRun: null,
+  batchCleanup: null,
   mode: 'manual',
   state: 'idle',
   canRun: false,
@@ -128,6 +142,8 @@ const emptyMetrics = (): AssessmentMetrics => ({
 
 const metrics = reactive(emptyMetrics())
 const queue = reactive(emptyQueue())
+const inferenceMode = ref<AssessmentQueueSnapshot['executionMode'] | null>(null)
+const inferenceModeError = ref(false)
 const dedupeRun = ref<DedupeRunSummary | null>(null)
 const loading = ref(false)
 const running = ref(false)
@@ -138,12 +154,24 @@ const limit = ref(250)
 const retryFailures = ref(false)
 let queueTimer: ReturnType<typeof window.setTimeout> | null = null
 
+const isBatch = computed(() => queue.executionMode === 'batch')
+const inferenceModeLabel = computed(() => {
+  if (!inferenceMode.value) return inferenceModeError.value ? '当前推理模式：暂不可用' : '当前推理模式：加载中'
+  return inferenceMode.value === 'batch' ? '当前推理模式：批量推理' : '当前推理模式：实时推理'
+})
+
+const updateInferenceMode = (snapshot: AssessmentQueueSnapshot) => {
+  inferenceMode.value = snapshot?.executionMode === 'batch' || snapshot?.executionMode === 'realtime' ? snapshot.executionMode : null
+  inferenceModeError.value = inferenceMode.value === null
+}
+
 const queueStateLabel = computed(() => {
   if (dedupeRun.value) return '评估进行中'
   return ({
     idle: '队列空闲',
     waiting: '等待手动执行',
-    running: '正在执行',
+    paused: queue.batchRun?.status === 'paused' ? '评估已暂停，需要手动继续' : '已暂停',
+    running: queue.batchRun?.active ? 'Batch 评估进行中' : '正在执行',
   } as Record<string, string>)[queue.state]
 })
 
@@ -176,10 +204,11 @@ const remainingQueueJobs = computed(() => queue.counts.pending + queue.counts.ru
 // articles/hour：本次任务单作业平均墙钟耗时反推，再乘评估并发。
 
 // decode 吞吐：本次任务各次 chat 优先用 llama.cpp timings.predicted_*；无 timings 则回退 completion / 墙钟。
-const tokenRateLabel = computed(() => formatTokenRate(metrics.tokensPerSecond))
+const tokenRateLabel = computed(() => isBatch.value ? '—' : formatTokenRate(metrics.tokensPerSecond))
 
 // 预计完成：剩余作业数 × 本次任务单作业平均耗时。
 const estimatedCompletionLabel = computed(() => {
+  if (isBatch.value) return queue.state === 'running' ? '等待供应商结果' : '—'
   if (remainingQueueJobs.value <= 0) return '队列已空'
   if (!(metrics.avgJobDurationMs > 0)) return '—'
   return formatRemaining(remainingQueueJobs.value * metrics.avgJobDurationMs)
@@ -251,8 +280,11 @@ const loadQueue = async (silent = false) => {
     Object.assign(queue, emptyQueue(), snapshot, {
       counts: { ...emptyQueue().counts, ...(snapshot?.counts || {}) },
     })
+    updateInferenceMode(snapshot)
     dedupeRun.value = run
   } catch (error) {
+    inferenceMode.value = null
+    inferenceModeError.value = true
     if (!silent) {
       errorMessage.value = error instanceof Error ? error.message : '加载评估队列失败'
     }
@@ -276,6 +308,7 @@ const runQueue = async () => {
     Object.assign(queue, emptyQueue(), snapshot, {
       counts: { ...emptyQueue().counts, ...(snapshot?.counts || {}) },
     })
+    updateInferenceMode(snapshot)
     dedupeRun.value = run
     if (run) {
       Message.success('评估进行中：全库查重构建中，完成后自动开始 LLM 评估')
@@ -365,6 +398,29 @@ onUnmounted(() => {
 
 .section-title > div span {
   color: #86909c;
+  font-size: 13px;
+}
+
+.inference-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border: 1px solid #bedaff;
+  border-radius: 8px;
+  background: #e8f3ff;
+  line-height: 1.5;
+}
+
+.inference-mode strong {
+  color: #165dff;
+  font-size: 14px;
+}
+
+.inference-mode span {
+  color: #4e5969;
   font-size: 13px;
 }
 

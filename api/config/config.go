@@ -78,5 +78,5 @@ func ValidateRequiredLLM() error {
 	if strings.ToLower(strings.TrimSpace(ARTICLEASSESSMENTMODE)) != "active" {
 		return fmt.Errorf("-article-assessment-mode must be active")
 	}
-	return nil
+	return ValidateBatchLLM()
 }

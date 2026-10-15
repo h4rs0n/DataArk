@@ -80,6 +80,9 @@ func currentRunWindowFromSnapshot(snapshot *jobqueue.CrawlQueueSnapshot) (time.T
 
 // GetMetrics 用 River 作业数作为待评估队列深度，并在本次手动评估 running 时聚合 token/耗时。
 func GetMetrics(now time.Time) (*Metrics, error) {
+	if metrics, batch, err := BatchMetrics(context.Background(), now); batch {
+		return metrics, err
+	}
 	metrics := &Metrics{GeneratedAt: now}
 	snapshot, err := assessmentSnapshot()
 	if err != nil {
@@ -99,24 +102,24 @@ func GetMetrics(now time.Time) (*Metrics, error) {
 		return metrics, nil
 	}
 	var totals MetricsTokens
-	if err := db.Model(&LLMCall{}).Where("stage = ? AND created_at >= ?", llm.StageArticleAssessment, since).
+	if err := db.Model(&LLMCall{}).Where("batch_item_id IS NULL").Where("stage = ? AND created_at >= ?", llm.StageArticleAssessment, since).
 		Select("COALESCE(SUM(prompt_tokens),0) as prompt, COALESCE(SUM(completion_tokens),0) as completion, COALESCE(SUM(reasoning_tokens),0) as reasoning, COALESCE(SUM(cached_tokens),0) as cached, COALESCE(SUM(total_tokens),0) as total").
 		Scan(&totals).Error; err != nil {
 		return nil, err
 	}
 	metrics.TokenTotals = totals
 	var durations []int64
-	if err := db.Model(&LLMCall{}).Where("stage = ? AND created_at >= ? AND duration_ms > 0", llm.StageArticleAssessment, since).Pluck("duration_ms", &durations).Error; err != nil {
+	if err := db.Model(&LLMCall{}).Where("batch_item_id IS NULL").Where("stage = ? AND created_at >= ? AND duration_ms > 0", llm.StageArticleAssessment, since).Pluck("duration_ms", &durations).Error; err != nil {
 		return nil, err
 	}
 	metrics.Duration.P50 = percentileDuration(durations, 50)
 	metrics.Duration.P95 = percentileDuration(durations, 95)
 	var retried int64
 	var assessed int64
-	if err := db.Model(&LLMCall{}).Where("stage = ? AND created_at >= ?", llm.StageArticleAssessment, since).Count(&assessed).Error; err != nil {
+	if err := db.Model(&LLMCall{}).Where("batch_item_id IS NULL").Where("stage = ? AND created_at >= ?", llm.StageArticleAssessment, since).Count(&assessed).Error; err != nil {
 		return nil, err
 	}
-	if err := db.Model(&LLMCall{}).Where("stage = ? AND created_at >= ? AND attempt > 1", llm.StageArticleAssessment, since).Count(&retried).Error; err != nil {
+	if err := db.Model(&LLMCall{}).Where("batch_item_id IS NULL").Where("stage = ? AND created_at >= ? AND attempt > 1", llm.StageArticleAssessment, since).Count(&retried).Error; err != nil {
 		return nil, err
 	}
 	if assessed > 0 {
@@ -136,7 +139,7 @@ func assignCompleteJobWindow(metrics *Metrics, since time.Time, snapshot *jobque
 		return nil
 	}
 	var successIDs []uint
-	if err := db.Model(&LLMCall{}).Where("stage = ? AND created_at >= ? AND status = ? AND candidate_id > 0", llm.StageArticleAssessment, since, "success").Distinct("candidate_id").Pluck("candidate_id", &successIDs).Error; err != nil {
+	if err := db.Model(&LLMCall{}).Where("batch_item_id IS NULL").Where("stage = ? AND created_at >= ? AND status = ? AND candidate_id > 0", llm.StageArticleAssessment, since, "success").Distinct("candidate_id").Pluck("candidate_id", &successIDs).Error; err != nil {
 		return err
 	}
 	success := make(map[uint]struct{}, len(successIDs))
@@ -145,7 +148,7 @@ func assignCompleteJobWindow(metrics *Metrics, since time.Time, snapshot *jobque
 	}
 	metrics.CurrentRun.Success = int64(len(success))
 	var failedIDs []uint
-	if err := db.Model(&LLMCall{}).Where("stage = ? AND created_at >= ? AND status = ? AND candidate_id > 0", llm.StageArticleAssessment, since, "failed").Distinct("candidate_id").Pluck("candidate_id", &failedIDs).Error; err != nil {
+	if err := db.Model(&LLMCall{}).Where("batch_item_id IS NULL").Where("stage = ? AND created_at >= ? AND status = ? AND candidate_id > 0", llm.StageArticleAssessment, since, "failed").Distinct("candidate_id").Pluck("candidate_id", &failedIDs).Error; err != nil {
 		return err
 	}
 	var failures int64
@@ -163,7 +166,7 @@ func assignCompleteJobWindow(metrics *Metrics, since time.Time, snapshot *jobque
 // 作业均耗时按文章汇总墙钟，供本次任务预计完成使用。
 func assignJobThroughput(metrics *Metrics, since time.Time) error {
 	var jobRows []jobDurationRow
-	if err := db.Model(&LLMCall{}).
+	if err := db.Model(&LLMCall{}).Where("batch_item_id IS NULL").
 		Select("candidate_id, COALESCE(SUM(duration_ms),0) as duration_ms").
 		Where("stage = ? AND created_at >= ? AND candidate_id > 0", llm.StageArticleAssessment, since).
 		Group("candidate_id").
@@ -186,7 +189,7 @@ func assignJobThroughput(metrics *Metrics, since time.Time) error {
 	}
 
 	var calls []decodeThroughputRow
-	if err := db.Model(&LLMCall{}).
+	if err := db.Model(&LLMCall{}).Where("batch_item_id IS NULL").
 		Select("completion_tokens, duration_ms, predicted_tokens, predicted_ms").
 		Where("stage = ? AND created_at >= ? AND candidate_id > 0", llm.StageArticleAssessment, since).
 		Scan(&calls).Error; err != nil {

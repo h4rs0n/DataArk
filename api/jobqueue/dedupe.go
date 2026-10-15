@@ -37,7 +37,7 @@ type DedupeEnqueuer interface {
 	EnqueueDedupe(context.Context, DedupeArgs) error
 }
 type AssessmentPruner interface {
-	PruneAssessments(context.Context, func(uint, string) (bool, error)) (int64, error)
+	PruneAssessments(context.Context, func([]AssessmentTarget) (map[uint]bool, error)) (int64, error)
 }
 
 func (q *riverQueue) EnqueueDedupe(ctx context.Context, args DedupeArgs) error {
@@ -57,7 +57,7 @@ func (w *dedupeWorker) Work(ctx context.Context, job *river.Job[DedupeArgs]) err
 	}
 	return w.handler(ctx, job.Args)
 }
-func (q *riverQueue) PruneAssessments(ctx context.Context, skip func(uint, string) (bool, error)) (int64, error) {
+func (q *riverQueue) PruneAssessments(ctx context.Context, skip func([]AssessmentTarget) (map[uint]bool, error)) (int64, error) {
 	var total int64
 	var cursor int64
 	for {
@@ -93,15 +93,18 @@ func (q *riverQueue) PruneAssessments(ctx context.Context, skip func(uint, strin
 		if len(batch) == 0 {
 			return total, nil
 		}
+		targets := make([]AssessmentTarget, 0, len(batch))
 		for _, target := range batch {
-			if target.args.MaterialID == 0 {
-				continue
+			if target.args.MaterialID != 0 {
+				targets = append(targets, AssessmentTarget{MaterialID: target.args.MaterialID, ContentVersion: target.args.ContentVersion})
 			}
-			cancel, err := skip(target.args.MaterialID, target.args.ContentVersion)
-			if err != nil {
-				return total, err
-			}
-			if !cancel {
+		}
+		suppressed, err := skip(targets)
+		if err != nil {
+			return total, err
+		}
+		for _, target := range batch {
+			if !suppressed[target.args.MaterialID] {
 				continue
 			}
 			cancelled, err := q.cancelSupersededAssessment(ctx, target.id)
@@ -139,27 +142,37 @@ func (q *MemoryQueue) EnqueueDedupe(ctx context.Context, args DedupeArgs) error 
 	}()
 	return nil
 }
-func (q *MemoryQueue) PruneAssessments(ctx context.Context, skip func(uint, string) (bool, error)) (int64, error) {
+func (q *MemoryQueue) PruneAssessments(ctx context.Context, skip func([]AssessmentTarget) (map[uint]bool, error)) (int64, error) {
 	var count int64
-	for _, job := range q.store.Snapshot() {
-		if job.Kind != AssessArticleJobKind || job.Status != MemoryJobPending {
+	jobs := q.store.Snapshot()
+	for start := 0; start < len(jobs); start += 250 {
+		end := min(start+250, len(jobs))
+		targets := []AssessmentTarget{}
+		for _, job := range jobs[start:end] {
+			if job.Kind == AssessArticleJobKind && job.Status == MemoryJobPending && job.TargetID != 0 {
+				targets = append(targets, AssessmentTarget{MaterialID: job.TargetID, ContentVersion: job.ContentVersion})
+			}
+		}
+		if len(targets) == 0 {
 			continue
 		}
-		cancel, err := skip(job.TargetID, job.ContentVersion)
+		suppressed, err := skip(targets)
 		if err != nil {
 			return count, err
 		}
-		if !cancel {
-			continue
-		}
 		q.store.mu.Lock()
-		current := q.store.jobs[job.Key]
-		if current.Status == MemoryJobPending {
-			current.Status = "dedupe_skipped"
-			now := time.Now()
-			current.FinishedAt = &now
-			q.store.jobs[job.Key] = current
-			count++
+		for _, job := range jobs[start:end] {
+			if job.Kind != AssessArticleJobKind || job.Status != MemoryJobPending || !suppressed[job.TargetID] {
+				continue
+			}
+			current := q.store.jobs[job.Key]
+			if current.Status == MemoryJobPending {
+				current.Status = "dedupe_skipped"
+				now := time.Now()
+				current.FinishedAt = &now
+				q.store.jobs[job.Key] = current
+				count++
+			}
 		}
 		q.store.mu.Unlock()
 	}

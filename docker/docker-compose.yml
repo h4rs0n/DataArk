@@ -38,6 +38,15 @@ services:
       "-llm-chat-model", "${LLM_CHAT_MODEL}",
       "-llm-embedding-model", "${LLM_EMBEDDING_MODEL}",
       "-llm-timeout", "${LLM_TIMEOUT}",
+      "-llm-batch-provider", "${LLM_BATCH_PROVIDER:-}",
+      "-llm-batch-base-url", "${LLM_BATCH_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}",
+      "-llm-batch-api-key", "${LLM_BATCH_API_KEY:-}",
+      "-llm-batch-model", "${LLM_BATCH_MODEL:-}",
+      "-llm-batch-size", "${LLM_BATCH_SIZE:-100}",
+      "-llm-batch-concurrency", "${LLM_BATCH_CONCURRENCY:-10}",
+      "-llm-batch-poll-interval", "${LLM_BATCH_POLL_INTERVAL:-90s}",
+      "-llm-batch-request-timeout", "${LLM_BATCH_REQUEST_TIMEOUT:-60s}",
+
       "-article-assessment-mode", "${ARTICLE_ASSESSMENT_MODE:-active}",
       "-article-assessment-concurrency", "${ARTICLE_ASSESSMENT_CONCURRENCY:-2}",
       "-embedding-dimension", "${EMBEDDING_DIMENSION}"

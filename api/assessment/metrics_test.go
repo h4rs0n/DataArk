@@ -15,7 +15,9 @@ func TestGetMetricsAggregatesQueueAndSafeTokenRows(t *testing.T) {
 	restoreAssessmentConcurrency(t, 2)
 	now := time.Date(2026, 8, 18, 18, 0, 0, 0, time.UTC)
 	stubAssessmentSnapshot(t, runningAssessmentSnapshot(now.Add(-2*time.Hour), 1, 2, 1))
+	batchItemID := uint(999)
 	rows := []LLMCall{
+		{BatchItemID: &batchItemID, CandidateID: 70, Stage: llm.StageArticleAssessment, Status: "success", Attempt: 1, PromptTokens: 999, CompletionTokens: 999, TotalTokens: 1998, CreatedAt: now.Add(-time.Minute)},
 		{CandidateID: 7, Stage: llm.StageArticleAssessment, Status: "success", Attempt: 1, DurationMS: 100, PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15, CreatedAt: now.Add(-time.Hour)},
 		{CandidateID: 8, Stage: llm.StageArticleAssessment, Status: "failed", Attempt: 1, DurationMS: 50, CompletionTokens: 2, ErrorType: "invalid_output", CreatedAt: now.Add(-time.Hour)},
 		{CandidateID: 8, Stage: llm.StageArticleAssessment, Status: "success", Attempt: 2, DurationMS: 400, PromptTokens: 20, CompletionTokens: 6, TotalTokens: 26, CreatedAt: now.Add(-time.Hour)},

@@ -26,6 +26,13 @@ func AssessMaterial(ctx context.Context, id uint, expectedVersion string, assess
 	if expectedVersion != "" && strconv.FormatUint(uint64(state.ContentVersion), 10) != expectedVersion {
 		return nil
 	}
+	reserved, reserveErr := BatchActiveTarget(db.WithContext(ctx), id, strconv.FormatUint(uint64(state.ContentVersion), 10))
+	if reserveErr != nil {
+		return reserveErr
+	}
+	if reserved {
+		return nil
+	}
 	var candidate discovery.DiscoveryCandidate
 	result := discovery.Candidates(db).Where("material_id = ?", id).Order("CASE WHEN representative_id = id THEN 0 ELSE 1 END, id").Limit(1).Find(&candidate)
 	if result.Error != nil {

@@ -182,6 +182,10 @@ func updateAssessmentStatus(candidate discovery.DiscoveryCandidate, state string
 }
 
 func persistArticleAssessment(candidate discovery.DiscoveryCandidate, assessor ArticleAssessor, result ArticleAssessmentResult) (ArticleAssessment, error) {
+	return persistArticleAssessmentWithDB(db, candidate, assessor, result)
+}
+
+func persistArticleAssessmentWithDB(database *gorm.DB, candidate discovery.DiscoveryCandidate, assessor ArticleAssessor, result ArticleAssessmentResult) (ArticleAssessment, error) {
 	reasons, _ := json.Marshal(result.Reasons)
 	keywordsJSON := ""
 	if len(result.Keywords) > 0 {
@@ -195,7 +199,7 @@ func persistArticleAssessment(candidate discovery.DiscoveryCandidate, assessor A
 		Confidence: clampAssessment(result.Confidence), Reasons: string(reasons), Summary: strings.TrimSpace(result.Summary),
 		Keywords: keywordsJSON, CreatedAt: discovery.Timestamp(),
 	}
-	err := db.Clauses(clause.OnConflict{
+	err := database.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "material_id"}, {Name: "content_version"}, {Name: "assessor"}, {Name: "assessor_version"}, {Name: "policy_version"}},
 		DoNothing: true,
 	}).Create(&row).Error
@@ -203,7 +207,7 @@ func persistArticleAssessment(candidate discovery.DiscoveryCandidate, assessor A
 		return row, err
 	}
 	if row.ID == 0 {
-		err = db.Where("material_id = ? AND content_version = ? AND assessor = ? AND assessor_version = ? AND policy_version = ?", candidate.MaterialID, candidate.ContentVersion, assessor.Name(), assessor.Version(), assessor.PolicyVersion()).First(&row).Error
+		err = database.Where("material_id = ? AND content_version = ? AND assessor = ? AND assessor_version = ? AND policy_version = ?", candidate.MaterialID, candidate.ContentVersion, assessor.Name(), assessor.Version(), assessor.PolicyVersion()).First(&row).Error
 	}
 	return row, err
 }

@@ -30,11 +30,15 @@ func discoveryCandidateBlacklistPredicate(candidateAlias string) (string, error)
 	default:
 		return "", fmt.Errorf("invalid discovery candidate table alias %q", candidateAlias)
 	}
+	// Keep this as a correlated existence check. With exact-or-suffix matches,
+	// an anti join can estimate that every host matches a tiny blacklist and
+	// drive unrelated library joins into tens of thousands of index lookups.
 	return `EXISTS (
 SELECT 1
 FROM discovery_domain_blacklist_entries AS domain_blacklist
 WHERE ` + hostColumn + ` = domain_blacklist.domain
    OR ` + hostColumn + ` LIKE '%.' || domain_blacklist.domain
+LIMIT 1 OFFSET 0
 )`, nil
 }
 
@@ -189,7 +193,10 @@ func CreateDiscoveryDomainBlacklist(domain string, reason string) (*DiscoveryDom
 				"next_processing_at":    nil,
 				"updated_at":            time.Now(),
 			})
-		return result.Error
+		if result.Error != nil {
+			return result.Error
+		}
+		return invalidateDedupeDomain(tx, normalized)
 	})
 	if err != nil {
 		return nil, err
@@ -237,6 +244,9 @@ func DeleteDiscoveryDomainBlacklist(id uint) (*DiscoveryDomainBlacklistMutation,
 			}
 		}
 		mutation.AffectedCandidates = int64(len(unblocked))
+		if err := invalidateDedupeDomain(tx, mutation.Entry.Domain); err != nil {
+			return err
+		}
 		if len(resumable) == 0 {
 			return nil
 		}

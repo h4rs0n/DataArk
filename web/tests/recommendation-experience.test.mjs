@@ -109,6 +109,17 @@ test('owner assessment module shows metrics and a manual LLM queue', () => {
   assert.match(metricsPanel, /dedupeRun\.value \? 5000 : 10000/)
 })
 
+test('assessment inference mode is explicit and waits for the backend snapshot', () => {
+  assert.match(metricsPanel, /class="inference-mode" role="status"/)
+  for (const label of ['当前推理模式：实时推理', '当前推理模式：批量推理', '当前推理模式：加载中', '当前推理模式：暂不可用']) {
+    assert.ok(metricsPanel.includes(label))
+  }
+  assert.match(metricsPanel, /阿里云百炼 Batch API · 异步提交，后台回收结果/)
+  assert.match(metricsPanel, /inferenceMode = ref<AssessmentQueueSnapshot\['executionMode'\] \| null>\(null\)/)
+  assert.equal((metricsPanel.match(/updateInferenceMode\(snapshot\)/g) || []).length, 2)
+  assert.match(metricsPanel, /inferenceMode\.value = null\s+inferenceModeError\.value = true/)
+})
+
 test('candidate article titles open the source in a safe new tab', () => {
   assert.match(view + recommendationCard, /class="candidate-title-link"/)
   assert.match(view + recommendationCard, /:href="(?:candidate|item\.candidate)\.url"/)
@@ -199,4 +210,52 @@ test('owner queue tab manages the discovery domain blacklist', () => {
   assert.match(queue, /已爬取文章也会从候选列表和后续推荐中剔除/)
   assert.match(queue, /剔除.*篇候选文章/)
   assert.ok(queue.indexOf('domain-blacklist-panel') > queue.indexOf('爬取任务队列'))
+})
+
+const batchPanel = await readSource('../src/components/recommendations/AssessmentBatchPanel.vue')
+assert.match(metricsPanel, /executionMode/)
+assert.match(metricsPanel, /AssessmentBatchPanel/)
+assert.match(batchPanel, /提交结果待核对/)
+assert.match(batchPanel, /查看失败项/)
+assert.match(batchPanel, /beforeId/)
+assert.match(batchPanel, /afterId/)
+assert.match(batchPanel, /onUnmounted/)
+
+
+test('Batch assessment persistently explains HTTP pauses and manual resume', async () => {
+  const panel = await readSource('../src/components/recommendations/AssessmentBatchPanel.vue')
+  const types = await readSource('../src/components/recommendations/batch-types.ts')
+  assert.match(panel, /role="alert"/)
+  assert.match(panel, /pauseHint\(run.errorCode\)/)
+  assert.match(panel, /重启不会自动恢复/)
+  assert.match(panel, /已退回 River/)
+  assert.match(metricsPanel, /继续本轮评估/)
+  assert.match(types, /errorCode\?: number/)
+  assert.match(types, /returned\?: number/)
+})
+
+
+test('Batch article failure details are confined to a paginated modal', () => {
+  const modalStart = batchPanel.indexOf('<a-modal')
+  const modalEnd = batchPanel.indexOf('</a-modal>')
+  const details = batchPanel.indexOf('文章 #{{ item.materialId }}')
+  assert.ok(modalStart >= 0 && details > modalStart && details < modalEnd)
+  assert.match(batchPanel, /v-model:visible="failureVisible"/)
+  assert.match(batchPanel, /@click="openFailures\(batch.id\)"/)
+  assert.match(batchPanel, /failureLoading/)
+  assert.match(batchPanel, /failureError/)
+  assert.match(batchPanel, /selectedId.value !== id/)
+  assert.match(batchPanel, /const closeFailures =/)
+  assert.match(batchPanel, /failureVersion\+\+/)
+})
+
+
+test('Batch provider diagnostics and cleanup pause have explicit recovery controls', () => {
+  assert.match(batchPanel, /run\.error/)
+  assert.match(batchPanel, /Batch 文件清理已暂停/)
+  assert.match(batchPanel, /重试文件清理/)
+  assert.match(batchPanel, /batches\/cleanup\/resume/)
+  assert.match(metricsPanel, /queue\.batchCleanup/)
+  assert.match(metricsPanel, /batchCleanup: null/)
+  assert.match(batchPanel, /cleanupResumed/)
 })

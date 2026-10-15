@@ -44,6 +44,10 @@ func (assessor EnrichmentArticleAssessor) Assess(ctx context.Context, input Arti
 	if err != nil {
 		return ArticleAssessmentResult{}, err
 	}
+	return normalizeChatAssessment(result), nil
+}
+
+func normalizeChatAssessment(result ChatAssessmentResult) ArticleAssessmentResult {
 	scores := articlevalue.NormalizeModelScores(articlevalue.Scores{
 		Quality:   float64(result.QualityScore) / 100,
 		Depth:     float64(result.DepthScore) / 100,
@@ -55,10 +59,13 @@ func (assessor EnrichmentArticleAssessor) Assess(ctx context.Context, input Arti
 		Reasons:    append([]string(nil), result.Reasons...),
 		Summary:    strings.TrimSpace(result.Summary),
 		Keywords:   append([]string(nil), result.Keywords...),
-	}, nil
+	}
 }
 
 func ConfiguredArticleAssessor() ArticleAssessor {
+	if config.BatchEnabled() {
+		return batchIdentity{Model: config.LLMBATCHMODEL}
+	}
 	return EnrichmentArticleAssessor{
 		Provider: ConfiguredChatProvider(), Model: config.LLMCHATMODEL,
 	}

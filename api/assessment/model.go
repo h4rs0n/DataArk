@@ -39,6 +39,7 @@ func (ArticleAssessment) TableName() string { return "discovery_article_assessme
 
 // LLMCall 只存安全观测字段，禁止写入 prompt 或模型正文。
 type LLMCall struct {
+	BatchItemID      *uint     `json:"batchItemId,omitempty" gorm:"uniqueIndex"`
 	MaterialID       *uint     `json:"materialId,omitempty" gorm:"index"`
 	ID               uint      `json:"id" gorm:"primaryKey"`
 	CandidateID      uint      `json:"candidateId" gorm:"index;not null;default:0"`
@@ -62,7 +63,7 @@ type LLMCall struct {
 func (LLMCall) TableName() string { return "assessment_llm_calls" }
 
 func V3Models() []interface{} {
-	return []interface{}{&ArticleAssessment{}, &LLMCall{}}
+	return []interface{}{&ArticleAssessment{}, &LLMCall{}, &BatchRun{}, &Batch{}, &BatchItem{}}
 }
 
 func persistLLMCallEvent(event observability.Event) {

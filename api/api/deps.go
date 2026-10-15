@@ -6,6 +6,7 @@ import (
 	"DataArk/auth"
 	"DataArk/backup"
 	"DataArk/bootstrap"
+	"DataArk/config"
 	"DataArk/dedupe"
 	"DataArk/discovery"
 	"DataArk/jobqueue"
@@ -31,12 +32,13 @@ func init() {
 		if err := assessment.RecoverDueJobs(ctx, queue, time.Now()); err != nil {
 			return err
 		}
-		_, err := controller.Run(ctx)
+		_, err := startConfiguredAssessment(ctx, controller)
 		return err
 	}
 }
 
 var (
+	resumeAssessmentBatchCleanup       = assessment.ResumeBatchCleanup
 	checkArchiveConsistency            = search.CheckArchiveConsistency
 	repairArchiveConsistency           = search.RepairArchiveConsistency
 	registerWithToken                  = auth.RegisterWithToken
@@ -141,6 +143,16 @@ var (
 		if !queueAvailable || !controllerAvailable {
 			return nil, nil, errors.New("article assessment queue is unavailable")
 		}
+		if config.BatchEnabled() {
+			resumed, err := assessment.ResumeBatchRun(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			if resumed {
+				snapshot, err := controller.Snapshot(ctx, 50)
+				return snapshot, nil, err
+			}
+		}
 		// 查重未生效时先自动构建全库去重运行；评估在其应用完成后由恢复流程自动释放。
 		run, proceed, err := discovery.EnsureDedupeForAssessment(ctx)
 		if err != nil {
@@ -156,7 +168,7 @@ var (
 		if err := assessment.RecoverDueJobs(ctx, queue, time.Now()); err != nil {
 			return nil, nil, err
 		}
-		snapshot, err := controller.Run(ctx)
+		snapshot, err := startConfiguredAssessment(ctx, controller)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -183,3 +195,13 @@ var (
 		return router.Run(addr)
 	}
 )
+
+func startConfiguredAssessment(ctx context.Context, controller jobqueue.AssessmentQueueController) (*jobqueue.CrawlQueueSnapshot, error) {
+	if config.BatchEnabled() {
+		if err := assessment.StartBatchRun(ctx); err != nil {
+			return nil, err
+		}
+		return controller.Snapshot(ctx, 50)
+	}
+	return controller.Run(ctx)
+}
