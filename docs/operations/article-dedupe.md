@@ -58,6 +58,18 @@
 
 `POST /api/admin/discovery/dedupe/runs/{id}/rollback` 撤销当前活跃运行的投影变更，状态 `rolling_back` → `rolled_back`。版本和投影仍匹配时恢复快照；发生后续正文/资格变化时解除覆盖，避免恢复过期状态。保留指纹、原文、独立评估和推荐历史，切换为 `exact` 模式（新近重复不再自动应用）。仅当前活跃运行可回滚；其他构建/应用运行进行中会返回 409。
 
+## 故障排查
+
+GORM 慢查询阈值为 200ms（`api/database/database.go`）。当 `dataarkapi-*.log` 中查重恢复路径的查询（代表入队目标、覆盖缺口扫描、不可用代表扫描、恢复待评估文章）持续超阈值并反复出现时，按以下顺序排查：
+
+1. 先看 `dedupe recovery sweep` 结构化日志：`actionable_drift`（可推进漂移）、`inactive_unapplied`（黑名单/不可用/过期成员）、`gap_targets`（投递目标数，队列唯一约束可能去重，不等于新增作业数）、`assessment_jobs_scanned`、`cancelled`、`gap_ms`、`enqueue_ms`、`prune_ms` 及总耗时。
+2. 已收敛且无变化的库存应遵守 30 tick 兜底周期；完整恢复每隔 2–3 分钟重复出现即为不收敛。此时检查 `inactive_unapplied` 是否居高——通常是命中域名黑名单且无可用 ready 候选的成员聚集。黑名单增删会自动重新激活受影响成员，不需要手工批量改写 `applied` 状态。
+3. 代表资格查询变慢时，确认迁移 `000042` 的表达式统计 `article_dedupe_representative_stats` 与已应用代表覆盖索引存在，且随后有过 `ANALYZE`。成员约 99.8% 为自身代表时，同表两列相等条件的估算若严重偏低（估算 1 行对实际约 9 万行），会放大成大量嵌套索引访问。
+4. 单篇查重文章读取变慢，先确认 `000039` 的 `idx_material_current_version` 存在。
+5. 不要把旧版本的日志行号当作当前问题：历史行号可能与当前源码不同，先按查询用途对齐再下结论。
+
+2026-10-09 生产调查确认的两个根因（黑名单成员使恢复无法收敛、代表资格行数估算严重偏低）已随 `000042` 与恢复收敛修复落地；完整证据、执行计划对照与隔离验证见[慢 SQL 调查](../investigation/2026-10-09-slow-sql.md)。
+
 ## 开发验证
 
 ```sh

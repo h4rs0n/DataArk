@@ -26,6 +26,10 @@ make web
 make build
 ```
 
+## Documentation
+
+See the [docs/README.md](docs/README.md) index for the database design, subsystem runbooks, historical incident investigations, and frontend development references.
+
 ## Feedback and Contributions
 
 Suggestions and feedback are welcome via Issues, or you can directly submit a PR to participate in project development.

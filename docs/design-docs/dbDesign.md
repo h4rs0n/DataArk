@@ -1,8 +1,8 @@
 # 数据库设计
 
-本文档描述仓库更新至 Goose `000036` 的 PostgreSQL schema。文中标注的运行库类型与数量是 2026-08-27 的历史快照，不能据此推断生产库已经升级。
+本文档描述仓库更新至 Goose `000044` 的 PostgreSQL schema。文中标注的运行库类型与数量是 2026-08-27 的历史快照，不能据此推断生产库已经升级；`000037`–`000044` 的表结构依据迁移文件描述，未在运行库逐列核对。
 
-- 生产 schema **只**由 Goose 编号迁移定义：`api/migrations/000001`–`000036`。
+- 生产 schema **只**由 Goose 编号迁移定义：`api/migrations/000001`–`000044`。
 - 启动路径：`api/bootstrap.InitDB()` → `api/database.InitDB()` 连库 → `RunDatabaseMigrations()`（Goose `Up` + River migrator）。
 - GORM `AutoMigrate` **只给 SQLite 测试当方言替身**，不定义生产 schema。
 - 模型分散在 `api/material`、`api/auth`、`api/archive`、`api/discovery`、`api/assessment`、`api/recommendation`。没有 `api/common/`。
@@ -39,10 +39,14 @@ archive_documents / material_archive_links ─────┘
 
 discovery_article_content_versions / material_candidate_versions
   保留历史抽取 ID 和旧候选版本映射，供旧队列任务及历史映射使用。
+article_dedupe_fingerprints / buckets / runs / members / changes / settings
+  指纹去重：挂在 material_representations，回滚日志关联 discovery_candidates。
+assessment_batch_runs / batches / items
+  百炼 Batch 评估：文章项关联 discovery_article_assessments 与 assessment_llm_calls。
 river_* / goose_db_version：队列与迁移账本。
 ```
 
-当前产品流：自动发现并记录来源 → 候选抓取/抽取 → material 内容版本 → owner 手动开启 LLM 评估队列 → 推荐读取 ready/eligible 内容。
+当前产品流：自动发现并记录来源 → 候选抓取/抽取 → material 内容版本 → 指纹去重（首次部署默认 `shadow`，不自动重聚类库存） → owner 手动开启 LLM 评估队列（实时或百炼 Batch） → 推荐读取 ready/eligible 内容。
 
 ## 核心内容模型（`000032`–`000035`）
 
@@ -60,6 +64,8 @@ river_* / goose_db_version：队列与迁移账本。
 | `material_archive_links` | 内容到历史归档任务的关联；物理文件详情仍在 archive 领域 |
 
 独立来源数为 `COUNT(DISTINCT domain_key)`，空域名不计数。同一站点的 feed、首页等入口保留多条证据，但只算一个独立来源。域名取发现来源并保存快照，删除来源端点不会丢失计数。HTTP 兼容投影 `discovery_candidate_details` 暴露 `materialId` 和 `independentSourceCount`；尚未修改排名权重。
+
+`000039` 为 `material(current_version_id)` 补建普通索引：查重装载与恢复查询按当前版本连接 material，无索引时每篇文章的重读都会全表扫描。
 
 强身份合并保留版本、评估、推荐快照和来源证据；相似正文只形成去重簇，不合并 material 或转移来源。用户状态按 material 合并，曝光计数累加，反馈取最新事件。历史同日重复推荐标记 `legacy_duplicate`，新推荐由 material 唯一索引防重。
 
@@ -246,6 +252,27 @@ Blogroll 图。`edge_key` 唯一。`from_site_id`/`to_site_id` CASCADE。CHECK�
 
 站点计数（无「源质量总分」）；源调度决策 `source_id` 唯一。有意不把运营分乘进资格。
 
+### `discovery_crawl_settings`
+
+`000040` 创建的单行表（`CHECK (id = 1)`）。`auto_start` 持久化 `discovery_crawl` 队列是否随启动自动恢复消费，默认 `false`；可在仪表盘切换，关闭时在同一事务内暂停队列。
+
+---
+
+## 文章指纹去重（`000037`、`000038`、`000042`）
+
+近重复判断使用 NFC 与空白归一化后的 5 字符 shingles、128 维 MinHash 和 16×8 LSH；合并门槛（Jaccard ≥0.90、长度比 ≥0.90、数字序列一致等）、运行流程与操作方式见 `docs/operations/article-dedupe.md`。
+
+| 表 | 职责与约束 |
+| --- | --- |
+| `article_dedupe_fingerprints` | `(representation_id, algorithm)` 主键；MinHash 签名（bytea）、数字序列哈希、字符数；representation 级联删除 |
+| `article_dedupe_buckets` | LSH 桶，`(algorithm, band, hash, representation_id)` 主键，按 `(algorithm, band, hash)` 检索候选 |
+| `article_dedupe_runs` | 去重运行：算法、状态、游标/上界、各阶段计数与错误；部分唯一索引保证同一算法同时至多一个进行中运行；`000038` 增加 `auto_apply` |
+| `article_dedupe_members` | 运行内每 representation 的版本化成员：相似度、方法、代表、修订号、`baseline_pending` 增量补齐与耗时 |
+| `article_dedupe_changes` | 应用投影的回滚日志，`(run_id, candidate_id)` 唯一；Down 在仍有可回滚数据时主动报错 |
+| `article_dedupe_settings` | 单行设置（`id=1`）：`active_run_id`、`mode`（默认 `shadow`）与 `000038` 增加的 `pending_assessment` 延迟评估意图 |
+
+`000037` 还在 `river_job` 上建了只覆盖在途评估任务的局部索引 `idx_river_assessment_material_live`（按 args 中的 material 聚合）——这是目前唯一一处手写 Goose 索引触碰 River 拥有的表——并为 `discovery_candidates` 建了 `dedupe_state` 待处理局部索引。`000042` 增加代表资格查询的表达式统计 `article_dedupe_representative_stats` 与当前代表部分覆盖索引，修正行数估算严重偏低造成的嵌套索引访问（背景见 `docs/investigation/2026-10-09-slow-sql.md`）。
+
 ---
 
 ## 文章评估
@@ -261,6 +288,18 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 ### `assessment_llm_calls`
 
 安全观测：禁止写 prompt 或模型正文。无业务 FK。`000029` 建表，`000030` 加 `predicted_tokens`、`predicted_ms`。索引：`(stage, created_at)`、`candidate_id`。
+
+### `assessment_batch_runs` / `assessment_batches` / `assessment_batch_items`
+
+百炼 Batch 异步评估（`000041` 建表；暂停、错误与退回列由 `000043` 增加；`response_mode` 由 `000044` 增加）。三个迁移的 Down 在存在活动运行（`active_key=1`）时拒绝执行。
+
+| 表 | 职责与约束 |
+| --- | --- |
+| `assessment_batch_runs` | 单活动运行：`active_key` 唯一且固定为 1；策略版本、队列游标/上界、租约；`000043` 增加暂停时间、错误码/原因与恢复状态 |
+| `assessment_batches` | 供应商批次：UUID 唯一、阶段、远端 ID 与输入/输出/错误文件 ID、原始输入 JSONL（bytea）、digest、计数与错误；`000044` 增加 `response_mode`（`json_object`/`json_schema`，CHECK 约束，旧批次默认前者） |
+| `assessment_batch_items` | 每篇文章项：`custom_id` 唯一；`active_identity` 唯一防止同一正文重复在途；状态、评估关联与 token 用量；`000043` 增加退回时间与恢复任务 ID |
+
+`assessment_llm_calls` 增加 `batch_item_id`（唯一 FK），把调用日志关联到 Batch 文章项。操作方式、恢复与回退工具见 `docs/operations/assessment-batch-runbook.md`。
 
 ---
 
@@ -331,9 +370,9 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
 ## 迁移账本
 
-`goose_db_version`：`id`、`version_id`、`is_applied`、`tstamp`。仓库当前最新迁移为 **36**（`000036_remove_article_assessment_workflow`），部署版本须查询实际数据库确认。
+`goose_db_version`：`id`、`version_id`、`is_applied`、`tstamp`。仓库当前最新迁移为 **44**（`000044_assessment_batch_response_mode`），部署版本须查询实际数据库确认。
 
-早期推荐迁移的 Down 多为 **保留数据的 no-op**（`SELECT 1`）；`000032`–`000036` 的 Down 会主动报错，要求恢复升级前备份和匹配的旧二进制。不要把 Down 当成可逆删表或生产回滚方式。
+早期推荐迁移的 Down 多为 **保留数据的 no-op**（`SELECT 1`）；`000032`–`000038` 的 Down 会主动报错（`000037` 在仍有可回滚去重数据或已应用投影时拒绝），Batch 迁移 `000041`/`000043`/`000044` 在存在活动运行时拒绝执行。不要把 Down 当成可逆删表或生产回滚方式，恢复应使用升级前备份和匹配的旧二进制。
 
 `material_migration_checkpoints` 保存 `legacy-storage-copied`、`strong-identities`、`archive-content`、`v3-compatibility`。后面三项分别控制启动时的强身份归并、归档内容回填和兼容性回填；已完成的工作不会每次重启重跑。
 

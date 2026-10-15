@@ -4,6 +4,8 @@ This runbook describes production operations for `article-value-v4`, which exten
 
 ## Rollout modes and configuration
 
+Optional Alibaba Bailian Batch File execution is configured independently through `LLM_BATCH_*`. See the [Batch operations runbook](assessment-batch-runbook.md) for configuration, fixed manual runs, asynchronous recovery, failure handling and migration `000041`. The realtime call retry and timing behavior below applies to the default realtime adapter; Batch uses one `json_object` request per article and requires manual failure retry. Stopping and restarting the API resumes already authorized Batch runs.
+
 Assessment mode is `active` only. `-llm-chat-model` and `-llm-base-url` are required at process start; an empty API key is still allowed for a local gateway. Missing chat configuration refuses startup. There is no observe mode and no deterministic-rule fallback.
 
 ```text

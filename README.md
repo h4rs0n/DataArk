@@ -31,6 +31,10 @@ make web
 make build
 ```
 
+## 文档
+
+数据库设计、各子系统运维手册、历史事件调查与前端开发参考见 [docs/README.md](docs/README.md) 索引。
+
 ## 反馈与贡献
 
 欢迎通过 Issue 提交建议与反馈，或直接提交 PR 参与项目共建。

@@ -9,7 +9,7 @@ DataArk combines a Go 1.26 API and Vue 3/TypeScript UI.
 - `api/flag/flag.go` and `api/config/config.go`: flags and runtime configuration. There is no `api/common/` package.
 - `api/migrations/`: numbered Goose SQL; `api/assets/web/`: embedded frontend assets.
 - `web/src/`: views, components, API helpers, router, and auth store; `web/tests/`: frontend tests.
-- `docker/`: deployment; `docs/operations/`: runbooks; `docs/exec-plans/done/`: historical plans, not current work.
+- `docker/`: deployment; `docs/`: documentation indexed by `docs/README.md`. `docs/operations/`: evergreen runbooks; `docs/investigation/`: frozen, dated incident records, not current work.
 
 ## Build, Test, and Development Commands
 
