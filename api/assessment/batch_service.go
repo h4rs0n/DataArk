@@ -62,6 +62,25 @@ func ValidateBatchRecovery(ctx context.Context) error {
 	}
 	return nil
 }
+
+// ResetBatchAdmission runs once before workers start, never in periodic recovery.
+// Uploads already started retain permission to finish; new work needs owner approval.
+func ResetBatchAdmission(ctx context.Context) error {
+	if db == nil {
+		return fmt.Errorf("assessment database unavailable")
+	}
+	return db.WithContext(ctx).Model(&BatchRun{}).Where("active_key=1").Update("admission_enabled", false).Error
+}
+
+// runnableBatches excludes uploads that have not started after a restart.
+func runnableBatches(ctx context.Context, run *BatchRun) *gorm.DB {
+	q := db.WithContext(ctx).Model(&Batch{}).Where("run_id=? AND phase<>'done'", run.ID)
+	if !run.AdmissionEnabled {
+		q = q.Where("phase<>'prepared'")
+	}
+	return q
+}
+
 func StartBatchRun(ctx context.Context) error {
 	if !config.BatchEnabled() {
 		return fmt.Errorf("Batch is not configured")
@@ -96,7 +115,7 @@ func StartBatchRun(ctx context.Context) error {
 			return err
 		}
 		one := 1
-		run := BatchRun{ActiveKey: &one, Status: "preparing", BaseURL: strings.TrimRight(config.LLMBATCHBASEURL, "/"), Model: config.LLMBATCHMODEL, PolicyVersion: articlevalue.PolicyVersion, HighWater: highWater, CreatedAt: time.Now().UTC()}
+		run := BatchRun{AdmissionEnabled: true, ActiveKey: &one, Status: "preparing", BaseURL: strings.TrimRight(config.LLMBATCHBASEURL, "/"), Model: config.LLMBATCHMODEL, PolicyVersion: articlevalue.PolicyVersion, HighWater: highWater, CreatedAt: time.Now().UTC()}
 		return tx.Create(&run).Error
 	})
 	if err != nil {
@@ -115,7 +134,22 @@ func RecoverBatchJobs(ctx context.Context) error {
 		return nil
 	}
 	var count int64
-	err := db.WithContext(ctx).Model(&BatchRun{}).Where("NOT EXISTS (SELECT 1 FROM assessment_batch_runs WHERE resume_status='cleanup' AND paused_at IS NOT NULL) AND ((active_key=1 AND status<>'paused') OR (status<>'paused' AND id IN (SELECT run_id FROM assessment_batches WHERE cleaned_at IS NULL AND finished_at <= ?)))", time.Now().Add(-7*24*time.Hour)).Count(&count).Error
+	err := db.WithContext(ctx).Model(&BatchRun{}).Where(`
+ NOT EXISTS (SELECT 1 FROM assessment_batch_runs WHERE resume_status='cleanup' AND paused_at IS NOT NULL)
+ AND (
+   (active_key=1 AND status<>'paused' AND (
+     admission_enabled=true
+     OR (status='processing' AND NOT EXISTS (
+       SELECT 1 FROM assessment_batch_items WHERE run_id=assessment_batch_runs.id AND active_identity IS NOT NULL
+     ))
+     OR EXISTS (
+       SELECT 1 FROM assessment_batches WHERE run_id=assessment_batch_runs.id AND phase NOT IN ('prepared','done')
+     )
+   ))
+   OR (status<>'paused' AND id IN (
+     SELECT run_id FROM assessment_batches WHERE cleaned_at IS NULL AND finished_at <= ?
+   ))
+ )`, time.Now().Add(-7*24*time.Hour)).Count(&count).Error
 	if err != nil || count == 0 {
 		return err
 	}
@@ -171,7 +205,14 @@ func ProcessBatchTick(ctx context.Context) error {
 		delay, _ = time.ParseDuration(config.LLMBATCHPOLLINTERVAL)
 	}
 	var next Batch
-	if e := db.WithContext(ctx).Omit("input_jsonl").Where("run_id=? AND phase<>'done'", run.ID).Order("next_check_at,id").Limit(1).Find(&next).Error; e == nil && next.ID != 0 && next.NextCheckAt.After(now) {
+	if e := runnableBatches(ctx, &run).Omit("input_jsonl").Order("next_check_at,id").Limit(1).Find(&next).Error; e != nil {
+		return errors.Join(err, e)
+	} else if next.ID == 0 && !run.AdmissionEnabled && err == nil {
+		if e := finishBatchRunIfDone(ctx, &run); e != nil {
+			return e
+		}
+		return cleanupBatchFiles(ctx)
+	} else if next.ID != 0 && next.NextCheckAt.After(now) {
 		delay = time.Until(next.NextCheckAt)
 	}
 	var unbatched, outstanding int64
@@ -182,7 +223,7 @@ func ProcessBatchTick(ctx context.Context) error {
 		if e := db.WithContext(ctx).Model(&Batch{}).Where("run_id=? AND phase<>'done'", run.ID).Count(&outstanding).Error; e != nil {
 			return e
 		}
-		if (unbatched > 0 || run.Status == "preparing") && outstanding < int64(config.LLMBATCHCONCURRENCY) {
+		if run.AdmissionEnabled && (unbatched > 0 || run.Status == "preparing") && outstanding < int64(config.LLMBATCHCONCURRENCY) {
 			delay = time.Second
 		}
 	}
@@ -198,7 +239,7 @@ func processBatchRunStep(ctx context.Context, run *BatchRun, transfer jobqueue.A
 	}
 	// Advance durable uploads and results even while queue admission is ongoing.
 	var batch Batch
-	query := db.WithContext(ctx).Where("run_id=? AND phase<>'done' AND next_check_at<=?", run.ID, time.Now()).Order("id").Limit(1).Find(&batch)
+	query := runnableBatches(ctx, run).Where("next_check_at<=?", time.Now()).Order("id").Limit(1).Find(&batch)
 	if query.Error != nil {
 		return query.Error
 	}
@@ -217,7 +258,7 @@ func processBatchRunStep(ctx context.Context, run *BatchRun, transfer jobqueue.A
 	if err := db.WithContext(ctx).Model(&BatchItem{}).Where("run_id=? AND status='pending' AND batch_id IS NULL", run.ID).Count(&unbatched).Error; err != nil {
 		return err
 	}
-	if run.Status == "preparing" && unbatched < int64(config.LLMBATCHSIZE) {
+	if run.AdmissionEnabled && run.Status == "preparing" && unbatched < int64(config.LLMBATCHSIZE) {
 		cursor, done, err := transfer.TransferAssessments(jobqueue.WithBatchRun(ctx, run.ID), run.HighWater, run.Cursor, run.CreatedAt, config.LLMBATCHSIZE-int(unbatched), func(tx *gorm.DB, jobs []jobqueue.AssessmentJob) error {
 			for _, j := range jobs {
 				if err := admitBatchItem(tx, run, j); err != nil {
@@ -245,7 +286,7 @@ func processBatchRunStep(ctx context.Context, run *BatchRun, transfer jobqueue.A
 	}
 	// Submit a full batch immediately; flush the final partial batch once the
 	// fixed prefix is exhausted. Existing preparing runs can use admitted items.
-	if unbatched > 0 && (unbatched >= int64(config.LLMBATCHSIZE) || run.Status != "preparing") {
+	if run.AdmissionEnabled && unbatched > 0 && (unbatched >= int64(config.LLMBATCHSIZE) || run.Status != "preparing") {
 		created, err := buildBatch(ctx, run)
 		if err != nil || created {
 			return err
@@ -254,13 +295,23 @@ func processBatchRunStep(ctx context.Context, run *BatchRun, transfer jobqueue.A
 	if run.Status == "preparing" {
 		return nil
 	}
-	var pending int64
-	if err := db.Model(&BatchItem{}).Where("run_id=? AND active_identity IS NOT NULL", run.ID).Count(&pending).Error; err != nil {
+	return finishBatchRunIfDone(ctx, run)
+}
+
+func finishBatchRunIfDone(ctx context.Context, run *BatchRun) error {
+	if run.Status != "processing" {
+		return nil
+	}
+	var pending, outstanding int64
+	if err := db.WithContext(ctx).Model(&BatchItem{}).Where("run_id=? AND active_identity IS NOT NULL", run.ID).Count(&pending).Error; err != nil {
+		return err
+	}
+	if err := db.WithContext(ctx).Model(&Batch{}).Where("run_id=? AND phase<>'done'", run.ID).Count(&outstanding).Error; err != nil {
 		return err
 	}
 	if pending == 0 && outstanding == 0 {
 		now := time.Now().UTC()
-		return db.Model(&BatchRun{}).Where("id=?", run.ID).Updates(map[string]any{"status": "completed", "active_key": nil, "finished_at": now}).Error
+		return db.WithContext(ctx).Model(&BatchRun{}).Where("id=? AND status='processing'", run.ID).Updates(map[string]any{"status": "completed", "active_key": nil, "finished_at": now}).Error
 	}
 	return nil
 }
@@ -482,7 +533,7 @@ func deferBatch(b *Batch, phase string, err error) error {
 func safeBatchError(err error) string { return safeBatchMessage(err.Error()) }
 
 func advanceBatch(ctx context.Context, run *BatchRun, b *Batch) (stepErr error) {
-	if run.Status == "paused" {
+	if run.Status == "paused" || (!run.AdmissionEnabled && b.Phase == "prepared") {
 		return nil
 	}
 	resumePhase := b.Phase

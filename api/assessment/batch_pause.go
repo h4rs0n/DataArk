@@ -42,21 +42,35 @@ func pauseBatchRun(ctx context.Context, run *BatchRun, b *Batch, phase string, c
 // ResumeBatchRun is only called by the owner's explicit queue/run request.
 // Recovery and deferred dedupe release use StartBatchRun, which cannot resume.
 func ResumeBatchRun(ctx context.Context) (bool, error) {
+	cleanup, err := pausedBatchCleanup(ctx)
+	if err != nil {
+		return false, err
+	}
+	if cleanup != nil {
+		return false, fmt.Errorf("Batch file cleanup is paused; manually resume cleanup before starting inference")
+	}
 	var resumed bool
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var run BatchRun
-		q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("active_key=1 AND status='paused'").Limit(1).Find(&run)
+		q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("active_key=1").Limit(1).Find(&run)
 		if q.Error != nil || q.RowsAffected == 0 {
 			return q.Error
 		}
 		if err := ValidateBatchRecovery(ctx); err != nil {
 			return err
 		}
+		if run.Status != "paused" {
+			if err := tx.Model(&run).Update("admission_enabled", true).Error; err != nil {
+				return err
+			}
+			resumed = true
+			return nil
+		}
 		status := run.ResumeStatus
 		if status != "preparing" && status != "processing" {
 			return fmt.Errorf("invalid Batch resume status")
 		}
-		if err := tx.Model(&run).Updates(map[string]any{"status": status, "resume_status": "", "paused_at": nil, "error_code": 0, "error": ""}).Error; err != nil {
+		if err := tx.Model(&run).Updates(map[string]any{"admission_enabled": true, "status": status, "resume_status": "", "paused_at": nil, "error_code": 0, "error": ""}).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&Batch{}).Where("run_id=? AND phase<>'done'", run.ID).Updates(map[string]any{"failure_count": 0, "next_check_at": time.Now().UTC()}).Error; err != nil {

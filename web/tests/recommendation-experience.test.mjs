@@ -259,3 +259,13 @@ test('Batch provider diagnostics and cleanup pause have explicit recovery contro
   assert.match(metricsPanel, /batchCleanup: null/)
   assert.match(batchPanel, /cleanupResumed/)
 })
+
+
+test('Batch restart keeps manual admission separate from existing upload recovery', async () => {
+  const types = await readSource('../src/components/recommendations/batch-types.ts')
+  assert.match(types, /admissionEnabled: boolean/)
+  assert.match(batchPanel, /run\?\.active && run.status !== 'paused' && !run.admissionEnabled && !cleanup/)
+  assert.match(batchPanel, /已开始上传的批次仍会继续提交并回收结果/)
+  assert.match(metricsPanel, /queue.batchRun.status === 'paused' \|\| !queue.batchRun.admissionEnabled/)
+  assert.match(metricsPanel, /等待手动继续，已有批次继续处理/)
+})

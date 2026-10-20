@@ -11,7 +11,7 @@
           刷新指标
         </a-button>
         <a-button type="primary" :loading="runningQueue || dedupeRun !== null" :disabled="!queue.canRun || queue.state === 'running'" @click="runQueue">
-          {{ queue.batchRun?.status === 'paused' ? '继续本轮评估' : '执行 LLM 评估' }}
+          {{ queue.batchRun?.active && (queue.batchRun.status === 'paused' || !queue.batchRun.admissionEnabled) ? '继续本轮评估' : '执行 LLM 评估' }}
         </a-button>
       </a-space>
     </div>
@@ -27,8 +27,8 @@
         <div><strong>{{ queue.counts.succeeded24h }}</strong><span>本次成功</span></div>
         <div><strong>{{ queue.counts.failed24h }}</strong><span>本次失败</span></div>
         <div><strong>{{ isBatch ? '—' : metrics.articlesPerHour.toFixed(2) }}</strong><span>articles/hour</span></div>
-        <div><strong>{{ metrics.tokenTotals.total }}</strong><span>token 合计</span></div>
-        <div><strong>{{ metrics.tokenTotals.prompt }} / {{ metrics.tokenTotals.completion }}</strong><span>prompt / completion</span></div>
+        <div><strong>{{ formatTokenCount(metrics.tokenTotals.total) }}</strong><span>token 合计</span></div>
+        <div><strong>{{ formatTokenCount(metrics.tokenTotals.prompt) }} / {{ formatTokenCount(metrics.tokenTotals.completion) }}</strong><span>prompt / completion</span></div>
         <div><strong>{{ isBatch ? '—' : `${metrics.duration.p50Ms} / ${metrics.duration.p95Ms}` }}</strong><span>耗时 p50 / p95 ms</span></div>
         <div><strong>{{ isBatch ? '—' : `${(metrics.schemaRetryRate * 100).toFixed(1)}%` }}</strong><span>schema 重试率</span></div>
       </div>
@@ -70,6 +70,7 @@
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { requestJSON } from '@/api/client'
+import { formatTokenCount } from './format'
 import AssessmentBatchPanel from './AssessmentBatchPanel.vue'
 import type { BatchRunSummary, BatchCleanupPause } from './batch-types'
 
@@ -166,6 +167,7 @@ const updateInferenceMode = (snapshot: AssessmentQueueSnapshot) => {
 }
 
 const queueStateLabel = computed(() => {
+  if (isBatch.value && queue.batchRun?.active && queue.batchRun.status !== 'paused' && !queue.batchRun.admissionEnabled && !queue.batchCleanup) return '等待手动继续，已有批次继续处理'
   if (dedupeRun.value) return '评估进行中'
   return ({
     idle: '队列空闲',

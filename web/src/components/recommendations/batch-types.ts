@@ -1,5 +1,6 @@
 export interface BatchRunSummary {
   id: number
+  admissionEnabled: boolean
   active: boolean
   status: string
   pausedAt?: string

@@ -89,7 +89,7 @@ func TestPostgresBatchTransferAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	one := 1
-	run := BatchRun{ActiveKey: &one, Status: "preparing", BaseURL: config.LLMBATCHBASEURL, Model: "qwen-plus", PolicyVersion: ArticleQualityPolicyVersion, HighWater: highWater, CreatedAt: time.Now()}
+	run := BatchRun{AdmissionEnabled: true, ActiveKey: &one, Status: "preparing", BaseURL: config.LLMBATCHBASEURL, Model: "qwen-plus", PolicyVersion: ArticleQualityPolicyVersion, HighWater: highWater, CreatedAt: time.Now()}
 	if err := database.Create(&run).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +144,9 @@ func TestPostgresBatchTransferAndRecovery(t *testing.T) {
 		t.Fatal("in-flight re-enqueued", n)
 	}
 	stop()
+	if err := ResetBatchAdmission(ctx); err != nil {
+		t.Fatal(err)
+	}
 	stop2, err := jobqueue.Start(ctx, database, handlers, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -177,6 +180,11 @@ func TestPostgresBatchTransferAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	verifyBatchStreaming(t, p, streamFirst)
+	restartFirst := createAssessmentCandidate(t, "Restart PG", "https://restart.invalid/first", "Restart", strings.Repeat("restart first evidence ", 100), time.Now())
+	if err := queue.EnqueueAssessArticle(ctx, restartFirst.MaterialID, "1"); err != nil {
+		t.Fatal(err)
+	}
+	verifyBatchRestartRemainder(t, p)
 	verifyPostgresBatchReset(t)
 	verifyCleanupAuthPause(t, p, 401)
 	verifyBatchCompatibilityReimport(t, p)

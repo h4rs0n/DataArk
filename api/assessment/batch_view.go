@@ -86,7 +86,7 @@ func DecorateQueue(ctx context.Context, snapshot *jobqueue.CrawlQueueSnapshot) (
 	if run.ActiveKey != nil && config.BatchEnabled() {
 		snapshot.State = "running"
 		snapshot.CanRun = false
-		if run.Status == "paused" {
+		if run.Status == "paused" || !run.AdmissionEnabled {
 			snapshot.State = "paused"
 			snapshot.CanRun = true
 		}

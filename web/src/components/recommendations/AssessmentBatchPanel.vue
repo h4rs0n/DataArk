@@ -14,9 +14,12 @@
       {{ pauseHint(run.errorCode) }} {{ run.error }}
       已停止取队列及供应商请求，重启不会自动恢复。处理后点击「继续本轮评估」。
     </p>
+    <p v-if="executionMode === 'batch' && run?.active && run.status !== 'paused' && !run.admissionEnabled && !cleanup" class="batch-note" role="status">
+      重启后等待手动继续。已开始上传的批次仍会继续提交并回收结果；其余文章及尚未开始上传的批次，点击「继续本轮评估」后执行。
+    </p>
     <div v-if="cleanup" role="alert" class="batch-error">
       <p>Batch 文件清理已暂停<span v-if="cleanup.errorCode">：HTTP {{ cleanup.errorCode }}</span>。{{ pauseHint(cleanup.errorCode) }} {{ cleanup.error }}</p>
-      <p>处理后可重试文件清理<span v-if="run?.active">，并继续已启动的评估运行</span>。</p>
+      <p>处理后可重试文件清理<span v-if="run?.active">，恢复已有批次处理；剩余任务仍需按页面提示手动继续</span>。</p>
       <a-button size="small" :loading="resumingCleanup" @click="resumeCleanup">重试文件清理</a-button>
       <p v-if="cleanupError">{{ cleanupError }}</p>
     </div>

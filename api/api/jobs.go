@@ -20,6 +20,9 @@ func startApplicationJobQueue(ctx context.Context) (func(), error) {
 	if err := assessment.ValidateBatchRecovery(ctx); err != nil {
 		return nil, err
 	}
+	if err := assessment.ResetBatchAdmission(ctx); err != nil {
+		return nil, err
+	}
 	ignoreBlacklisted := func(err error) error {
 		if errors.Is(err, discovery.ErrDiscoveryDomainBlacklisted) {
 			return nil

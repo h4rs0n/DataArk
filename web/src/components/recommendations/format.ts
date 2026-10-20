@@ -1,5 +1,13 @@
 // 推荐中心共用的日期、列表与标签格式化。
 
+// 按原始计数严格超过门槛时选单位，舍入只影响显示。
+export function formatTokenCount(value: number): string {
+  if (value > 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`
+  if (value > 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`
+  if (value > 1_000) return `${(value / 1_000).toFixed(2)}K`
+  return String(value)
+}
+
 export function formatLocalDate(date: Date): string {
   const year = date.getFullYear()
   const month = `${date.getMonth() + 1}`.padStart(2, '0')

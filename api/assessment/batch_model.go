@@ -8,23 +8,24 @@ import (
 )
 
 type BatchRun struct {
-	Active        bool        `json:"active" gorm:"-"`
-	LeaseUntil    *time.Time  `json:"-"`
-	PausedAt      *time.Time  `json:"pausedAt,omitempty"`
-	ErrorCode     int         `json:"errorCode,omitempty"`
-	Error         string      `json:"error,omitempty"`
-	ResumeStatus  string      `json:"-"`
-	ID            uint        `json:"id" gorm:"primaryKey"`
-	ActiveKey     *int        `json:"-" gorm:"uniqueIndex"`
-	Status        string      `json:"status"`
-	BaseURL       string      `json:"-"`
-	Model         string      `json:"model"`
-	PolicyVersion string      `json:"policyVersion"`
-	HighWater     int64       `json:"-"`
-	Cursor        int64       `json:"-"`
-	CreatedAt     time.Time   `json:"createdAt"`
-	FinishedAt    *time.Time  `json:"finishedAt,omitempty"`
-	Counts        BatchCounts `json:"counts" gorm:"-"`
+	AdmissionEnabled bool        `json:"admissionEnabled" gorm:"not null;default:false"`
+	Active           bool        `json:"active" gorm:"-"`
+	LeaseUntil       *time.Time  `json:"-"`
+	PausedAt         *time.Time  `json:"pausedAt,omitempty"`
+	ErrorCode        int         `json:"errorCode,omitempty"`
+	Error            string      `json:"error,omitempty"`
+	ResumeStatus     string      `json:"-"`
+	ID               uint        `json:"id" gorm:"primaryKey"`
+	ActiveKey        *int        `json:"-" gorm:"uniqueIndex"`
+	Status           string      `json:"status"`
+	BaseURL          string      `json:"-"`
+	Model            string      `json:"model"`
+	PolicyVersion    string      `json:"policyVersion"`
+	HighWater        int64       `json:"-"`
+	Cursor           int64       `json:"-"`
+	CreatedAt        time.Time   `json:"createdAt"`
+	FinishedAt       *time.Time  `json:"finishedAt,omitempty"`
+	Counts           BatchCounts `json:"counts" gorm:"-"`
 }
 
 func (BatchRun) TableName() string { return "assessment_batch_runs" }

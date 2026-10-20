@@ -31,7 +31,7 @@ Schema 要求六个字段全部存在且禁止额外字段：三个评分为 0�
 
 爬取完成后，文章进入暂停的评估队列。管理员在推荐中心的「评估」页点击「执行 LLM 评估」。若全库查重尚未生效，先完成现有查重流程，再登记一轮 Batch 授权。本轮固定为登记时已到执行时间的队列前缀，后续新增文章等待下一次点击。
 
-登记后后台边移交任务边提交批次：有效待提交文章达到 `LLM_BATCH_SIZE` 后立即构建、上传并提交，无需等整个队列前缀移交完成；前缀取完时提交最后不足一批的文章。达到 `LLM_BATCH_CONCURRENCY` 上限时暂停移交，剩余任务留在 River，直到批次结束释放空位。Batch 文章项和原 River 任务取消在同一事务提交，文章版本具有唯一在途占用。这里的原任务取消代表移交，面板从实际导入结果统计成功和失败。重启会继续已授权的准备、上传、轮询和导入，不会自动登记下一轮。
+登记后后台边移交任务边提交批次：有效待提交文章达到 `LLM_BATCH_SIZE` 后立即构建、上传并提交，无需等整个队列前缀移交完成；前缀取完时提交最后不足一批的文章。达到 `LLM_BATCH_CONCURRENCY` 上限时暂停移交，剩余任务留在 River，直到批次结束释放空位。Batch 文章项和原 River 任务取消在同一事务提交，文章版本具有唯一在途占用。这里的原任务取消代表移交，面板从实际导入结果统计成功和失败。重启后停止取新文章、组批和启动新上传，点击「继续本轮评估」后沿用原运行范围和进度。已开始上传的批次继续核对上传、提交推理、轮询和导入结果，不会自动登记下一轮。
 
 面板显示本轮待提交、处理中、成功、失败、复用和跳过数量，以及批次远端 ID、供应商状态、提交时间、截止时间和失败项。供应商成功数表示远端请求完成数，输出仍须通过本地校验才算本轮成功。Batch 不提供逐篇推理耗时或 decode token/s；面板显示 `—`，保留供应商返回的 token 用量。
 
@@ -41,6 +41,8 @@ Schema 要求六个字段全部存在且禁止额外字段：三个评分为 0�
 
 ## 重启、停用与不确定状态
 
+迁移 `000045` 为运行增加 `admission_enabled`，默认关闭。API 在启动 Worker 和恢复作业前关闭所有活动运行的新任务开关；此初始化失败会终止启动。`prepared` 批次等待手动继续，`upload_unknown`、`file_processing`、`submission_unknown`、`submitted` 和 `importing` 继续推进。未能找到上传/提交资源时沿用核对和错误暂停规则，不重新发起推理。没有可推进批次时不连续调度；定时恢复、查重延迟释放和文件清理恢复不会打开已有运行的开关。
+
 有未结束运行时，必须保留原 `LLM_BATCH_BASE_URL` 和可访问该账户任务的 `LLM_BATCH_API_KEY`。缺少恢复密钥或改变地址会拒绝启动。清空 `LLM_BATCH_PROVIDER` 可将新评估恢复为实时模式，旧 Batch 仍在后台继续回收，旧任务占用的正文版本不会重复入队。不要在在途任务期间更换百炼账户。
 
 上传或创建批次时若连接中断，可能已被供应商接受。系统先持久化“不确定”状态，再通过应用生成的唯一文件名、输入文件 ID 和 `ds_name` 查找对应资源。未找到时保留待核对状态并退避查询，**不盲目重新上传或创建**。连续 8 次无法确认结果或出现其他非永久请求错误时，暂停本轮并要求人工核对；查询返回永久 4xx（408 除外）连续 3 次也会暂停。401/429 立即暂停，无需等待次数上限。面板没有强制重交或取消按钮；需在百炼控制台核对账户、地域及远端记录后点击「继续本轮评估」，继续查询原记录。
@@ -49,7 +51,7 @@ Schema 要求六个字段全部存在且禁止额外字段：三个评分为 0�
 
 已结束批次的应用专属输入、输出和错误文件保留七天，再后台删除；本地评估、记录和用量保留。全部运行导入完成后可移除恢复凭据，清理将暂停；恢复原地址和密钥后继续清理。百炼文件没有自动过期机制，长期停用时可自行在控制台核对并清理这些 `dataark-` 文件。
 
-停止 API 会暂停本地推进，远端批次仍可能继续执行。重新启动会继续恢复。因此现有实时评估的“停止后重新启动保持队列暂停”操作不适用于已授权 Batch。Goose Down 在仍有活动 Batch 运行时拒绝执行；完成导入后再安排回滚。
+停止 API 会暂停本地推进，远端批次仍可能继续执行。重新启动后，已开始上传的批次继续处理，其余任务等待手动继续；页面会同时显示等待手动继续和已有批次继续处理。错误暂停仍优先阻止所有供应商请求。Goose Down 在仍有活动 Batch 运行时拒绝执行；完成导入后再安排回滚。
 
 ## 查询与验证
 
@@ -84,7 +86,7 @@ GET /api/admin/assessment/batches/1?limit=50&afterId=0
 POST /api/admin/assessment/batches/cleanup/resume
 ```
 
-列表采用批次 ID 向前分页；详情只包含失败文章项，使用 `nextId` 继续向后分页。队列原有快照增加 `executionMode` 和 `batchRun`；查重延迟响应仍为 `{snapshot,dedupeRun}`。
+列表采用批次 ID 向前分页；详情只包含失败文章项，使用 `nextId` 继续向后分页。队列原有快照增加 `executionMode` 和 `batchRun`；`batchRun.admissionEnabled` 表示是否允许取新文章、组批及开始上传，重启后为 false，仅手动执行接口可重新开启已有运行；查重延迟响应仍为 `{snapshot,dedupeRun}`。
 
 常规测试使用 HTTP 模拟供应商，不发送百炼请求。PostgreSQL 事务、River 移交和恢复测试需指向可清空的独立验证数据库，数据库名必须以 `dataark_v3_verify` 开头：
 
@@ -96,6 +98,8 @@ DATAARK_BATCH_POSTGRES_TEST_DSN='host=localhost user=test password=test dbname=d
 
 可选真实运输验证使用百炼官方 `batch-test-model`、`/v1/chat/ds-test`，不验证文章评估质量。显式提供 `DATAARK_BAILIAN_TEST_API_KEY` 后运行 `go test ./assessment -run '^TestBailianBatchLiveTransport$' -count=1`；地域地址通过 `DATAARK_BAILIAN_TEST_BASE_URL` 指定。未配置密钥时该测试跳过。测试超时或提交响应丢失时，应先核对远端任务再重试。
 
+新增重启门控迁移的独立验证使用 `DATAARK_BATCH_ADMISSION_POSTGRES_TEST_DSN`，运行 `go test ./assessment -run '^TestPostgresBatchAdmissionMigration$' -count=1`。同样要求可清空的独立数据库名以 `dataark_v3_verify` 开头。上述 River 集成测试也覆盖重启后回收、停止移交和手动继续保持原队列范围。
+
 接口依据：[百炼 Batch File](https://help.aliyun.com/zh/model-studio/batch-interfaces-compatible-with-openai)、[文件管理](https://help.aliyun.com/zh/model-studio/openai-file-interface)、[结构化输出](https://help.aliyun.com/zh/model-studio/qwen-structured-output)。供应商支持模型和地域以官方当前列表为准。
 
 ## 容量和错误暂停
@@ -106,7 +110,7 @@ DATAARK_BATCH_POSTGRES_TEST_DSN='host=localhost user=test password=test dbname=d
 
 供应商批次验证错误的 `code`、`message` 和 `line` 会保留在批次及缺失结果的失败文章记录中，完成导入后仍可查询；不保存或展示原始响应正文。密钥和错误消息中的 URL 会脱敏。
 
-删除七天前的文件返回 401/429 时，文件清理暂停标记也会持久化，页面显示独立的文件清理提醒，禁止启动新评估；存在已授权运行时，也暂停其出队与供应商请求。重启不会自动重试删除。修复凭据/额度后，由 owner 点击「重试文件清理」，或调用上述 `cleanup/resume` 接口。此操作不创建新评估运行；若已有授权运行，清理暂停解除后可继续推进。已结束或已退回 River 的运行保持原状态，批次原有推理失败原因不会被清理失败覆盖。
+删除七天前的文件返回 401/429 时，文件清理暂停标记也会持久化，页面显示独立的文件清理提醒，禁止启动新评估；存在已授权运行时，也暂停其出队与供应商请求。重启不会自动重试删除。修复凭据/额度后，由 owner 点击「重试文件清理」，或调用上述 `cleanup/resume` 接口。此操作不创建新评估运行；若已有授权运行，清理暂停解除后可继续处理已有上传；恢复文件清理不会开启重启后关闭的新任务开关。已结束或已退回 River 的运行保持原状态，批次原有推理失败原因不会被清理失败覆盖。
 
 ## 把未远端提交的整轮退回 River
 
