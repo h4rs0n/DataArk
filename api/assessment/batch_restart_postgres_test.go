@@ -42,7 +42,7 @@ func TestPostgresBatchAdmissionMigration(t *testing.T) {
 	if err := database.Exec(`INSERT INTO assessment_batches(run_id,uuid,model,phase,input_jsonl,next_check_at,created_at) VALUES(1,'admission-legacy','fixture','prepared',?,now(),now())`, input).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := goose.Up(sqlDB, "."); err != nil {
+	if err := goose.UpTo(sqlDB, ".", 45); err != nil {
 		t.Fatal(err)
 	}
 	var run BatchRun

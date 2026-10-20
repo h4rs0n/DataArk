@@ -30,7 +30,7 @@ func TestObservabilityM16MetricsExplainOperationsAndLongTailGems(t *testing.T) {
 	}
 	var gem DiscoveryCandidate
 	for index := 0; index < 10; index++ {
-		candidate := DiscoveryCandidate{SourceID: source.ID, SourceName: source.Name, URL: "https://tail.example/article-" + string(rune('a'+index)), Title: "Article", ProcessingState: discovery.DiscoveryProcessingReady, DedupeState: discovery.DiscoveryDedupeReady, EligibilityState: discovery.DiscoveryEligibilityIneligible, LastSeenAt: now}
+		candidate := DiscoveryCandidate{BodyText: "Validated article body for metrics", SourceID: source.ID, SourceName: source.Name, URL: "https://tail.example/article-" + string(rune('a'+index)), Title: "Article", ProcessingState: discovery.DiscoveryProcessingReady, DedupeState: discovery.DiscoveryDedupeReady, EligibilityState: discovery.DiscoveryEligibilityIneligible, LastSeenAt: now}
 		if index == 0 {
 			candidate.EligibilityState, candidate.Topics = discovery.DiscoveryEligibilityEligible, `["systems"]`
 		}

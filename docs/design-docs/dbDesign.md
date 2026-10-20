@@ -1,6 +1,6 @@
 # 数据库设计
 
-本文档描述仓库更新至 Goose `000044` 的 PostgreSQL schema。文中标注的运行库类型与数量是 2026-08-27 的历史快照，不能据此推断生产库已经升级；`000037`–`000044` 的表结构依据迁移文件描述，未在运行库逐列核对。
+本文档描述仓库更新至 Goose `000046` 的 PostgreSQL schema。文中标注的运行库类型与数量是 2026-08-27 的历史快照，不能据此推断生产库已经升级；`000037`–`000046` 的结构以迁移为准；2026-10-20 的运行库审计见 investigation 对应记录，当时部署至 `000045`，不代表 `000046` 已部署。
 
 - 生产 schema **只**由 Goose 编号迁移定义：`api/migrations/000001`–`000044`。
 - 启动路径：`api/bootstrap.InitDB()` → `api/database.InitDB()` 连库 → `RunDatabaseMigrations()`（Goose `Up` + River migrator）。
@@ -196,7 +196,7 @@ RSS/Atom 或同站入口。`url` 唯一。`site_id` → `discovery_sites` `ON DE
 
 ### `discovery_candidates`
 
-抓取入口与处理状态。`url` 唯一，`material_id` 非空；多个入口可对应同一 material。`representative_id` 自引用 `ON DELETE SET NULL`。正文和评估属性通过只读视图 `discovery_candidate_details` 联查；Go 写入使用 `discovery.UpdateCandidate(s)`。
+抓取入口与处理状态。`url` 唯一；`000046` 起 `material_id` 可空，未通过文章校验的候选通过 `pending_content JSONB NOT NULL DEFAULT '{}'` 暂存元数据和处理投影，通过后在同一事务中关联 material、正文版本及来源并清空暂存。多个已验证入口可对应同一 material。`representative_id` 自引用 `ON DELETE SET NULL`。正文和评估属性通过只读视图 `discovery_candidate_details` 联查；Go 写入使用 `discovery.UpdateCandidate(s)`。
 
 **状态机（不要只看 `status`）：**
 
@@ -214,7 +214,7 @@ RSS/Atom 或同站入口。`url` 唯一。`site_id` → `discovery_sites` `ON DE
 
 ### `discovery_candidate_provenances`
 
-迁移前来源证据表，保留为历史审计。新读写全部使用 `material_provenances`，其中 candidate/site/source FK 均为 `ON DELETE SET NULL`，material FK 为 RESTRICT。
+迁移前来源证据表，保留为历史审计。新读写全部使用 `material_provenances`，其中 candidate/site/source FK 均为 `ON DELETE SET NULL`，material FK 为 RESTRICT。`000046` 起该 FK 可空，未验证来源先关联 candidate；CHECK 要求 material_id 与 candidate_id 至少一项非空。
 
 ### `discovery_fetch_runs`
 
@@ -291,11 +291,11 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
 ### `assessment_batch_runs` / `assessment_batches` / `assessment_batch_items`
 
-百炼 Batch 异步评估（`000041` 建表；暂停、错误与退回列由 `000043` 增加；`response_mode` 由 `000044` 增加）。三个迁移的 Down 在存在活动运行（`active_key=1`）时拒绝执行。
+百炼 Batch 异步评估（`000041` 建表；暂停、错误与退回列由 `000043` 增加；`response_mode` 由 `000044` 增加）。`000045` 再增加默认 false 的 `admission_enabled`；新 run 由手动开始授权，重启关闭新接收/新上传，已开始的批次继续回收。四个 Batch 迁移的 Down 在存在活动运行（`active_key=1`）时拒绝执行。
 
 | 表 | 职责与约束 |
 | --- | --- |
-| `assessment_batch_runs` | 单活动运行：`active_key` 唯一且固定为 1；策略版本、队列游标/上界、租约；`000043` 增加暂停时间、错误码/原因与恢复状态 |
+| `assessment_batch_runs` | 单活动运行：`active_key` 唯一且固定为 1；策略版本、队列游标/上界、租约；`000043` 增加暂停时间、错误码/原因与恢复状态；`000045` 增加 admission_enabled |
 | `assessment_batches` | 供应商批次：UUID 唯一、阶段、远端 ID 与输入/输出/错误文件 ID、原始输入 JSONL（bytea）、digest、计数与错误；`000044` 增加 `response_mode`（`json_object`/`json_schema`，CHECK 约束，旧批次默认前者） |
 | `assessment_batch_items` | 每篇文章项：`custom_id` 唯一；`active_identity` 唯一防止同一正文重复在途；状态、评估关联与 token 用量；`000043` 增加退回时间与恢复任务 ID |
 
@@ -370,9 +370,9 @@ Go 类型 `assessment.ArticleAssessment` 的 `TableName()` 固定为此表。
 
 ## 迁移账本
 
-`goose_db_version`：`id`、`version_id`、`is_applied`、`tstamp`。仓库当前最新迁移为 **44**（`000044_assessment_batch_response_mode`），部署版本须查询实际数据库确认。
+`goose_db_version`：`id`、`version_id`、`is_applied`、`tstamp`。仓库当前最新迁移为 **46**（`000046_defer_discovery_material`），部署版本须查询实际数据库确认。
 
-早期推荐迁移的 Down 多为 **保留数据的 no-op**（`SELECT 1`）；`000032`–`000038` 的 Down 会主动报错（`000037` 在仍有可回滚去重数据或已应用投影时拒绝），Batch 迁移 `000041`/`000043`/`000044` 在存在活动运行时拒绝执行。不要把 Down 当成可逆删表或生产回滚方式，恢复应使用升级前备份和匹配的旧二进制。
+早期推荐迁移的 Down 多为 **保留数据的 no-op**（`SELECT 1`）；`000032`–`000038` 的 Down 会主动报错（`000037` 在仍有可回滚去重数据或已应用投影时拒绝），Batch 迁移 `000041`/`000043`/`000044`/`000045` 在存在活动运行时拒绝执行；`000046` 在仍有未关联 material 的候选或来源时拒绝回退，以保护暂存数据。不要把 Down 当成可逆删表或生产回滚方式，恢复应使用升级前备份和匹配的旧二进制。
 
 `material_migration_checkpoints` 保存 `legacy-storage-copied`、`strong-identities`、`archive-content`、`v3-compatibility`。后面三项分别控制启动时的强身份归并、归档内容回填和兼容性回填；已完成的工作不会每次重启重跑。
 

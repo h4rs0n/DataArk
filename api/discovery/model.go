@@ -48,7 +48,8 @@ func (source *DiscoverySource) BeforeSave(tx *gorm.DB) error {
 
 type DiscoveryCandidate struct {
 	SkipInitialProvenance  bool       `json:"-" gorm:"-"`
-	MaterialID             uint       `json:"materialId" gorm:"index"`
+	MaterialID             uint       `json:"materialId" gorm:"index;default:null"`
+	PendingContent         string     `json:"-" gorm:"not null;default:'{}'"`
 	IndependentSourceCount int        `json:"independentSourceCount" gorm:"->;-:migration"`
 	ID                     uint       `json:"id" gorm:"primaryKey"`
 	SourceID               uint       `json:"sourceId" gorm:"->;-:migration"`

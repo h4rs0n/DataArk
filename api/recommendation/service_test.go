@@ -54,7 +54,7 @@ func TestRecommendationSettingsDefaultAndSave(t *testing.T) {
 func TestRecommendationDayAndItemDeduplication(t *testing.T) {
 	setupSQLiteDB(t)
 	for _, id := range []uint{11, 12} {
-		candidate := DiscoveryCandidate{ID: id, URL: fmt.Sprintf("https://dedup.example/%d", id), Status: DiscoveryCandidateStatusNew}
+		candidate := DiscoveryCandidate{BodyText: "Validated article body", ID: id, URL: fmt.Sprintf("https://dedup.example/%d", id), Status: DiscoveryCandidateStatusNew}
 		if err := db.Create(&candidate).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -106,7 +106,7 @@ func TestRecommendationDayAndItemDeduplication(t *testing.T) {
 
 func TestRecommendationFeedbackAndBlockRules(t *testing.T) {
 	setupSQLiteDB(t)
-	candidate := DiscoveryCandidate{ID: 21, URL: "https://feedback.example/21", Status: DiscoveryCandidateStatusNew}
+	candidate := DiscoveryCandidate{BodyText: "Validated article body", ID: 21, URL: "https://feedback.example/21", Status: DiscoveryCandidateStatusNew}
 	if err := db.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
 	}

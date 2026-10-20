@@ -1,5 +1,5 @@
 digraph DataArkER {
-  // 主要领域关系概览，依据 Goose 000001–000036；不列出全部列、表或外键。
+  // 主要领域关系概览，依据 Goose 000001–000036，候选暂存关系同步至 000046；不列出全部列、表或外键。
   // 标为 application relation 的虚线边没有数据库 FK；其他虚线用于布局/指针。
   rankdir=LR;
   graph [fontname="Helvetica", fontsize=11, compound=true, splines=true, nodesep=0.35, ranksep=0.9];
@@ -30,7 +30,7 @@ digraph DataArkER {
     discovery_sites [fillcolor="#c8e6c9", label="{discovery_sites|id (PK)\lhost_key UQ / domain_key\lstatus / discovery_method\lgraph_depth / robots_status\l}"];
     discovery_site_edges [fillcolor="#c8e6c9", label="{discovery_site_edges|id (PK)\ledge_key UQ\lfrom_site_id / to_site_id (FK)\lrelation_type / confidence\l}"];
     discovery_sources [fillcolor="#c8e6c9", label="{discovery_sources|id (PK)\lsite_id (FK)\lurl UQ / endpoint_type\lpriority / user_managed\lbackoff_* / etag\l}"];
-    discovery_candidates [fillcolor="#c8e6c9", label="{discovery_candidates|id (PK)\lmaterial_id (FK, NOT NULL)\lurl UQ / normalized_url / final_url\lprocessing_state / dedupe_state\lrepresentative_id (FK self)\l}"];
+    discovery_candidates [fillcolor="#c8e6c9", label="{discovery_candidates|id (PK)\lmaterial_id (FK, nullable)\lpending_content (JSONB)\lurl UQ / normalized_url / final_url\lprocessing_state / dedupe_state\lrepresentative_id (FK self)\l}"];
     discovery_candidate_provenances [fillcolor="#c8e6c9", label="{discovery_candidate_provenances|id (PK)\lprovenance_key UQ\lcandidate_id (FK)\lsite_id / source_id (FK)\l}"];
     discovery_candidate_identities [fillcolor="#c8e6c9", label="{discovery_candidate_identities|id (PK)\lcandidate_id (FK)\lkind / identity_key\l}"];
     discovery_duplicate_clusters [fillcolor="#c8e6c9", label="{discovery_duplicate_clusters|cluster_id (PK)\lrepresentative_id (FK RESTRICT)\lmatch_method / member_count\l}"];

@@ -63,7 +63,7 @@ func TestSiteOperationsExposeNamedStatsAndScheduleBasis(t *testing.T) {
 	if err := db.Create(&source).Error; err != nil {
 		t.Fatal(err)
 	}
-	candidate := DiscoveryCandidate{SourceID: source.ID, SourceName: source.Name, URL: "https://tail.example/gem", Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingReady, EligibilityState: DiscoveryEligibilityEligible, DedupeState: DiscoveryDedupeReady, LastSeenAt: clock.Now()}
+	candidate := DiscoveryCandidate{BodyText: "Validated article content for user state and statistics.", SourceID: source.ID, SourceName: source.Name, URL: "https://tail.example/gem", Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingReady, EligibilityState: DiscoveryEligibilityEligible, DedupeState: DiscoveryDedupeReady, LastSeenAt: clock.Now()}
 	if err := db.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
 	}

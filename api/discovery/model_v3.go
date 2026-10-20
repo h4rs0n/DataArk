@@ -92,7 +92,7 @@ type DiscoverySiteEdge struct {
 }
 
 type DiscoveryCandidateProvenance struct {
-	MaterialID      uint                `json:"materialId" gorm:"index"`
+	MaterialID      uint                `json:"materialId" gorm:"index;default:null"`
 	DomainKey       string              `json:"domainKey"`
 	SourceName      string              `json:"sourceName"`
 	ID              uint                `json:"id" gorm:"primaryKey"`
@@ -289,7 +289,9 @@ func V3Models() []interface{} {
 func (DiscoveryCandidateProvenance) TableName() string { return "material_provenances" }
 func (row *DiscoveryCandidateProvenance) BeforeCreate(tx *gorm.DB) error {
 	if row.MaterialID == 0 {
-		id, _, err := material.CandidateReference(tx, row.CandidateID)
+		var candidate DiscoveryCandidate
+		err := tx.Session(&gorm.Session{NewDB: true, SkipHooks: true}).Select("material_id").First(&candidate, row.CandidateID).Error
+		id := candidate.MaterialID
 		if err != nil {
 			return err
 		}

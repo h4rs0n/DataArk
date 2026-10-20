@@ -1,6 +1,6 @@
 # Material 内容模型升级
 
-适用范围：Goose `000032`–`000035`。这些迁移把正文、评估状态和来源关系移出 `discovery_candidates`，并将用户状态、评估、推荐和归档关联到 `material`。
+适用范围：Goose `000032`–`000035`，以及 `000046` 的文章准入调整。这些迁移把正文、评估状态和来源关系移出 `discovery_candidates`，并将用户状态、评估、推荐和归档关联到 `material`。
 
 ## 升级
 
@@ -18,9 +18,12 @@ SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 
 -- 应为 35 或更新的迁移版本。
 SELECT * FROM material_migration_checkpoints ORDER BY name;
 -- legacy-storage-copied、strong-identities、archive-content、v3-compatibility。
-SELECT COUNT(*) FROM discovery_candidates WHERE material_id IS NULL;
+-- 000046 起，待抓取/校验失败的候选允许 material_id 为 NULL。
+SELECT processing_state, COUNT(*) FROM discovery_candidates
+WHERE material_id IS NULL GROUP BY processing_state;
+SELECT COUNT(*) FROM discovery_candidates WHERE processing_state = 'ready' AND material_id IS NULL;
 SELECT COUNT(*) FROM archive_documents WHERE material_id IS NULL;
--- 均为 0。
+-- 后两项应为 0。
 SELECT * FROM material_ingestion_issues ORDER BY archive_document_id;
 SELECT COUNT(*) FROM material_provenances WHERE migration_uncertain;
 SELECT material_id, COUNT(DISTINCT domain_key) AS independent_sources
@@ -47,3 +50,21 @@ go test ./bootstrap -run TestPostgresV3MigrationsRiverRestartAndPGVector -count=
 ```
 
 测试覆盖历史内容搬迁、强身份合并、版本/评估保留、推荐快照、用户状态汇总、来源删除后的独立计数，以及 River 重启和 pgvector；同时验证 `000036` 删除包含旧记录的工作流表、重复启动和拒绝自动回滚。
+
+## 文章通过校验后创建 Material（000046）
+
+发现链接时仅创建候选及来源证据；候选的 `material_id` 暂为空，来源标题、摘要和处理状态保存在 `pending_content`。文章通过现有资格校验（包括文章类型、标题、正文长度等）后，在同一事务中创建或关联 material、正文版本及来源关系，并清空暂存内容。失败时事务整体回滚；非文章、抓取失败、黑名单等记录仍留在候选队列中供检查或重试，不会因此创建 material，也不会投递 LLM 评估。
+
+已知 URL 再次被发现时可复用已有 material。此次迁移保留已有 material 及全部历史关联，不自动清理历史空标题记录。物理归档写入保持原有流程。
+
+存在尚未关联 material 的候选或来源时，`000046` 的 Down 会拒绝执行，以避免丢失暂存元数据。切回旧版本前应在维护窗口恢复匹配的数据库备份。
+
+使用独立的空 Postgres 验证库运行：
+
+```sh
+cd api
+DATAARK_MATERIAL_ADMISSION_POSTGRES_TEST_DSN='host=127.0.0.1 port=5432 user=postgres dbname=dataark_v3_verify_material sslmode=disable' \
+  go test ./discovery -run TestPostgresDeferredMaterialMigrationAndAdmission -count=1
+```
+
+测试覆盖历史记录保留、待处理元数据、非文章/短正文/HTTP 失败、重试成功、幂等创建、写入中途失败时整体回滚及拒绝有损降级。

@@ -9,6 +9,9 @@ import (
 
 func bindCandidateMaterialIdentities(tx *gorm.DB, candidate DiscoveryCandidate) (uint, error) {
 	id := candidate.MaterialID
+	if id == 0 {
+		return 0, nil
+	}
 	values := []string{candidate.URL, candidate.NormalizedURL}
 	if candidate.FetchedAt != nil || candidate.ProcessingState == DiscoveryProcessingReady {
 		values = append(values, candidate.FinalURL)

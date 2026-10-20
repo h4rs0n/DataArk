@@ -139,6 +139,10 @@ func TestDiscoverySourceFetchAndCandidateState(t *testing.T) {
 	if len(candidates) != 1 || candidates[0].Title != "First Post" {
 		t.Fatalf("candidates = %#v", candidates)
 	}
+	// User state belongs to a validated material, not a newly discovered URL.
+	if err := UpdateCandidate(db, candidates[0].ID, map[string]interface{}{"body_text": "Validated article body", "processing_state": DiscoveryProcessingReady}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if _, err := MarkUserCandidateRead(userID, candidates[0].ID); err != nil {
 		t.Fatal(err)
 	}

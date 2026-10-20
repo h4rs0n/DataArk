@@ -79,7 +79,7 @@ func (Redirect) TableName() string { return "material_redirects" }
 type Provenance struct {
 	ID                  uint       `json:"id" gorm:"primaryKey"`
 	ProvenanceKey       string     `json:"-" gorm:"uniqueIndex;not null"`
-	MaterialID          uint       `json:"materialId" gorm:"index;not null"`
+	MaterialID          uint       `json:"materialId" gorm:"index;default:null"`
 	CandidateID         *uint      `json:"candidateId,omitempty" gorm:"index"`
 	SiteID              *uint      `json:"siteId,omitempty" gorm:"index"`
 	SourceID            *uint      `json:"sourceId,omitempty" gorm:"index"`

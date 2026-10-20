@@ -147,7 +147,7 @@ func TestPostgresV3MigrationsRiverRestartAndPGVector(t *testing.T) {
 		fmt.Sprintf("SELECT count(*)::text FROM material_migration_checkpoints WHERE name = '%s'", v3CompatibilityCheckpoint), "1")
 
 	assertPostgresScalar(t, database,
-		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "44")
+		"SELECT version_id::text FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1", "46")
 	assertPostgresScalar(t, database,
 		"SELECT extname FROM pg_extension WHERE extname = 'vector'", "vector")
 	assertPostgresScalar(t, database,

@@ -174,7 +174,7 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 				return err
 			}
 		}
-		if err := Candidates(tx).Where("id = ?", record.ID).Scan(&record).Error; err != nil {
+		if err := Candidates(tx).Where("id = ?", record.ID).Find(&record).Error; err != nil {
 			return err
 		}
 		result.Candidate = record

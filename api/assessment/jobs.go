@@ -35,6 +35,10 @@ func EnqueuePending(ctx context.Context, queue ArticleJobEnqueuer, candidateID u
 	if err := db.First(&candidate, candidateID).Error; err != nil {
 		return err
 	}
+	// Discovery candidates do not own a material until extraction is accepted.
+	if candidate.MaterialID == 0 {
+		return nil
+	}
 	qualification, err := discovery.ArticleDedupeQualification(db.WithContext(ctx), candidate.MaterialID)
 	if err != nil {
 		return err

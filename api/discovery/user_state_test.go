@@ -8,7 +8,7 @@ import (
 func TestUserCandidateStateDoesNotMutateSharedCandidateOrOtherUsers(t *testing.T) {
 	setupSQLiteDB(t)
 	now := time.Date(2026, 7, 14, 1, 0, 0, 0, time.UTC)
-	candidate := DiscoveryCandidate{
+	candidate := DiscoveryCandidate{BodyText: "Validated article content for user state and statistics.",
 		SourceID: 1, SourceName: "Shared Feed", URL: "https://shared.example/post",
 		Title: "Shared article", Status: DiscoveryCandidateStatusNew,
 		ProcessingState: DiscoveryProcessingReady, EligibilityState: DiscoveryEligibilityEligible,
@@ -69,7 +69,7 @@ func TestUserCandidateStateDoesNotMutateSharedCandidateOrOtherUsers(t *testing.T
 func TestRecordUserCandidateExposureIsIsolatedAndIdempotentlyCounted(t *testing.T) {
 	setupSQLiteDB(t)
 	now := time.Date(2026, 7, 14, 2, 0, 0, 0, time.UTC)
-	candidate := DiscoveryCandidate{SourceID: 1, URL: "https://shared.example/exposure", Status: DiscoveryCandidateStatusNew, LastSeenAt: now}
+	candidate := DiscoveryCandidate{BodyText: "Validated article content for user state and statistics.", SourceID: 1, URL: "https://shared.example/exposure", Status: DiscoveryCandidateStatusNew, LastSeenAt: now}
 	if err := db.Create(&candidate).Error; err != nil {
 		t.Fatal(err)
 	}

@@ -15,7 +15,7 @@ func createDiscoveryFeedCandidates(t *testing.T, count int) []DiscoveryCandidate
 	now := time.Now()
 	candidates := make([]DiscoveryCandidate, 0, count)
 	for index := 0; index < count; index++ {
-		candidate := DiscoveryCandidate{
+		candidate := DiscoveryCandidate{BodyText: fmt.Sprintf("Validated article body %d", index),
 			SourceID: 1, SourceName: fmt.Sprintf("source-%d", index),
 			URL: fmt.Sprintf("https://feed.example/articles/%d", index), Title: fmt.Sprintf("Article %02d", index),
 			Summary: fmt.Sprintf("Summary %d", index), Topics: fmt.Sprintf("[\"topic-%d\"]", index%6),
@@ -173,7 +173,7 @@ func TestDiscoveryFeedRefreshSkipsBlockedHighScorePage(t *testing.T) {
 	setupSQLiteDB(t)
 	now := time.Now()
 	for index := 0; index < 100; index++ {
-		candidate := DiscoveryCandidate{
+		candidate := DiscoveryCandidate{BodyText: fmt.Sprintf("Validated article body %d", index),
 			SourceID: 1, SourceName: "Hugo",
 			URL: fmt.Sprintf("https://blocked.example/high-%d", index), Title: fmt.Sprintf("Blocked %d", index),
 			QualityScore: 1, DepthScore: 1, Status: discovery.DiscoveryCandidateStatusNew,
@@ -187,7 +187,7 @@ func TestDiscoveryFeedRefreshSkipsBlockedHighScorePage(t *testing.T) {
 	}
 	unblockedIDs := make(map[uint]bool, 12)
 	for index := 0; index < 12; index++ {
-		candidate := DiscoveryCandidate{
+		candidate := DiscoveryCandidate{BodyText: fmt.Sprintf("Validated article body %d", index),
 			SourceID: 2, SourceName: fmt.Sprintf("ok-source-%d", index),
 			URL: fmt.Sprintf("https://ok.example/post-%d", index), Title: fmt.Sprintf("OK %d", index),
 			QualityScore: 0.5, DepthScore: 0.5, Status: discovery.DiscoveryCandidateStatusNew,
@@ -231,7 +231,7 @@ func TestDiscoveryFeedRefreshAllowsMaterialContentUpdate(t *testing.T) {
 	if len(first.Items) != 1 {
 		t.Fatalf("first feed items = %#v", first.Items)
 	}
-	if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{"content_version": 1}).Error; err != nil {
+	if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{"content_version": candidate.ContentVersion + 1}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -302,7 +302,7 @@ func TestDiscoveryFeedItemSupportsFeedbackAndContext(t *testing.T) {
 func TestDiscoveryFeedRefreshUsesRerankOrder(t *testing.T) {
 	setupSQLiteDB(t)
 	now := time.Now()
-	lab := DiscoveryCandidate{
+	lab := DiscoveryCandidate{BodyText: "Validated lab article body",
 		SourceID: 1, SourceName: "Security Lab",
 		URL: "https://securitylab.example/post-1", Title: "Lab high",
 		QualityScore: 1, DepthScore: 1, Status: discovery.DiscoveryCandidateStatusNew,
@@ -310,7 +310,7 @@ func TestDiscoveryFeedRefreshUsesRerankOrder(t *testing.T) {
 		DedupeState: discovery.DiscoveryDedupeReady, DedupeKey: "lab-1",
 		PublishedAt: &now, LastSeenAt: now,
 	}
-	other := DiscoveryCandidate{
+	other := DiscoveryCandidate{BodyText: "Validated other article body",
 		SourceID: 2, SourceName: "other-0",
 		URL: "https://other-0.example/post", Title: "Other",
 		QualityScore: 0.4, DepthScore: 0.4, Status: discovery.DiscoveryCandidateStatusNew,

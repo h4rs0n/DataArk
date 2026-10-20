@@ -32,6 +32,7 @@ func TestRecoverDueJobsEnqueuesPendingAssessments(t *testing.T) {
 	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
 	candidate := discovery.DiscoveryCandidate{
+		BodyText: "Validated article body for assessment queue recovery.",
 		ID:       50,
 		SourceID: 1, SourceName: "Feed", URL: "https://assess.example/ready",
 		Status: discovery.DiscoveryCandidateStatusNew, ProcessingState: discovery.DiscoveryProcessingReady,
@@ -62,12 +63,14 @@ func TestEnqueuePendingEnqueuesOnlyPendingCandidates(t *testing.T) {
 	setupAssessmentDB(t)
 	now := time.Date(2026, 8, 18, 11, 0, 0, 0, time.UTC)
 	pending := discovery.DiscoveryCandidate{
+		BodyText: "Validated article body for assessment queue recovery.",
 		SourceID: 1, SourceName: "Feed", URL: "https://assess.example/pending",
 		Status: discovery.DiscoveryCandidateStatusNew, ProcessingState: discovery.DiscoveryProcessingReady,
 		DedupeState: discovery.DiscoveryDedupeReady, AssessmentState: discovery.DiscoveryAssessmentPending,
 		ContentVersion: 3, EligibilityState: discovery.DiscoveryEligibilityUnknown, LastSeenAt: now,
 	}
 	ready := discovery.DiscoveryCandidate{
+		BodyText: "Validated article body for assessment queue recovery.",
 		SourceID: 1, SourceName: "Feed", URL: "https://assess.example/ready",
 		Status: discovery.DiscoveryCandidateStatusNew, ProcessingState: discovery.DiscoveryProcessingReady,
 		DedupeState: discovery.DiscoveryDedupeReady, AssessmentState: discovery.DiscoveryAssessmentReady,
@@ -88,5 +91,20 @@ func TestEnqueuePendingEnqueuesOnlyPendingCandidates(t *testing.T) {
 	}
 	if len(queue.assessments) != 1 || queue.assessments[0] != pending.ID {
 		t.Fatalf("enqueued = %#v, want only pending %d", queue.assessments, pending.ID)
+	}
+}
+
+func TestEnqueuePendingSkipsUnvalidatedDiscovery(t *testing.T) {
+	setupAssessmentDB(t)
+	candidate := discovery.DiscoveryCandidate{URL: "https://assess.example/unvalidated", Title: "Feed metadata", Status: discovery.DiscoveryCandidateStatusNew, ProcessingState: discovery.DiscoveryProcessingFetchPending}
+	if err := db.Create(&candidate).Error; err != nil {
+		t.Fatal(err)
+	}
+	queue := &recoveryQueue{}
+	if err := EnqueuePending(context.Background(), queue, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.assessments) != 0 {
+		t.Fatalf("unvalidated candidate enqueued: %#v", queue.assessments)
 	}
 }
