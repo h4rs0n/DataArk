@@ -38,7 +38,7 @@ func QueryByKeyword(keyword string, pageNum int64) (string, map[string]int) {
 		CropLength:            150,
 	}
 
-	meiliResp, err := client.Index("blogs").Search(keyword, meiliReqOpt)
+	meiliResp, err := client.Index(config.MEILIBlogsIndex).Search(keyword, meiliReqOpt)
 	if err != nil {
 		log.Println("Error Occur: " + err.Error())
 		return "Error", nil

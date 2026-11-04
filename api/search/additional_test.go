@@ -126,7 +126,7 @@ func TestWaitForArchivedFile(t *testing.T) {
 
 func TestMeiliArchiveIndexStoreListsDocuments(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/indexes/blogs/documents/fetch" {
+		if r.Method != http.MethodPost || r.URL.Path != "/indexes/material/documents/fetch" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(meilisearch.DocumentsResult{
@@ -169,7 +169,7 @@ func TestRebuildRecoverableIndexFromArchiveSkipsInvalidHTML(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(meilisearch.TaskInfo{TaskUID: 1, Status: meilisearch.TaskStatusEnqueued})
 		case r.Method == http.MethodGet && r.URL.Path == "/tasks/1":
 			_ = json.NewEncoder(w).Encode(meilisearch.Task{TaskUID: 1, Status: meilisearch.TaskStatusSucceeded})
-		case r.Method == http.MethodPost && r.URL.Path == "/indexes/blogs/documents":
+		case r.Method == http.MethodPost && r.URL.Path == "/indexes/material/documents":
 			if err := json.NewDecoder(r.Body).Decode(&addedDocuments); err != nil {
 				t.Fatalf("failed to decode add documents payload: %v", err)
 			}
@@ -207,17 +207,17 @@ func TestRebuildRecoverableIndexFromArchiveSkipsInvalidHTML(t *testing.T) {
 func TestDeleteDocumentHelpersUseMeiliIndex(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/indexes/blogs/documents/fetch":
+		case r.Method == http.MethodPost && r.URL.Path == "/indexes/material/documents/fetch":
 			_ = json.NewEncoder(w).Encode(meilisearch.DocumentsResult{
 				Results: meilisearch.Hits{
 					testMeiliHit(map[string]interface{}{"id": "keep", "domain": "example.com", "filename": "other.html"}),
 					testMeiliHit(map[string]interface{}{"id": "delete-me", "domain": "example.com", "filename": "page.html"}),
 				},
 			})
-		case r.Method == http.MethodDelete && r.URL.Path == "/indexes/blogs/documents/delete-me":
+		case r.Method == http.MethodDelete && r.URL.Path == "/indexes/material/documents/delete-me":
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(meilisearch.TaskInfo{TaskUID: 9})
-		case r.Method == http.MethodPost && r.URL.Path == "/indexes/blogs/documents/delete-batch":
+		case r.Method == http.MethodPost && r.URL.Path == "/indexes/material/documents/delete-batch":
 			var ids []string
 			if err := json.NewDecoder(r.Body).Decode(&ids); err != nil {
 				t.Fatal(err)
@@ -234,7 +234,7 @@ func TestDeleteDocumentHelpersUseMeiliIndex(t *testing.T) {
 	defer server.Close()
 
 	client := meilisearch.New(server.URL)
-	index := client.Index("blogs")
+	index := client.Index(config.MEILIBlogsIndex)
 	ids, err := findArchiveDocumentIDs(index, "example.com", "page.html")
 	if err != nil {
 		t.Fatalf("findArchiveDocumentIDs returned error: %v", err)
@@ -290,5 +290,27 @@ func TestAddDocFileRejectsMissingTemporaryFile(t *testing.T) {
 	err := AddDocFile("missing.html", "example.com", "")
 	if err == nil || !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("err = %v, want not exist", err)
+	}
+}
+
+func TestQueryByKeywordUsesConfiguredIndex(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/indexes/custom-material/search" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected index", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"hits":[{"id":"1","title":"Example"}],"totalHits":1,"totalPages":1}`))
+	}))
+	defer server.Close()
+	oldHost, oldIndex := config.MEILIHOST, config.MEILIBlogsIndex
+	t.Cleanup(func() {
+		config.MEILIHOST, config.MEILIBlogsIndex = oldHost, oldIndex
+	})
+	config.MEILIHOST, config.MEILIBlogsIndex = server.URL, "custom-material"
+	result, pagination := QueryByKeyword("example", 1)
+	if !strings.Contains(result, "Example") || pagination["TotalHits"] != 1 {
+		t.Fatalf("unexpected search result: %s, pagination: %v", result, pagination)
 	}
 }
