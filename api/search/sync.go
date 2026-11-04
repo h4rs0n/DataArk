@@ -18,6 +18,7 @@ import (
 
 const syncBatchSize = 100
 const syncBackfillBatchSize = 1000
+const syncIntegrityCheckInterval = 5 * time.Minute
 const syncLock = 48487623048
 const generationMarker = "_search_generation"
 
@@ -77,6 +78,7 @@ func StartSync(parent context.Context) func() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		runner := &syncRunner{}
 		delay := time.Duration(0)
 		for {
 			timer := time.NewTimer(delay)
@@ -89,7 +91,7 @@ func StartSync(parent context.Context) func() {
 			worked := false
 			err := withSyncLock(ctx, db, func(tx *gorm.DB) error {
 				var err error
-				worked, err = syncStep(ctx, tx)
+				worked, err = runner.step(ctx, tx)
 				if err != nil {
 					tx.Model(&SyncState{}).Where("id = 1").Update("error", err.Error())
 				}
@@ -133,9 +135,25 @@ func saveState(db *gorm.DB, values map[string]interface{}) error {
 }
 
 func syncStep(ctx context.Context, db *gorm.DB) (bool, error) {
+	return (&syncRunner{}).step(ctx, db)
+}
+
+// Each worker owns its check schedule. A restart checks immediately; no shared
+// cache can suppress validation for a different index or a new generation.
+type syncRunner struct {
+	nextIntegrityCheck time.Time
+	checkedGeneration  string
+	now                func() time.Time
+}
+
+func (runner *syncRunner) step(ctx context.Context, db *gorm.DB) (bool, error) {
 	var s SyncState
 	if err := db.First(&s, 1).Error; err != nil {
 		return false, err
+	}
+	if s.Phase != "ready" {
+		runner.nextIntegrityCheck = time.Time{}
+		runner.checkedGeneration = ""
 	}
 	client := searchClient()
 	switch s.Phase {
@@ -193,22 +211,6 @@ func syncStep(ctx context.Context, db *gorm.DB) (bool, error) {
 		if s.Phase == "catchup" {
 			target = stageIndex(s)
 		}
-		if _, err := client.GetIndexWithContext(ctx, target); err != nil {
-			if meiliMissing(err) {
-				return true, resetSync(db)
-			}
-			return false, err
-		}
-		if s.Phase == "ready" {
-			var marker map[string]interface{}
-			err := client.Index(target).GetDocumentWithContext(ctx, generationMarker, nil, &marker)
-			if err != nil && !meiliMissing(err) {
-				return false, err
-			}
-			if marker["generation"] != s.Generation {
-				return true, resetSync(db)
-			}
-		}
 		var pending []syncPending
 		batchSize := syncBatchSize
 		if s.Phase == "catchup" {
@@ -217,11 +219,43 @@ func syncStep(ctx context.Context, db *gorm.DB) (bool, error) {
 		if err := db.Where("next_attempt_at <= ?", time.Now()).Order("next_attempt_at, material_id").Limit(batchSize).Find(&pending).Error; err != nil {
 			return false, err
 		}
+		if s.Phase == "catchup" {
+			if _, err := client.GetIndexWithContext(ctx, target); err != nil {
+				if meiliMissing(err) {
+					return true, resetSync(db)
+				}
+				return false, err
+			}
+		} else {
+			now := time.Now()
+			if runner.now != nil {
+				now = runner.now()
+			}
+			if runner.checkedGeneration != s.Generation || !now.Before(runner.nextIntegrityCheck) {
+				// The marker request alone detects a missing index as well as an
+				// empty or replaced one; a separate GetIndex request is redundant.
+				var marker map[string]interface{}
+				err := client.Index(target).GetDocumentWithContext(ctx, generationMarker, nil, &marker)
+				if err != nil && !meiliMissing(err) {
+					return false, err
+				}
+				if marker["generation"] != s.Generation {
+					return true, resetSync(db)
+				}
+				runner.checkedGeneration = s.Generation
+				runner.nextIntegrityCheck = now.Add(syncIntegrityCheckInterval)
+			}
+		}
 		ids := make([]uint, 0, len(pending))
 		for _, item := range pending {
 			ids = append(ids, item.MaterialID)
 		}
 		batchErr := syncMaterials(ctx, db, client, target, ids)
+		if meiliMissing(batchErr) {
+			// A write can discover index loss before the periodic check. Keep
+			// the pending rows and begin recovery immediately in that case.
+			return true, resetSync(db)
+		}
 
 		for _, item := range pending {
 			if err := batchErr; err != nil {
