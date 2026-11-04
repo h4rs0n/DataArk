@@ -111,9 +111,6 @@ func CreateDiscoverySource(name string, rawURL string, sourceType string, enable
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureDiscoveryURLNotBlacklisted(context.Background(), normalizedURL); err != nil {
-		return nil, err
-	}
 	sourceType = normalizeDiscoverySourceType(sourceType)
 	if sourceType == DiscoverySourceTypeSitemap {
 		return nil, ErrSitemapSourceDisabled
@@ -183,9 +180,6 @@ func UpdateDiscoverySource(id uint, name string, rawURL string, sourceType strin
 	}
 	normalizedURL, err := NormalizeDiscoveryURL(rawURL)
 	if err != nil {
-		return nil, err
-	}
-	if err := ensureDiscoveryURLNotBlacklisted(context.Background(), normalizedURL); err != nil {
 		return nil, err
 	}
 	sourceType = normalizeDiscoverySourceType(sourceType)

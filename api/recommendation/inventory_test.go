@@ -94,7 +94,7 @@ func TestCandidateInventorySeparatesPoolsAndAppliesOnlyUserHardFilters(t *testin
 	}
 }
 
-func TestCandidateInventoryExcludesActiveDomainBlacklist(t *testing.T) {
+func TestCandidateInventoryIgnoresCrawlRestrictions(t *testing.T) {
 	setupSQLiteDB(t)
 	settings := DefaultRecommendationSettings(303)
 	settings.DailyLimit = 1
@@ -111,7 +111,7 @@ func TestCandidateInventoryExcludesActiveDomainBlacklist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inventory.EligibleCandidates != 1 || inventory.UserAvailableCandidates != 1 {
+	if inventory.EligibleCandidates != 2 || inventory.UserAvailableCandidates != 2 {
 		t.Fatalf("blacklisted inventory = %#v", inventory)
 	}
 }

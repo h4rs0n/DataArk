@@ -63,7 +63,7 @@ func TestPostgresDeferredMaterialMigrationAndAdmission(t *testing.T) {
 		t.Fatalf("upgrade lost history: %#v %v", historical, err)
 	}
 	verifyDeferredMaterial(t)
-	if err := goose.Down(sqlDB, "."); err == nil {
+	if err := goose.DownTo(sqlDB, ".", 45); err == nil {
 		t.Fatal("rollback silently discarded pending candidate metadata")
 	}
 	// Verify the failed downgrade was atomic, and the projection remains usable.

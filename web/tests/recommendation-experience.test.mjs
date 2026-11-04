@@ -207,8 +207,11 @@ test('owner queue tab manages the discovery domain blacklist', () => {
   assert.match(queue, /method: 'POST'.*domain-blacklist/s)
   assert.match(queue, /method: 'DELETE'.*domain-blacklist/s)
   assert.match(queue, /affectedCandidates/)
-  assert.match(queue, /已爬取文章也会从候选列表和后续推荐中剔除/)
-  assert.match(queue, /剔除.*篇候选文章/)
+  assert.match(queue, /不影响已抓取文章的展示、评估和推荐/)
+  assert.match(queue, /暂停.*篇候选的抓取/)
+  assert.match(queue, /恢复.*篇候选的抓取/)
+  const mutations = queue.slice(queue.indexOf("async function addDomainBlacklist"), queue.indexOf("function crawlTaskKindLabel"))
+  assert.doesNotMatch(mutations, /inventory-changed/)
   assert.ok(queue.indexOf('domain-blacklist-panel') > queue.indexOf('爬取任务队列'))
 })
 

@@ -67,8 +67,8 @@ func TestPostgresDedupeRecoveryAndQueryPlans(t *testing.T) {
 	if err := database.Model(&dedupe.Member{}).Where("run_id=? AND material_id=?", run.ID, blocked.MaterialID).Update("applied", false).Error; err != nil {
 		t.Fatal(err)
 	}
-	if drift, err := dedupeRecoveryDrift(context.Background(), run.ID); err != nil || drift != 0 {
-		t.Fatalf("blocked drift=%d err=%v", drift, err)
+	if drift, err := dedupeRecoveryDrift(context.Background(), run.ID); err != nil || drift != 1 {
+		t.Fatalf("retained content drift=%d err=%v", drift, err)
 	}
 	stop, err := jobqueue.Start(context.Background(), database, jobqueue.Handlers{
 		AssessArticle: func(context.Context, uint, string) error { t.Error("paused assessment executed"); return nil },
@@ -101,17 +101,6 @@ func TestPostgresDedupeRecoveryAndQueryPlans(t *testing.T) {
 	if err := database.Table("river_job").Where("kind=? AND state='cancelled' AND metadata @> '{\"dedupe_superseded\":true}'", jobqueue.AssessArticleJobKind).Count(&count).Error; err != nil || count != 501 {
 		t.Fatalf("River cancellation metadata missing: count=%d err=%v", count, err)
 	}
-	for _, full := range []bool{false, false, true} {
-		if work, err := recoverDedupeJobs(context.Background(), full); err != nil || work != 0 {
-			t.Fatalf("blocked recovery did not converge: work=%d err=%v", work, err)
-		}
-	}
-	if err := database.Table("river_job").Where("kind=?", jobqueue.DedupeJobKind).Count(&count).Error; err != nil || count != 0 {
-		t.Fatalf("blocked member was repeatedly queued: jobs=%d err=%v", count, err)
-	}
-	if _, err := DeleteDiscoveryDomainBlacklist(mutation.Entry.ID); err != nil {
-		t.Fatal(err)
-	}
 	if err := RecoverDedupeJobs(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -125,9 +114,20 @@ func TestPostgresDedupeRecoveryAndQueryPlans(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("unblocked article did not recover through River")
+			t.Fatal("crawl-restricted content did not recover through River")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	for _, full := range []bool{false, false, true} {
+		if work, err := recoverDedupeJobs(context.Background(), full); err != nil || work != 0 {
+			t.Fatalf("recovery did not converge: work=%d err=%v", work, err)
+		}
+	}
+	if _, err := DeleteDiscoveryDomainBlacklist(mutation.Entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if drift, err := dedupeRecoveryDrift(context.Background(), run.ID); err != nil || drift != 0 {
+		t.Fatalf("rule deletion created drift: %d %v", drift, err)
 	}
 	verifyDedupeQueryPlans(t, database, run.ID)
 }
@@ -200,7 +200,7 @@ func verifyDedupeQueryPlans(t *testing.T, database *gorm.DB, runID uint) {
 		Where(DedupeRepresentativeClause("discovery_candidates.")).
 		Where(`EXISTS (SELECT 1 FROM article_dedupe_members d JOIN material m ON m.id=d.material_id AND m.current_version_id=d.version_id
  WHERE d.run_id=? AND d.material_id=discovery_candidates.material_id AND d.representation_id=d.representative_id AND d.applied)`, runID)
-	baseline = ExcludeBlacklistedCandidateDomains(baseline, "").Order("id")
+	baseline = baseline.Order("id")
 	var originalRows []DiscoveryCandidate
 	old := baseline.Session(&gorm.Session{DryRun: true}).Find(&originalRows).Statement
 	oldSQL := strings.ReplaceAll(old.SQL.String(), "LIMIT 1 OFFSET 0", "")

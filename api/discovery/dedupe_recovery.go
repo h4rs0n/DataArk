@@ -9,48 +9,17 @@ import (
 	"gorm.io/gorm"
 )
 
-// Match loadDedupeArticle/usableDedupeArticle: the first ready candidate is
-// authoritative, including when another candidate of that material is allowed.
-// A material without discovery candidates remains usable independently.
+// A material is usable when it has a ready candidate or no discovery candidates.
+// Crawl restrictions do not change the usability of retained content.
 func usableDedupeMaterialSQL(materialAlias string) string {
 	return `(NOT EXISTS (SELECT 1 FROM discovery_candidates uc WHERE uc.material_id=` + materialAlias + `.id)
- OR EXISTS (SELECT 1 FROM discovery_candidates uc WHERE uc.material_id=` + materialAlias + `.id
- AND uc.id=(SELECT MIN(fc.id) FROM discovery_candidates fc WHERE fc.material_id=` + materialAlias + `.id AND fc.processing_state='ready')
- AND NOT EXISTS (SELECT 1 FROM discovery_domain_blacklist_entries b WHERE uc.crawl_host=b.domain OR uc.crawl_host LIKE '%.' || b.domain)))`
-}
-
-// Domain changes wake the affected groups, including usable survivors of a
-// newly blocked representative. Blocked candidates themselves do not cause
-// actionable drift. This runs in the blacklist mutation's transaction.
-func invalidateDedupeDomain(database *gorm.DB, domain string) error {
-	if !database.Migrator().HasTable("article_dedupe_settings") {
-		return nil
-	}
-	setting, err := dedupeSetting(database)
-	if err != nil || setting.Mode != "active" || setting.ActiveRunID == 0 {
-		return err
-	}
-	affected := database.Session(&gorm.Session{NewDB: true}).Table("discovery_candidates bc").Select("bc.material_id").
-		Where("bc.crawl_host=? OR bc.crawl_host LIKE ?", domain, "%."+domain)
-	groups := database.Session(&gorm.Session{NewDB: true}).Table("article_dedupe_members bm").Select("bm.representative_id").
-		Where("bm.run_id=? AND bm.material_id IN (?)", setting.ActiveRunID, affected)
-	members := database.Session(&gorm.Session{NewDB: true}).Table("article_dedupe_members gm").Select("gm.material_id").
-		Where("gm.run_id=? AND gm.representative_id IN (?)", setting.ActiveRunID, groups)
-	return database.Model(&DiscoveryCandidate{}).Where("processing_state='ready'").
-		Where("material_id IN (?) OR material_id IN (?)", affected, members).
-		Update("dedupe_state", DiscoveryDedupePending).Error
+ OR EXISTS (SELECT 1 FROM discovery_candidates uc WHERE uc.material_id=` + materialAlias + `.id AND uc.processing_state='ready'))`
 }
 
 // A full sweep computes canonical candidates and current usable articles once.
 // Materialization prevents the coverage join from re-running MIN(candidate.id),
-// blacklist checks, and body availability checks for every member lookup.
+// body availability checks for every member lookup.
 func dedupeRecoveryCandidates(database *gorm.DB, runID uint) *gorm.DB {
-	blacklist, err := discoveryCandidateBlacklistPredicate("candidate")
-	if err != nil {
-		failed := database.Session(&gorm.Session{NewDB: true})
-		failed.AddError(err)
-		return failed
-	}
 	return database.Raw(`WITH ready AS MATERIALIZED (
  SELECT material_id, MIN(id) AS candidate_id,
  MAX(CASE WHEN dedupe_state<>'ready' THEN 1 ELSE 0 END) AS pending
@@ -61,10 +30,8 @@ func dedupeRecoveryCandidates(database *gorm.DB, runID uint) *gorm.DB {
  FROM material m JOIN material_representations r ON r.version_id=m.current_version_id
  JOIN material_article_states s ON s.material_id=m.id
  LEFT JOIN ready ON ready.material_id=m.id
- LEFT JOIN discovery_candidates candidate ON candidate.id=ready.candidate_id
  WHERE r.kind='text' AND r.role='body' AND r.text<>''
  AND (ready.candidate_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.material_id=m.id))
- AND NOT `+blacklist+`
 ), representatives AS MATERIALIZED (
  SELECT d.representation_id FROM article_dedupe_members d
  JOIN current_articles a ON a.representation_id=d.representation_id
@@ -169,6 +136,5 @@ func pendingAssessmentTargetsQuery(database *gorm.DB, requireDedupeReady bool, d
 	} else if setting.Mode == "exact" {
 		query = query.Where("discovery_candidates.id=(SELECT MIN(fc.id) FROM discovery_candidates fc WHERE fc.material_id=discovery_candidates.material_id AND fc.processing_state='ready')")
 	}
-	query = ExcludeBlacklistedCandidateDomains(query, "discovery_candidates")
 	return query.Order("discovery_candidates.id"), nil
 }

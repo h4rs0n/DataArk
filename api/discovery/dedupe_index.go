@@ -187,12 +187,7 @@ func usableDedupeArticle(database *gorm.DB, article dedupeArticle) (bool, error)
 	if err := database.First(&candidate, article.CandidateID).Error; err != nil {
 		return false, err
 	}
-	query := ExcludeBlacklistedCandidateDomains(Candidates(database).Where("discovery_candidates.id=?", candidate.ID), "")
-	var count int64
-	if err := query.Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count > 0 && candidate.ProcessingState == DiscoveryProcessingReady, nil
+	return candidate.ProcessingState == DiscoveryProcessingReady, nil
 }
 
 func selectDedupeRepresentative(database *gorm.DB, articles []dedupeArticle, current uint) (dedupeArticle, error) {

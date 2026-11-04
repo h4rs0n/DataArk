@@ -76,12 +76,10 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 			processingState := DiscoveryProcessingFetchPending
 			processingErrorType := ""
 			processingError := ""
-			eligibilityReasons := ""
 			if blocked {
 				processingState = DiscoveryProcessingDomainBlocked
 				processingErrorType = processingErrorDomainBlacklist
 				processingError = fmt.Sprintf("crawl domain is blacklisted: %s", crawlHost)
-				eligibilityReasons = processingErrorDomainBlacklist
 			}
 			record = DiscoveryCandidate{
 				SkipInitialProvenance: true,
@@ -90,7 +88,7 @@ func upsertDiscoveryCandidate(source DiscoverySource, candidate discoveredCandid
 				Title: strings.TrimSpace(candidate.Title), Summary: archive.BuildSummary(candidate.Summary, 260),
 				Status: DiscoveryCandidateStatusNew, ProcessingState: processingState,
 				EligibilityState:    DiscoveryEligibilityUnknown,
-				ProcessingErrorType: processingErrorType, ProcessingError: processingError, EligibilityReasons: eligibilityReasons,
+				ProcessingErrorType: processingErrorType, ProcessingError: processingError, EligibilityReasons: "",
 				EnrichmentStatus:   DiscoveryCandidateEnrichmentStatusPending,
 				MetadataConfidence: confidence, DedupeKey: initialCandidateDedupeKey(articleURL),
 				Score: scoreDiscoveredCandidate(candidate), PublishedAt: candidate.PublishedAt,

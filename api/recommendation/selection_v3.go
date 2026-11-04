@@ -259,7 +259,7 @@ func collectHardEligibleSelectionPool(userID uint, poolSize int, options recomme
 
 // recommendationEligibleCandidateQuery 构造推荐硬合格代表的有序查询；每页从干净的 DB 句柄重建，避免 GORM Where 累积。
 func recommendationEligibleCandidateQuery(userID uint, unseenOrUpdatedOnly bool) *gorm.DB {
-	query := discovery.ExcludeBlacklistedCandidateDomains(db, "")
+	query := discovery.Candidates(db)
 	var filterErr error
 	query, filterErr = discovery.FilterDedupeAssessmentCandidates(query)
 	if filterErr != nil {
@@ -286,11 +286,6 @@ WHERE prior_item.user_id = ?
 }
 
 func populateGlobalSelectionExclusions(excluded map[string]int) error {
-	var blacklisted int64
-	if err := discovery.OnlyBlacklistedCandidateDomains(discovery.Candidates(db).Model(&DiscoveryCandidate{}), "").Count(&blacklisted).Error; err != nil {
-		return err
-	}
-	excluded["domain_blacklist"] = int(blacklisted)
 	queries := []struct {
 		key   string
 		where string

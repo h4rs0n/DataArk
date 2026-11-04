@@ -177,7 +177,7 @@ func finishBatchItemResult(ctx context.Context, run *BatchRun, item BatchItem, s
 		}
 		if !allowed {
 			status = "skipped"
-			message = "article version, representative or blacklist changed"
+			message = "article version or representative changed"
 		} else if result != nil {
 			threshold := config.DISCOVERYARTICLEQUALITYTHRESHOLD
 			if threshold <= 0 || threshold > 1 {

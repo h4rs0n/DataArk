@@ -244,7 +244,7 @@ func TestDiscoveryFeedRefreshAllowsMaterialContentUpdate(t *testing.T) {
 	}
 }
 
-func TestDiscoveryFeedHidesRetainedCandidatesForActiveDomainBlacklist(t *testing.T) {
+func TestDiscoveryFeedRetainsArticlesUnderCrawlRestrictions(t *testing.T) {
 	setupSQLiteDB(t)
 	createDiscoveryFeedCandidates(t, 4)
 
@@ -253,11 +253,11 @@ func TestDiscoveryFeedHidesRetainedCandidatesForActiveDomainBlacklist(t *testing
 		t.Fatalf("initial feed = %#v, %v", initial, err)
 	}
 	rule, err := discovery.CreateDiscoveryDomainBlacklist("feed.example", "fixture")
-	if err != nil || rule.AffectedCandidates != 4 {
+	if err != nil || rule.AffectedCandidates != 0 {
 		t.Fatalf("blacklist mutation = %#v, %v", rule, err)
 	}
 	hidden, err := GetCurrentDiscoveryFeed(2101)
-	if err != nil || hidden.Batch == nil || hidden.Batch.ActualCount != 0 || len(hidden.Items) != 0 {
+	if err != nil || hidden.Batch == nil || hidden.Batch.ActualCount != 4 || len(hidden.Items) != 4 {
 		t.Fatalf("blacklisted current feed = %#v, %v", hidden, err)
 	}
 	if _, err := discovery.DeleteDiscoveryDomainBlacklist(rule.Entry.ID); err != nil {

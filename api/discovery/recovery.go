@@ -8,7 +8,7 @@ import (
 )
 
 // candidateRecoveryColumns 只含入队所需字段；候选投影整行读取会拖上数百 MB 的 body_text。
-var candidateRecoveryColumns = []string{"id", "url", "content_version"}
+var candidateRecoveryColumns = []string{"id", "url", "content_version", "processing_state"}
 
 // RecoverDueJobs restores work that should not wait for the next scheduler
 // interval after a process restart.
@@ -88,7 +88,7 @@ next_due_at <= ? OR
 		recoveryErrors = append(recoveryErrors, err)
 	} else {
 		for _, candidate := range candidates {
-			if domainBlacklistMatchesURL(blacklist, candidate.URL) {
+			if candidate.ProcessingState != DiscoveryProcessingReady && domainBlacklistMatchesURL(blacklist, candidate.URL) {
 				continue
 			}
 			if err := queue.EnqueueProcessCandidate(ctx, candidate.ID, strconv.FormatUint(uint64(candidate.ContentVersion), 10)); err != nil {

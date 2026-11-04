@@ -35,51 +35,43 @@ func activateRecoveryFixture(t *testing.T, candidates ...DiscoveryCandidate) ded
 	return run
 }
 
-func TestBlockedRecoveryConvergesAndReactivates(t *testing.T) {
+func TestCrawlRestrictedContentRecoversDedupeAndConverges(t *testing.T) {
 	setupSQLiteDB(t)
 	startDedupeTestQueue(t)
 	candidate := newIndexedCandidate(t, "blocked-idle", dedupeAutoBody())
 	run := activateRecoveryFixture(t, candidate)
-	mutation, err := CreateDiscoveryDomainBlacklist("blocked-idle.example", "fixture")
+	rule, err := CreateDiscoveryDomainBlacklist("blocked-idle.example", "fixture")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&dedupe.Member{}).Where("run_id=?", run.ID).Update("applied", false).Error; err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 3; i++ {
-		drift, err := dedupeRecoveryDrift(context.Background(), run.ID)
-		if err != nil || drift != 0 {
-			t.Fatalf("blocked drift=%d err=%v", drift, err)
-		}
-		if work, err := recoverDedupeJobs(context.Background(), i == 2); err != nil || work != 0 {
-			t.Fatalf("blocked recovery work=%d err=%v", work, err)
-		}
-		waitDedupeIdle(t)
-	}
-	var member dedupe.Member
-	if err := db.First(&member, "run_id=?", run.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if member.Applied || member.Revision != 1 {
-		t.Fatalf("blocked membership must stay unapplied without revision churn: %+v", member)
-	}
-	if _, err := DeleteDiscoveryDomainBlacklist(mutation.Entry.ID); err != nil {
-		t.Fatal(err)
-	}
 	if drift, err := dedupeRecoveryDrift(context.Background(), run.ID); err != nil || drift == 0 {
-		t.Fatalf("unblocked member did not reactivate: drift=%d err=%v", drift, err)
+		t.Fatalf("retained content not actionable: %d %v", drift, err)
 	}
 	if err := RecoverDedupeJobs(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	waitDedupeIdle(t)
-	if drift, err := dedupeRecoveryDrift(context.Background(), run.ID); err != nil || drift != 0 {
-		t.Fatalf("recovered member did not converge: drift=%d err=%v", drift, err)
+	for i := 0; i < 3; i++ {
+		if drift, err := dedupeRecoveryDrift(context.Background(), run.ID); err != nil || drift != 0 {
+			t.Fatalf("drift=%d err=%v", drift, err)
+		}
+		if work, err := recoverDedupeJobs(context.Background(), i == 2); err != nil || work != 0 {
+			t.Fatalf("recovery work=%d err=%v", work, err)
+		}
+		waitDedupeIdle(t)
 	}
 	qualification, err := ArticleDedupeQualification(db, candidate.MaterialID)
 	if err != nil || !qualification.Ready || !qualification.Representative {
-		t.Fatalf("unblocked qualification=%+v err=%v", qualification, err)
+		t.Fatalf("qualification=%+v err=%v", qualification, err)
+	}
+	if _, err := DeleteDiscoveryDomainBlacklist(rule.Entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if drift, err := dedupeRecoveryDrift(context.Background(), run.ID); err != nil || drift != 0 {
+		t.Fatalf("deletion created drift: %d %v", drift, err)
 	}
 }
 
@@ -178,7 +170,7 @@ func TestPendingAssessmentTargetsMatchExistingGates(t *testing.T) {
 					t.Fatal(err)
 				}
 				var rows []DiscoveryCandidate
-				if err := ExcludeBlacklistedCandidateDomains(query, "").Order("id").Find(&rows).Error; err != nil {
+				if err := query.Order("id").Find(&rows).Error; err != nil {
 					t.Fatal(err)
 				}
 				want := []jobqueue.AssessmentTarget{}

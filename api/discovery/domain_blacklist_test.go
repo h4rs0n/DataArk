@@ -1,11 +1,14 @@
 package discovery
 
 import (
+	"DataArk/material"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -44,7 +47,7 @@ func TestDomainBlacklistReversiblyBlocksPendingCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	broad, err := CreateDiscoveryDomainBlacklist("CSDN.NET", "fixture")
-	if err != nil || broad.AffectedCandidates != 2 {
+	if err != nil || broad.AffectedCandidates != 1 {
 		t.Fatalf("broad mutation = %#v, %v", broad, err)
 	}
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
@@ -57,8 +60,8 @@ func TestDomainBlacklistReversiblyBlocksPendingCandidates(t *testing.T) {
 		t.Fatalf("ready candidate changed = %#v, %v", ready, err)
 	}
 	visible, err := ListDiscoveryCandidatesForUser(1, DiscoveryCandidateStatusNew, 10)
-	if err != nil || len(visible) != 0 {
-		t.Fatalf("blacklisted retained candidates remain visible: %#v, %v", visible, err)
+	if err != nil || len(visible) != 2 {
+		t.Fatalf("crawl restriction hid retained candidates: %#v, %v", visible, err)
 	}
 	narrow, err := CreateDiscoveryDomainBlacklist("blog.csdn.net", "overlap")
 	if err != nil || narrow.AffectedCandidates != 0 {
@@ -71,7 +74,7 @@ func TestDomainBlacklistReversiblyBlocksPendingCandidates(t *testing.T) {
 		t.Fatalf("overlapping rule did not retain block = %#v, %v", candidate, err)
 	}
 	removed, err := DeleteDiscoveryDomainBlacklist(narrow.Entry.ID)
-	if err != nil || removed.AffectedCandidates != 2 {
+	if err != nil || removed.AffectedCandidates != 1 {
 		t.Fatalf("remove mutation = %#v, %v", removed, err)
 	}
 	if err := db.First(&candidate, candidate.ID).Error; err != nil {
@@ -128,12 +131,126 @@ func TestHTTPFetcherBlocksBeforeValidationAndBeforeRedirect(t *testing.T) {
 	}
 }
 
-func TestBlacklistedSourceCannotBeCreated(t *testing.T) {
+func TestBlacklistedSourceCanBeSavedButNotFetched(t *testing.T) {
 	setupSQLiteDB(t)
 	if _, err := CreateDiscoveryDomainBlacklist("example.com", "fixture"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreateDiscoverySource("Blocked", "https://feed.example.com/rss", DiscoverySourceTypeFeed, true); !errors.Is(err, ErrDiscoveryDomainBlacklisted) {
-		t.Fatalf("create source error = %v", err)
+	source, err := CreateDiscoverySource("Blocked", "https://feed.example.com/rss", DiscoverySourceTypeFeed, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateDiscoverySource(source.ID, "Updated", "https://other.example.com/rss", DiscoverySourceTypeFeed, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&source, source.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FetchDiscoverySource(context.Background(), source); !errors.Is(err, ErrDiscoveryDomainBlacklisted) {
+		t.Fatalf("fetch error = %v", err)
+	}
+}
+
+func TestCrawlRestrictionPreservesContentStateOnInitialAndRedirectBlocks(t *testing.T) {
+	for _, retained := range []bool{false, true} {
+		for _, redirect := range []bool{false, true} {
+			t.Run(fmt.Sprintf("retained=%t/redirect=%t", retained, redirect), func(t *testing.T) {
+				setupSQLiteDB(t)
+				candidate := DiscoveryCandidate{URL: "https://article.example/post", Title: "Article", ProcessingState: DiscoveryProcessingFetchPending, EligibilityState: DiscoveryEligibilityUnknown}
+				if retained {
+					candidate = newIndexedCandidate(t, "article", dedupeAutoBody())
+					if err := UpdateCandidate(db, candidate.ID, map[string]interface{}{"dedupe_state": DiscoveryDedupeReady, "assessment_state": DiscoveryAssessmentReady, "eligibility_state": DiscoveryEligibilityEligible, "eligibility_reasons": "article_quality_passed"}).Error; err != nil {
+						t.Fatal(err)
+					}
+				} else if err := db.Create(&candidate).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := db.First(&candidate, candidate.ID).Error; err != nil {
+					t.Fatal(err)
+				}
+				var before material.ArticleState
+				if retained {
+					if err := db.First(&before, "material_id=?", candidate.MaterialID).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+				oldFetch := fetchDiscoveryRequest
+				t.Cleanup(func() { fetchDiscoveryRequest = oldFetch })
+				calls := 0
+				fetchDiscoveryRequest = func(context.Context, FetchRequest) (FetchResult, error) {
+					calls++
+					return FetchResult{}, fmt.Errorf("%w: redirect.example", ErrDiscoveryDomainBlacklisted)
+				}
+				if !redirect {
+					if _, err := CreateDiscoveryDomainBlacklist("article.example", "fixture"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := ProcessCandidate(context.Background(), candidate.ID, fmt.Sprint(candidate.ContentVersion)); !errors.Is(err, ErrDiscoveryDomainBlacklisted) {
+					t.Fatalf("process error = %v", err)
+				}
+				var after DiscoveryCandidate
+				if err := db.First(&after, candidate.ID).Error; err != nil {
+					t.Fatal(err)
+				}
+				wantState := DiscoveryProcessingDomainBlocked
+				if retained {
+					wantState = DiscoveryProcessingReady
+				}
+				if after.ProcessingState != wantState || after.EligibilityState != candidate.EligibilityState || after.EligibilityReasons != candidate.EligibilityReasons || after.NextProcessingAt != nil || after.ProcessingErrorType != processingErrorDomainBlacklist {
+					t.Fatalf("restriction changed content: %+v", after)
+				}
+				if calls != 0 && !redirect || calls != 1 && redirect {
+					t.Fatalf("fetch calls = %d", calls)
+				}
+				if retained {
+					var state material.ArticleState
+					if err := db.First(&state, "material_id=?", candidate.MaterialID).Error; err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(before, state) || after.BodyText != candidate.BodyText || after.ContentVersion != candidate.ContentVersion || after.DedupeState != candidate.DedupeState {
+						t.Fatal("crawl restriction changed retained content or assessment")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestDeletingRedirectDomainRulesResumesBlockedCandidate(t *testing.T) {
+	setupSQLiteDB(t)
+	c := DiscoveryCandidate{URL: "https://allowed.example/post", Title: "Article", ProcessingState: DiscoveryProcessingFetchPending}
+	if err := db.Create(&c).Error; err != nil {
+		t.Fatal(err)
+	}
+	broad, err := CreateDiscoveryDomainBlacklist("redirect.example", "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	narrow, err := CreateDiscoveryDomainBlacklist("child.redirect.example", "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldFetch := fetchDiscoveryRequest
+	t.Cleanup(func() { fetchDiscoveryRequest = oldFetch })
+	fetchDiscoveryRequest = func(ctx context.Context, _ FetchRequest) (FetchResult, error) {
+		return FetchResult{}, ensureDiscoveryURLNotBlacklisted(ctx, "https://child.redirect.example/post")
+	}
+	if err := ProcessCandidate(context.Background(), c.ID, "0"); !errors.Is(err, ErrDiscoveryDomainBlacklisted) {
+		t.Fatalf("redirect error = %v", err)
+	}
+	removed, err := DeleteDiscoveryDomainBlacklist(broad.Entry.ID)
+	if err != nil || removed.AffectedCandidates != 0 {
+		t.Fatalf("overlap deletion = %+v %v", removed, err)
+	}
+	removed, err = DeleteDiscoveryDomainBlacklist(narrow.Entry.ID)
+	if err != nil || removed.AffectedCandidates != 1 {
+		t.Fatalf("redirect deletion = %+v %v", removed, err)
+	}
+	if err := db.First(&c, c.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if c.ProcessingState != DiscoveryProcessingFetchPending || c.NextProcessingAt == nil {
+		t.Fatalf("redirect candidate did not resume: %+v", c)
 	}
 }

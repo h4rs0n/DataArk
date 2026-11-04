@@ -293,15 +293,11 @@ func TestDedupePreviewSnapshotAndStaleApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-func TestDedupeBlacklistedRepresentativePromotesSurvivor(t *testing.T) {
+func TestDedupeRepresentativeIgnoresCrawlRestrictionChanges(t *testing.T) {
 	setupSQLiteDB(t)
 	startDedupeTestQueue(t)
-	body := ""
-	for i := 0; i < 40; i++ {
-		body += fmt.Sprintf("Section %d: A measured system explains queue contention and recovery mechanisms. ", i)
-	}
-	first := newIndexedCandidate(t, "blocked-original", body)
-	second := newIndexedCandidate(t, "surviving-repost", body+" Note.")
+	first := newIndexedCandidate(t, "restricted-original", dedupeAutoBody())
+	second := newIndexedCandidate(t, "surviving-repost", dedupeAutoBody()+" Note.")
 	run, err := CreateDedupeRun(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -311,41 +307,34 @@ func TestDedupeBlacklistedRepresentativePromotesSurvivor(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitDedupeStatus(t, run.ID, "active")
-	if _, err := CreateDiscoveryDomainBlacklist("blocked-original.example", "fixture"); err != nil {
-		t.Fatal(err)
+	check := func() {
+		t.Helper()
+		for _, c := range []DiscoveryCandidate{first, second} {
+			q, err := ArticleDedupeQualification(db, c.MaterialID)
+			if err != nil || !q.Ready || q.Representative != (c.ID == first.ID) {
+				t.Fatalf("qualification changed: %+v %v", q, err)
+			}
+			var current DiscoveryCandidate
+			if err := db.First(&current, c.ID).Error; err != nil || current.DedupeState != DiscoveryDedupeReady {
+				t.Fatalf("dedupe state changed: %+v %v", current, err)
+			}
+		}
 	}
-	q, err := ArticleDedupeQualification(db, second.MaterialID)
+	check()
+	rule, err := CreateDiscoveryDomainBlacklist("restricted-original.example", "fixture")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if q.Ready {
-		t.Fatal("blocked representative remains usable")
-	}
+	check()
 	if err := RecoverDedupeJobs(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		q, err = ArticleDedupeQualification(db, second.MaterialID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if q.Ready && q.Representative {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
 	waitDedupeIdle(t)
-	if !q.Ready || !q.Representative {
-		t.Fatalf("survivor not promoted %+v", q)
-	}
-	var blocked DiscoveryCandidate
-	if err := db.First(&blocked, first.ID).Error; err != nil {
+	check()
+	if _, err := DeleteDiscoveryDomainBlacklist(rule.Entry.ID); err != nil {
 		t.Fatal(err)
 	}
-	if blacklisted, err := IsDiscoveryURLBlacklisted(context.Background(), blocked.CanonicalURL); err != nil || !blacklisted {
-		t.Fatal("representative repair unblocked source")
-	}
+	check()
 }
 func TestDedupeNeverCreatesTransitiveCoverage(t *testing.T) {
 	setupSQLiteDB(t)

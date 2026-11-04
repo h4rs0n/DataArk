@@ -38,7 +38,7 @@ func GetCandidateInventory(userID uint) (*CandidateInventory, error) {
 		return nil, err
 	}
 	var candidates []DiscoveryCandidate
-	query := discovery.ExcludeBlacklistedCandidateDomains(db, "")
+	query := discovery.Candidates(db)
 	var filterErr error
 	query, filterErr = discovery.FilterDedupeAssessmentCandidates(query)
 	if filterErr != nil {

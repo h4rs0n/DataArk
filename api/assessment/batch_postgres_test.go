@@ -93,11 +93,11 @@ func TestPostgresBatchTransferAndRecovery(t *testing.T) {
 	if err := database.Create(&run).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := goose.Down(sqlDB, "."); err == nil {
-		t.Fatal("pause migration rolled back an active Batch run")
+	if err := goose.DownTo(sqlDB, ".", 44); err == nil {
+		t.Fatal("admission migration rolled back an active Batch run")
 	}
-	if err := goose.Down(sqlDB, "."); err == nil {
-		t.Fatal("migration rolled back an active Batch run")
+	if err := appdatabase.RunDatabaseMigrations(database); err != nil {
+		t.Fatal(err)
 	}
 	_, _, err = transfer.TransferAssessments(ctx, highWater, 0, time.Now(), 100, func(tx *gorm.DB, jobs []jobqueue.AssessmentJob) error {
 		for _, j := range jobs {

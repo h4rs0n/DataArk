@@ -265,7 +265,7 @@ func TestV3GooseMigrationIsAdditiveAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 46 || migrations[len(migrations)-1].Version != 46 {
+	if len(migrations) != 47 || migrations[len(migrations)-1].Version != 47 {
 		t.Fatalf("goose migrations = %#v", migrations)
 	}
 	coreSchema, err := appmigrations.FS.ReadFile("000001_recommendation_v2.sql")

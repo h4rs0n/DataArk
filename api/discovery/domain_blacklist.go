@@ -21,58 +21,24 @@ var (
 
 const processingErrorDomainBlacklist = "domain_blacklist"
 
-func discoveryCandidateBlacklistPredicate(candidateAlias string) (string, error) {
-	hostColumn := "discovery_candidates.crawl_host"
-	switch strings.TrimSpace(candidateAlias) {
-	case "", "discovery_candidates":
-	case "candidate":
-		hostColumn = "candidate.crawl_host"
-	default:
-		return "", fmt.Errorf("invalid discovery candidate table alias %q", candidateAlias)
-	}
-	// Keep this as a correlated existence check. With exact-or-suffix matches,
-	// an anti join can estimate that every host matches a tiny blacklist and
-	// drive unrelated library joins into tens of thousands of index lookups.
-	return `EXISTS (
-SELECT 1
-FROM discovery_domain_blacklist_entries AS domain_blacklist
-WHERE ` + hostColumn + ` = domain_blacklist.domain
-   OR ` + hostColumn + ` LIKE '%.' || domain_blacklist.domain
-LIMIT 1 OFFSET 0
-)`, nil
+type discoveryDomainBlockedError struct{ host string }
+
+func (err *discoveryDomainBlockedError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrDiscoveryDomainBlacklisted, err.host)
 }
 
-// ExcludeBlacklistedCandidateDomains applies the active domain blacklist to a
-// discovery-candidate query without deleting or rewriting retained evidence.
-func ExcludeBlacklistedCandidateDomains(query *gorm.DB, candidateAlias string) *gorm.DB {
-	if query == nil {
-		return query
-	}
-	predicate, err := discoveryCandidateBlacklistPredicate(candidateAlias)
-	if err != nil {
-		_ = query.AddError(err)
-		return query
-	}
-	if candidateAlias == "" {
-		query = Candidates(query)
-	}
-	return query.Where("NOT " + predicate)
-}
+func (*discoveryDomainBlockedError) Unwrap() error { return ErrDiscoveryDomainBlacklisted }
 
-// OnlyBlacklistedCandidateDomains selects candidates hidden by an active rule.
-func OnlyBlacklistedCandidateDomains(query *gorm.DB, candidateAlias string) *gorm.DB {
-	if query == nil {
-		return query
+// Crawl errors persist the blocked host even when it belongs to a redirect.
+// Recognize the historical message too; the candidate host is the fallback.
+func blockedCandidateHost(candidate DiscoveryCandidate) string {
+	const marker = "crawl domain is blacklisted: "
+	if i := strings.LastIndex(candidate.ProcessingError, marker); i >= 0 {
+		if host, err := NormalizeDiscoveryBlacklistDomain(candidate.ProcessingError[i+len(marker):]); err == nil {
+			return host
+		}
 	}
-	predicate, err := discoveryCandidateBlacklistPredicate(candidateAlias)
-	if err != nil {
-		_ = query.AddError(err)
-		return query
-	}
-	if candidateAlias == "" {
-		query = Candidates(query)
-	}
-	return query.Where(predicate)
+	return candidate.CrawlHost
 }
 
 func NormalizeDiscoveryBlacklistDomain(value string) (string, error) {
@@ -172,31 +138,24 @@ func CreateDiscoveryDomainBlacklist(domain string, reason string) (*DiscoveryDom
 		if count > 0 {
 			return ErrDuplicateDiscoveryBlacklistDomain
 		}
-		newlyHidden := ExcludeBlacklistedCandidateDomains(tx.Model(&DiscoveryCandidate{}), "")
-		if err := newlyHidden.
-			Where("crawl_host = ? OR crawl_host LIKE ?", normalized, "%."+normalized).
-			Count(&affected).Error; err != nil {
-			return err
-		}
 		if err := tx.Create(&entry).Error; err != nil {
 			return err
 		}
-		result := UpdateCandidates(tx.Model(&DiscoveryCandidate{}).
+		result := tx.Model(&DiscoveryCandidate{}).
 			Where("crawl_host = ? OR crawl_host LIKE ?", normalized, "%."+normalized).
-			Where("processing_state IN ?", []string{DiscoveryProcessingDiscovered, DiscoveryProcessingFetchPending, DiscoveryProcessingFetching, "extract_pending"}),
-			map[string]interface{}{
+			Where("processing_state IN ? AND extracted_at IS NULL", []string{DiscoveryProcessingDiscovered, DiscoveryProcessingFetchPending, DiscoveryProcessingFetching, "extract_pending"}).
+			Updates(map[string]interface{}{
 				"processing_state":      DiscoveryProcessingDomainBlocked,
 				"processing_error_type": processingErrorDomainBlacklist,
 				"processing_error":      fmt.Sprintf("crawl domain is blacklisted: %s", normalized),
-				"eligibility_state":     DiscoveryEligibilityUnknown,
-				"eligibility_reasons":   processingErrorDomainBlacklist,
 				"next_processing_at":    nil,
 				"updated_at":            time.Now(),
 			})
 		if result.Error != nil {
 			return result.Error
 		}
-		return invalidateDedupeDomain(tx, normalized)
+		affected = result.RowsAffected
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -221,45 +180,42 @@ func DeleteDiscoveryDomainBlacklist(id uint) (*DiscoveryDomainBlacklistMutation,
 			return err
 		}
 		var candidates []DiscoveryCandidate
-		if err := tx.Select("id", "crawl_host", "processing_state", "processing_error_type").
-			Where("crawl_host = ? OR crawl_host LIKE ?", mutation.Entry.Domain, "%."+mutation.Entry.Domain).
+		if err := tx.Select("id", "crawl_host", "processing_error").
+			Where("processing_state = ? AND processing_error_type = ?", DiscoveryProcessingDomainBlocked, processingErrorDomainBlacklist).
 			Find(&candidates).Error; err != nil {
 			return err
 		}
-		unblocked := make([]uint, 0)
 		resumable := make([]uint, 0)
 		for _, candidate := range candidates {
+			blockedHost := blockedCandidateHost(candidate)
+			if !domainRuleMatchesHost(mutation.Entry.Domain, candidate.CrawlHost) && !domainRuleMatchesHost(mutation.Entry.Domain, blockedHost) {
+				continue
+			}
 			blocked := false
 			for _, entry := range remaining {
-				if domainRuleMatchesHost(entry.Domain, candidate.CrawlHost) {
+				if domainRuleMatchesHost(entry.Domain, candidate.CrawlHost) || domainRuleMatchesHost(entry.Domain, blockedHost) {
 					blocked = true
 					break
 				}
 			}
 			if !blocked {
-				unblocked = append(unblocked, candidate.ID)
-				if candidate.ProcessingState == DiscoveryProcessingDomainBlocked && candidate.ProcessingErrorType == processingErrorDomainBlacklist {
-					resumable = append(resumable, candidate.ID)
-				}
+				resumable = append(resumable, candidate.ID)
 			}
-		}
-		mutation.AffectedCandidates = int64(len(unblocked))
-		if err := invalidateDedupeDomain(tx, mutation.Entry.Domain); err != nil {
-			return err
 		}
 		if len(resumable) == 0 {
 			return nil
 		}
 		now := time.Now()
-		result := UpdateCandidates(tx.Model(&DiscoveryCandidate{}).Where("id IN ?", resumable), map[string]interface{}{
-			"processing_state":      DiscoveryProcessingFetchPending,
-			"processing_error_type": "",
-			"processing_error":      "",
-			"eligibility_state":     DiscoveryEligibilityUnknown,
-			"eligibility_reasons":   "",
-			"next_processing_at":    &now,
-			"updated_at":            now,
-		})
+		result := tx.Model(&DiscoveryCandidate{}).Where("id IN ?", resumable).
+			Where("processing_state = ? AND processing_error_type = ?", DiscoveryProcessingDomainBlocked, processingErrorDomainBlacklist).
+			Updates(map[string]interface{}{
+				"processing_state":      DiscoveryProcessingFetchPending,
+				"processing_error_type": "",
+				"processing_error":      "",
+				"next_processing_at":    &now,
+				"updated_at":            now,
+			})
+		mutation.AffectedCandidates = result.RowsAffected
 		return result.Error
 	})
 	if err != nil {
@@ -298,7 +254,7 @@ func ensureDiscoveryURLNotBlacklisted(ctx context.Context, rawURL string) error 
 		return err
 	}
 	if blocked {
-		return fmt.Errorf("%w: %s", ErrDiscoveryDomainBlacklisted, crawlHostForURL(rawURL))
+		return &discoveryDomainBlockedError{host: crawlHostForURL(rawURL)}
 	}
 	return nil
 }

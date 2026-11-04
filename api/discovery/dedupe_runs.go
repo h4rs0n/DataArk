@@ -898,9 +898,8 @@ func recoverDedupeJobs(ctx context.Context, full bool) (int, error) {
 	return enqueued + int(cancelled), nil
 }
 
-// Only current, usable articles can advance. Blocked/obsolete members remain
-// unapplied so they cannot qualify for assessment; removal of a blacklist rule
-// or a ready candidate makes them actionable again without a state rewrite.
+// Only current articles with accepted content can advance. Obsolete members
+// remain unapplied until a current representation and ready candidate exist.
 func dedupeRecoveryDrift(ctx context.Context, runID uint) (int64, error) {
 	actionable, _, err := dedupeRecoveryDriftCounts(ctx, runID)
 	return actionable, err

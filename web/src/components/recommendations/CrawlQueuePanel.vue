@@ -65,7 +65,7 @@
     <div class="section-title">
       <div>
         <h2>域名黑名单</h2>
-        <span>命中域名及其子域不会再被访问，已爬取文章也会从候选列表和后续推荐中剔除</span>
+        <span>限制发现模块访问该域名及其子域，不影响已抓取文章的展示、评估和推荐</span>
       </div>
     </div>
     <form class="blacklist-form" @submit.prevent="addDomainBlacklist">
@@ -85,7 +85,7 @@
         <article v-for="entry in domainBlacklist" :key="entry.id" class="blacklist-row">
           <div><strong>{{ entry.domain }}</strong><span>{{ entry.reason || '未填写备注' }}</span></div>
           <span>同时匹配所有子域 · {{ formatDateTime(entry.createdAt) }}</span>
-          <a-popconfirm content="删除后，不再被其他规则覆盖的候选文章将恢复显示，未完成任务也会恢复待抓取。确认删除？" @ok="deleteDomainBlacklist(entry.id)">
+          <a-popconfirm content="删除后，不再被其他规则覆盖的候选将恢复待抓取。确认删除？" @ok="deleteDomainBlacklist(entry.id)">
             <a-button size="small" status="danger" :loading="deletingBlacklistId === entry.id">
               <template #icon><icon-delete /></template>
               删除
@@ -232,8 +232,7 @@ async function addDomainBlacklist() {
     blacklistForm.domain = ''
     blacklistForm.reason = ''
     await Promise.all([loadDomainBlacklist(true), loadCrawlQueue(true)])
-    emit('inventory-changed')
-    Message.success(`域名已加入黑名单，剔除 ${mutation.affectedCandidates || 0} 篇候选文章`)
+    Message.success(`域名已加入黑名单，暂停 ${mutation.affectedCandidates || 0} 篇候选的抓取`)
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '添加域名黑名单失败')
   } finally {
@@ -246,8 +245,7 @@ async function deleteDomainBlacklist(id: number) {
     deletingBlacklistId.value = id
     const mutation = await requestJSON<DomainBlacklistMutation>(`/api/admin/discovery/domain-blacklist/${id}`, { method: 'DELETE' })
     await Promise.all([loadDomainBlacklist(true), loadCrawlQueue(true)])
-    emit('inventory-changed')
-    Message.success(`域名黑名单已删除，恢复 ${mutation.affectedCandidates || 0} 篇候选文章`)
+    Message.success(`域名黑名单已删除，恢复 ${mutation.affectedCandidates || 0} 篇候选的抓取`)
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '删除域名黑名单失败')
   } finally {

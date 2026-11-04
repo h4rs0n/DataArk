@@ -179,7 +179,7 @@ HTML 文件在归档目录；archive 领域表保存任务、按域名的文件�
 
 ### `discovery_domain_blacklist_entries`
 
-按规范化主机名及其所有子域屏蔽抓取，可使用注册域或具体子域；不会自动提升为注册域。`domain` 唯一。`000021` 默认插入 `csdn.net`。命中后候选 `processing_state = domain_blocked`。
+按规范化主机名及其所有子域屏蔽抓取，可使用注册域或具体子域；不会自动提升为注册域。`domain` 唯一。`000021` 默认插入 `csdn.net`。黑名单只限制发现模块的网络抓取，允许保存命中域名的来源配置。尚未完成抽取的候选命中后进入 `processing_state = domain_blocked`；已抓取文章的展示、推荐、评估和去重不受影响。`000047` 修复旧实现遗留的黑名单内容资格及抓取状态，不删除正文或历史评估。
 
 ### `discovery_sources`
 

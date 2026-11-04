@@ -77,12 +77,7 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 	}
 	if err := ensureDiscoveryURLNotBlacklisted(ctx, candidate.URL); err != nil {
 		if errors.Is(err, ErrDiscoveryDomainBlacklisted) {
-			updates := candidateFailureUpdates(DiscoveryProcessingDomainBlocked, DiscoveryEligibilityUnknown, processingErrorDomainBlacklist, err.Error(), discoveryClock.Now())
-			updates["eligibility_reasons"] = processingErrorDomainBlacklist
-			updates["next_processing_at"] = nil
-			if updateErr := UpdateCandidate(db, candidate.ID, updates).Error; updateErr != nil {
-				return updateErr
-			}
+			return recordCandidateDomainBlock(&candidate, err, discoveryClock.Now())
 		}
 		return err
 	}
@@ -189,7 +184,34 @@ func articleEligibilityFailure(rawURL string, article *ExtractedArticle) (string
 	}, minimumCharacters)
 }
 
+// A crawl restriction is not a content eligibility decision. Keep previously
+// extracted content ready, including when a redirect is blocked during refresh.
+func recordCandidateDomainBlock(candidate *DiscoveryCandidate, fetchErr error, now time.Time) error {
+	message := compactProcessingError(fetchErr.Error())
+	var blocked *discoveryDomainBlockedError
+	if errors.As(fetchErr, &blocked) {
+		message = blocked.Error()
+	}
+	state := DiscoveryProcessingDomainBlocked
+	if candidate.ProcessingState == DiscoveryProcessingReady || candidate.ExtractedAt != nil {
+		state = DiscoveryProcessingReady
+	}
+	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", candidate.ID).Updates(map[string]interface{}{
+		"processing_state":      gorm.Expr("CASE WHEN processing_state = ? OR extracted_at IS NOT NULL THEN ? ELSE ? END", DiscoveryProcessingReady, DiscoveryProcessingReady, state),
+		"processing_error_type": processingErrorDomainBlacklist,
+		"processing_error":      message,
+		"next_processing_at":    nil,
+		"updated_at":            now,
+	}).Error; err != nil {
+		return err
+	}
+	return fetchErr
+}
+
 func recordCandidateFetchFailure(candidate *DiscoveryCandidate, fetchErr error, now time.Time) error {
+	if errors.Is(fetchErr, ErrDiscoveryDomainBlacklisted) {
+		return recordCandidateDomainBlock(candidate, fetchErr, now)
+	}
 	category := discoveryFetchErrorCategory(fetchErr)
 	if isPermanentCandidateFetchError(fetchErr) {
 		return finishCandidateIneligible(candidate, category, fetchErr.Error(), now)

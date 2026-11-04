@@ -41,7 +41,6 @@ func GetCurrentDiscoveryFeed(userID uint) (*RecommendationFeedSnapshot, error) {
 		Joins("JOIN discovery_candidates AS candidate ON candidate.id = item.candidate_id").
 		Where("item.feed_batch_id = ? AND item.user_id = ?", batch.ID, userID).
 		Order("item.rank asc")
-	query = discovery.ExcludeBlacklistedCandidateDomains(query, "candidate")
 	if err := query.Scan(&items).Error; err != nil {
 		return nil, err
 	}

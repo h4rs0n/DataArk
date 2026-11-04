@@ -109,7 +109,7 @@ func TestRecommendationV3PublishesOnlyEligibleMAndExplainsShortage(t *testing.T)
 	}
 }
 
-func TestRecommendationV3ExcludesRetainedCandidatesFromBlacklistedDomains(t *testing.T) {
+func TestRecommendationV3IncludesRetainedCandidatesFromCrawlRestrictedDomains(t *testing.T) {
 	setupSQLiteDB(t)
 	now := time.Date(2026, 8, 3, 7, 0, 0, 0, time.UTC)
 	useRecommendationTestClock(t, now)
@@ -136,10 +136,14 @@ func TestRecommendationV3ExcludesRetainedCandidatesFromBlacklistedDomains(t *tes
 	if snapshot.Day.ActualCount != 2 || len(snapshot.Items) != 2 {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
+	found := false
 	for _, item := range snapshot.Items {
 		if item.CandidateID == blocked.ID {
-			t.Fatalf("blacklisted retained candidate was published: %#v", item)
+			found = true
 		}
+	}
+	if !found {
+		t.Fatal("crawl restriction excluded retained content from recommendations")
 	}
 	var audit struct {
 		Excluded map[string]int `json:"excluded"`
@@ -147,7 +151,7 @@ func TestRecommendationV3ExcludesRetainedCandidatesFromBlacklistedDomains(t *tes
 	if err := json.Unmarshal([]byte(snapshot.Day.ShortageReasons), &audit); err != nil {
 		t.Fatal(err)
 	}
-	if audit.Excluded["domain_blacklist"] != 1 {
+	if audit.Excluded["domain_blacklist"] != 0 {
 		t.Fatalf("blacklist audit = %#v", audit.Excluded)
 	}
 }

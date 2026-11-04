@@ -32,7 +32,7 @@ func reimportableBatchItem(item BatchItem) bool {
 }
 
 // The material lock held by the caller orders restoration against fresh
-// assessments, content updates, dedupe changes and blacklist application.
+// assessments, content updates and dedupe changes.
 func batchReimportAllowed(tx *gorm.DB, item BatchItem, candidate discovery.DiscoveryCandidate, allowed bool) (bool, error) {
 	if !allowed {
 		return false, nil

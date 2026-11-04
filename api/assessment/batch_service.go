@@ -386,7 +386,7 @@ func batchCandidate(tx *gorm.DB, item BatchItem) (discovery.DiscoveryCandidate, 
 		return discovery.DiscoveryCandidate{}, false, err
 	}
 	var candidate discovery.DiscoveryCandidate
-	query := discovery.ExcludeBlacklistedCandidateDomains(discovery.Candidates(tx).Where("material_id=?", item.MaterialID), "")
+	query := discovery.Candidates(tx).Where("material_id=?", item.MaterialID)
 	result := query.Order("id").Limit(1).Find(&candidate)
 	if result.Error != nil {
 		return candidate, false, result.Error

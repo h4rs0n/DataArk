@@ -195,7 +195,7 @@ func TestRecoverySkipsSitemapWithoutExplicitOwnerRequest(t *testing.T) {
 	}
 }
 
-func TestRecoverDueJobsSkipsAllBlacklistedCandidateWork(t *testing.T) {
+func TestRecoverDueJobsSkipsBlacklistedFetchesButRecoversRetainedContent(t *testing.T) {
 	setupSQLiteDB(t)
 	now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
 	if err := db.Create(&DiscoveryDomainBlacklistEntry{Domain: "blocked.example"}).Error; err != nil {
@@ -244,7 +244,7 @@ func TestRecoverDueJobsSkipsAllBlacklistedCandidateWork(t *testing.T) {
 	if len(queue.backfills) != 1 || queue.backfills[0] != allowedSite.ID {
 		t.Fatalf("backfills = %#v", queue.backfills)
 	}
-	if len(queue.candidates) != 0 {
+	if len(queue.candidates) != 1 || queue.candidates[0] != readyCandidate.ID {
 		t.Fatalf("candidates = %#v", queue.candidates)
 	}
 }
