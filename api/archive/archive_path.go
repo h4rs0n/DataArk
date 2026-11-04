@@ -24,7 +24,7 @@ func ResolveArchiveDocumentPath(rawPath string) (*ArchiveDocumentPath, error) {
 	}
 
 	if parsedURL, err := neturl.Parse(requestPath); err == nil && parsedURL.Path != "" {
-		requestPath = parsedURL.Path
+		requestPath = parsedURL.EscapedPath()
 	}
 
 	requestPath = strings.TrimPrefix(requestPath, "/")

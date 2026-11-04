@@ -32,9 +32,8 @@
       <!-- 搜索结果 -->
       <div class="results-container" v-if="!errorStatus">
         <transition-group name="fade-slide" tag="div" class="results-list">
-          <div class="result-item" v-for="(item, index) in pageData.jsonResult.result" :key="item.filename" :style="{ animationDelay: `${index * 0.1}s` }">
+          <div class="result-item" v-for="(item, index) in pageData.jsonResult.result" :key="item.id" :style="{ animationDelay: `${index * 0.1}s` }">
             <a-card
-                v-if="item.content != ''"
                 class="result-card"
                 :hoverable="true"
                 :bordered="false"
@@ -42,12 +41,15 @@
               <template #title>
                 <div class="card-header">
                   <a-link
-                      @click="htmlViewer(fileLink+item.domain+'/'+item.filename)"
-                      target="_blank"
+                      @click.prevent="openResult(item)"
+                      :href="resultHref(item)"
+                      :target="item.archived ? undefined : '_blank'"
+                      rel="noopener noreferrer"
                       class="result-title"
                   >
                     {{ item.title }}
                   </a-link>
+                  <span class="archive-state">{{ item.archived ? '本地归档' : '在线文章' }}</span>
                   <div class="domain-badge">
                     <icon-link />
                     {{ item.domain }}
@@ -55,24 +57,34 @@
                 </div>
               </template>
               <template #extra>
-                <a-button
-                    v-if="item.link"
-                    type="primary"
-                    size="small"
-                    class="original-link-button"
-                    :title="item.link"
-                    @click.stop="openSourceURL(item.link)"
-                >
-                  <template #icon>
-                    <icon-link />
-                  </template>
-                  <span class="link-text">原文链接</span>
-                </a-button>
+                <div class="result-actions">
+                  <a-button
+                      v-if="!item.archived && item.link"
+                      size="small"
+                      :loading="archiveActions[item.id]?.status === 'submitting'"
+                      :disabled="archiveActions[item.id]?.status === 'queued' || archiveActions[item.id]?.status === 'success'"
+                      @click.stop="quickArchive(item)"
+                  >{{ archiveActions[item.id]?.status === 'success' ? '已归档' : archiveActions[item.id]?.status === 'queued' ? '已加入归档队列' : '快速归档' }}</a-button>
+                  <a-button
+                      v-if="item.link"
+                      type="primary"
+                      size="small"
+                      class="original-link-button"
+                      :title="item.link"
+                      @click.stop="openSourceURL(item.link)"
+                  >
+                    <template #icon>
+                      <icon-link />
+                    </template>
+                    <span class="link-text">原文链接</span>
+                  </a-button>
+                </div>
               </template>
               <div class="result-content-wrapper">
                 <div class="result-content" v-html="item.content"></div>
+                <a-alert v-if="archiveActions[item.id]?.error" type="error" :title="archiveActions[item.id]?.error" />
                 <div class="result-meta">
-                  <span class="filename">
+                  <span class="filename" v-if="item.archived" :title="item.filename">
                     <icon-file />
                     {{ item.filename }}
                   </span>
@@ -125,6 +137,9 @@
 import { useRoute, useRouter } from 'vue-router';
 import { onMounted, reactive, watch, ref } from 'vue';
 import { searchByKeyword, type SearchHit } from '@/api/search'
+import { archiveByURL } from '@/api/archive'
+import { Message } from '@arco-design/web-vue'
+import { submitSearchArchive, type SearchArchiveAction } from '@/utils/searchArchive.mjs'
 
 let errorMessage = ref("搜索请求出现错误")
 let errorStatus = ref(false)
@@ -132,7 +147,7 @@ const isLoading = ref(false)
 const hasSearched = ref(false)
 let TotalHits = ref("0")
 let pageNum = "1"
-let fileLink = "/archive/"
+const archiveActions = reactive<Record<string, SearchArchiveAction>>({})
 let latestRequestId = 0
 
 // 响应式检测
@@ -200,6 +215,31 @@ async function queryData(keyword: string, pages : string = "1") {
   }
 }
 
+function resultHref(item: SearchHit): string {
+  if (item.archived && item.archivePath) {
+    return router.resolve({ path: '/htmlviewer', query: { loc: item.archivePath, q: pageData.searchKey } }).href
+  }
+  try {
+    const url = new URL(item.link)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : ''
+  } catch {
+    return ''
+  }
+}
+
+function openResult(item: SearchHit) {
+  if (item.archived && item.archivePath) {
+    htmlViewer(item.archivePath)
+  } else {
+    openSourceURL(item.link)
+  }
+}
+
+async function quickArchive(item: SearchHit) {
+  const message = await submitSearchArchive(archiveActions, item, archiveByURL)
+  if (message) Message.success(message)
+}
+
 function htmlViewer(htmlLoc : string) {
   router.push({ path: '/htmlviewer', query: { loc: htmlLoc, q: pageData.searchKey } })
 }
@@ -245,6 +285,12 @@ watch(() => [route.query.q, route.query.p], ([query, page]) => {
 </script>
 
 <style lang="less" scoped>
+.archive-state {
+  color: var(--color-text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .search-view {
   min-height: 100vh;
   padding: 20px 0;
@@ -398,6 +444,11 @@ watch(() => [route.query.q, route.query.p], ([query, page]) => {
     }
 
     :deep(.arco-card-header) {
+      height: auto;
+      min-height: 64px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 12px;
       padding: 24px 28px 20px;
       border-bottom: 1px solid #f1f5f9;
       background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
@@ -405,6 +456,23 @@ watch(() => [route.query.q, route.query.p], ([query, page]) => {
       @media (max-width: 768px) {
         padding: 20px 20px 16px;
       }
+    }
+
+    :deep(.arco-card-header-title) {
+      flex: 1 1 260px;
+      min-width: 0;
+      white-space: normal;
+    }
+
+    :deep(.arco-card-header-extra) {
+      max-width: 100%;
+      margin-left: 0;
+    }
+
+    .result-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
     }
 
     :deep(.arco-card-body) {
@@ -428,6 +496,9 @@ watch(() => [route.query.q, route.query.p], ([query, page]) => {
     }
 
     .result-title {
+      justify-content: flex-start;
+      text-align: left;
+      overflow-wrap: anywhere;
       font-size: 20px;
       font-weight: 600;
       color: #1a202c;
@@ -514,6 +585,8 @@ watch(() => [route.query.q, route.query.p], ([query, page]) => {
 
       .result-meta {
         .filename {
+          overflow-wrap: anywhere;
+          min-width: 0;
           display: flex;
           align-items: center;
           gap: 6px;

@@ -4,6 +4,7 @@ import (
 	"DataArk/archive"
 	"DataArk/config"
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/meilisearch/meilisearch-go"
 	"io/fs"
@@ -167,7 +168,7 @@ func (s archiveConsistencyService) Repair(ctx context.Context) (*ArchiveConsiste
 		return nil, err
 	}
 	report.Actions = []string{
-		fmt.Sprintf("已根据现存 HTML 文件重建 Meilisearch 索引，写入 %d 条文档", indexedDocuments),
+		fmt.Sprintf("已重建文章与本地归档的 Meilisearch 索引，写入 %d 条文档", indexedDocuments),
 		fmt.Sprintf("已根据现存 HTML 文件刷新数据库统计，来源数 %d 个", len(refreshedStats.Sources)),
 	}
 	report.IndexedDocuments = indexedDocuments
@@ -187,19 +188,31 @@ func (meiliArchiveIndexStore) ListArchiveDocuments(ctx context.Context) ([]archi
 		err := index.GetDocumentsWithContext(ctx, &meilisearch.DocumentsQuery{
 			Limit:  archiveConsistencyDocumentPageSize,
 			Offset: offset,
-			Fields: []string{"id", "domain", "filename"},
+			Fields: []string{"id", "domain", "filename", "materialId", "archives"},
 		}, &result)
 		if err != nil {
 			return nil, err
 		}
 
 		for _, document := range result.Results {
-			documents = append(documents, archiveIndexDocument{
-				ID:       documentString(document, "id"),
-				Domain:   documentString(document, "domain"),
-				Filename: documentString(document, "filename"),
-			})
+			id := documentString(document, "id")
+			if id == generationMarker {
+				continue
+			}
+			if _, modern := document["materialId"]; modern {
+				var locations []ArchiveLocation
+				if raw, ok := document["archives"]; ok {
+					_ = json.Unmarshal(raw, &locations)
+				}
+				for _, location := range locations {
+					documents = append(documents, archiveIndexDocument{ID: id, Domain: location.Domain, Filename: location.Filename})
+				}
+				// External-only documents are not missing local archives.
+				continue
+			}
+			documents = append(documents, archiveIndexDocument{ID: id, Domain: documentString(document, "domain"), Filename: documentString(document, "filename")})
 		}
+
 		if len(result.Results) < archiveConsistencyDocumentPageSize {
 			break
 		}

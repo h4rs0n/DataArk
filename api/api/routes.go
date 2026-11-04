@@ -15,6 +15,7 @@ func registerAPIRoutes(router *gin.Engine, authController *AuthController) {
 	protected.Use(AuthMiddleware())
 	{
 		protected.GET("/search", SearchByKeyword)
+		protected.GET("/admin/search/status", GetSearchSyncStatus)
 		protected.GET("/search/keywords", GetSearchKeywords)
 		protected.POST("/uploadHtmlFile", AddHTMLFile)
 		protected.POST("/upload", AddDocByHTMLFile)

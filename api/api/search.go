@@ -1,6 +1,7 @@
 package api
 
 import (
+	"DataArk/search"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -8,7 +9,7 @@ import (
 
 // search.go 提供关键词搜索与热词查询 HTTP 接口。
 
-// SearchByKeyword 按关键词分页搜索归档文档。
+// SearchByKeyword 按关键词分页搜索文章与本地归档。
 func SearchByKeyword(c *gin.Context) {
 	queryString := c.Query("q")
 	queryPage := c.Query("p")
@@ -18,7 +19,7 @@ func SearchByKeyword(c *gin.Context) {
 	} else {
 		var err error
 		pageNum, err = strconv.ParseInt(queryPage, 10, 64)
-		if err != nil {
+		if err != nil || pageNum < 1 {
 			c.JSON(403, gin.H{
 				"Status":  "0",
 				"Message": "参数 p 格式错误",
@@ -62,4 +63,17 @@ func GetSearchKeywords(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"Status": "1", "Message": "查询搜索关键词成功", "Data": stats})
+}
+
+// GetSearchSyncStatus reports durable index bootstrap and retry progress.
+func GetSearchSyncStatus(c *gin.Context) {
+	if !requireOwner(c) {
+		return
+	}
+	status, err := search.GetSyncStatus(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"Status": "0", "Message": "查询搜索同步状态失败", "Error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"Status": "1", "Data": status})
 }

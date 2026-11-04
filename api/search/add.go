@@ -126,7 +126,7 @@ func AddDocURLTask(rawURL string) (*archive.ArchiveTask, bool, error) {
 	// 成功任务直接复用已有结果，而不是再次请求外部服务。
 	// 这样做可以保持接口幂等，也避免同一页面被重复保存出多个归档文件。
 	latestTask, err := archive.GetLatestArchiveTaskByURL(normalizedURL)
-	if err == nil && latestTask.Status == ArchiveTaskStatusSuccess {
+	if err == nil && latestTask.Status == ArchiveTaskStatusSuccess && existingArchive(latestTask.Domain, latestTask.FileName) != "" {
 		return latestTask, false, nil
 	}
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -388,29 +388,10 @@ func addDocFileByPath(htmlFilePath string, fileName string, originDomain string,
 		return err
 	}
 
-	materialID, err := archive.EnsureContentMaterial(originDomain, fileName, sourceURL, title, HTMLPureText)
-	if err != nil {
+	if _, err := archive.EnsureContentMaterial(originDomain, fileName, sourceURL, title, HTMLPureText); err != nil {
 		return err
 	}
-	documents := []map[string]interface{}{
-		{
-			"id":         uuid.New().String(),
-			"title":      title,
-			"filename":   fileName,
-			"domain":     originDomain,
-			"link":       strings.TrimSpace(sourceURL),
-			"content":    HTMLPureText,
-			"materialId": materialID,
-		},
-	}
-	client := meilisearch.New(config.MEILIHOST, meilisearch.WithAPIKey(config.MEILIAPIKey))
-
-	_, err = client.Index(config.MEILIBlogsIndex).AddDocuments(documents, nil)
-	if err != nil {
-		return err
-	}
-
-	// 成功添加索引内容后，移动文件到域名目录
+	// Search indexing follows the durable metadata change, independently of capture.
 	targetDir := filepath.Join(config.ARCHIVEFILELOACTION, originDomain)
 	if err := os.MkdirAll(targetDir, os.ModePerm); err != nil {
 		return err

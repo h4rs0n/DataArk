@@ -178,7 +178,7 @@ func RestoreBackup(ctx context.Context, zipPath string) (*RestoreResult, error) 
 	}
 
 	// Meilisearch dump import is a startup-only Meilisearch operation. For this
-	// running API restore path, rebuild the application index from restored HTML.
+	// running API restore path, rebuild the complete article/archive index from the restored database and HTML.
 	rebuildResult, err := search.RebuildIndexFromArchive(ctx)
 	if err != nil {
 		return nil, err

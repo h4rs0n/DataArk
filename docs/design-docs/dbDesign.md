@@ -427,3 +427,15 @@ archive_stats
 ```
 
 发现与推荐的外键见上文「领域关系」。仓库的完整列清单与约束以编号 Goose 迁移为准；核对具体部署时查询其 `information_schema.columns` / `pg_constraint`。本文历史实例的类型和数量未在本次文档核对中重新验证。关系概览见 `docs/design-docs/dataark_er.dot`，图中虚线标注的用户归属为应用关系，不代表数据库 FK；代码侧模型分别为 `auth.User`、`archive.*`、`discovery.*`、`assessment.*`、`recommendation.*`。
+
+
+## 文章搜索同步（Goose 000048）
+
+Meilisearch 是 material 的可重建检索投影，不是正文或归档文件的事实来源。搜索按 material 稳定 ID 合并已评估正文与本地归档；发现域名黑名单不参与投影。
+
+- `search_sync_pending`：`material_id` 主键，`revision` 防止并发更新被旧任务确认清除；`attempts`、`next_attempt_at`、`error` 保存失败重试状态。不建立 material 外键，以保留删除或合并后旧搜索文档的删除待办。
+- `search_sync_state`：`id=1` 单例，`phase`、`generation`、`cursor`、`scanned` 保存临时索引构建和切换进度，`last_success_at`、`error` 提供运行状态。
+- `material`、`material_article_states`、`archive_documents`、`material_identities`、`material_redirects` 的事务内触发器登记变更。正文表示是不可变版本，通过 material 当前版本指针变更触发同步；评估普通激活与 Batch 导入均通过 article state 触发。
+- 独立后台任务批量读取一致的数据库快照，等待 Meilisearch 异步写入成功，再按修订号确认。完整构建与增量写入共用 PostgreSQL session advisory lock；多个 API 实例不会并发交换或覆盖索引。
+
+运维与测试入口见 [文章搜索运维手册](../operations/search-runbook.md)。

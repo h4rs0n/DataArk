@@ -3,6 +3,7 @@ package api
 import (
 	"DataArk/assets"
 	"DataArk/config"
+	"DataArk/search"
 	"context"
 	"embed"
 	"html/template"
@@ -40,6 +41,8 @@ func WebStarter(debugMode bool) {
 	}
 	initDatabase()
 	createSearchIndex()
+	stopSearchSync := search.StartSync(context.Background())
+	defer stopSearchSync()
 	if err := initArchiveQueue(); err != nil {
 		log.Printf("failed to initialize archive task queue: %v", err)
 		return

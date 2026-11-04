@@ -3,6 +3,7 @@ package search
 import (
 	"DataArk/archive"
 	"DataArk/config"
+	"DataArk/database"
 	"context"
 	"encoding/json"
 	"errors"
@@ -46,6 +47,19 @@ func DeleteDocByHTMLPath(ctx context.Context, rawPath string) (*DeleteDocResult,
 	}
 	if fileInfo.IsDir() {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidArchivePath, archivePath.RequestPath)
+	}
+
+	if database.DB() != nil && database.DB().Dialector.Name() == "postgres" {
+		if err := os.Remove(archivePath.AbsPath); err != nil {
+			return nil, err
+		}
+		if err := archive.DeleteArchiveDocumentMetadata(archivePath.Domain, archivePath.Filename); err != nil {
+			return nil, err
+		}
+		if err := archive.DecrementArchiveStat(archivePath.Domain, 1); err != nil {
+			return nil, err
+		}
+		return &DeleteDocResult{Path: archivePath.RequestPath, Domain: archivePath.Domain, Filename: archivePath.Filename, DocumentIDs: []string{}}, nil
 	}
 
 	client := meilisearch.New(config.MEILIHOST, meilisearch.WithAPIKey(config.MEILIAPIKey))

@@ -1,6 +1,6 @@
 # 文档索引
 
-数据库设计已同步至仓库 Goose `000046`；2026-10-20 的运行库审计与清理记录见下表，当时运行库部署至 `000045`。其余现行文档此前核对于 2026-10-14。部署状态、历史测试结果和模型效果需要在对应环境另行验证。
+数据库设计已同步至仓库 Goose `000048`；2026-10-20 的运行库审计与清理记录见下表，当时运行库部署至 `000045`。其余现行文档此前核对于 2026-10-14。部署状态、历史测试结果和模型效果需要在对应环境另行验证。
 
 ## 文档清单
 
@@ -13,6 +13,7 @@
 | [文章评估手册](operations/article-assessment-runbook.md) | 手册 | 当前 `article-value-v4` 协议、LLM 评估队列、回填、评估指针回滚及 `000036` 下线迁移 |
 | [文章去重手册](operations/article-dedupe.md) | 手册 | 全库指纹去重与代表文章评估：LSH 聚类、`auto_apply` / `pending_assessment` 编排、运行回滚与故障排查 |
 | [百炼 Batch 评估手册](operations/assessment-batch-runbook.md) | 手册 | 异步评估配置、手动授权、恢复、失败重试、文件清理、容量暂停、回退与重导入工具及变更记录 |
+| [文章搜索运维手册](operations/search-runbook.md) | 手册 | 统一全文索引、自动回填、持久化重试、状态查询与恢复验证 |
 | [前端易错点](references/frontend-pitfalls.md) | 参考 | Arco 组件参数与浏览器验证经验 |
 | [ExecPlan 编写规范](plans.md) | 方法 | 可选的长篇执行规格（ExecPlan）的编写与维护要求 |
 | [已确认异常数据清理](investigation/2026-10-20-confirmed-data-cleanup.md) | 执行记录 | 2026-10-20；备份演练后修复运行数据、隔离污染内容，保留暂停队列和历史审计 |

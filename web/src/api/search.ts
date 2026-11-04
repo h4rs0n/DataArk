@@ -1,6 +1,10 @@
 import { requestEnvelope, requestJSON } from '@/api/client'
 
 export interface SearchHit {
+  id: string
+  materialId: number
+  archived: boolean
+  archivePath: string
   title: string
   filename: string
   link: string

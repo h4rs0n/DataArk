@@ -3,6 +3,7 @@ package search
 import (
 	"DataArk/archive"
 	"DataArk/config"
+	"DataArk/database"
 	"context"
 	"fmt"
 	"io/fs"
@@ -32,6 +33,10 @@ func RebuildRecoverableIndexFromArchive(ctx context.Context) (*RebuildIndexResul
 }
 
 func rebuildIndexFromArchive(ctx context.Context, skipInvalidFiles bool) (*RebuildIndexResult, []ArchiveConsistencyIssue, error) {
+	if db := database.DB(); db != nil && db.Dialector.Name() == "postgres" {
+		return rebuildMaterialIndex(ctx, db, skipInvalidFiles)
+	}
+
 	client := meilisearch.New(config.MEILIHOST, meilisearch.WithAPIKey(config.MEILIAPIKey))
 	if err := recreateBlogsIndex(ctx, client); err != nil {
 		return nil, nil, err
