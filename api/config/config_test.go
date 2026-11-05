@@ -36,3 +36,18 @@ func TestValidateRequiredLLM(t *testing.T) {
 		t.Fatalf("valid config: %v", err)
 	}
 }
+
+func TestInvalidBatchConfigurationDoesNotInvalidateRealtimeLLM(t *testing.T) {
+	oldProvider, oldBase, oldModel, oldMode := LLMBATCHPROVIDER, LLMBASEURL, LLMCHATMODEL, ARTICLEASSESSMENTMODE
+	t.Cleanup(func() {
+		LLMBATCHPROVIDER, LLMBASEURL, LLMCHATMODEL, ARTICLEASSESSMENTMODE = oldProvider, oldBase, oldModel, oldMode
+	})
+	LLMBATCHPROVIDER = "invalid-provider"
+	LLMBASEURL, LLMCHATMODEL, ARTICLEASSESSMENTMODE = "http://llm.invalid", "fixture", "active"
+	if err := ValidateRequiredLLM(); err != nil {
+		t.Fatalf("Batch blocked realtime config: %v", err)
+	}
+	if err := ValidateBatchLLM(); err == nil {
+		t.Fatal("invalid Batch configuration accepted at Batch boundary")
+	}
+}

@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"DataArk/jobqueue"
+	"DataArk/material"
 	"context"
 	"fmt"
 	"time"
@@ -9,11 +10,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// A material is usable when it has a ready candidate or no discovery candidates.
-// Crawl restrictions do not change the usability of retained content.
+// A retained article is usable independently of any discovery fetch status.
 func usableDedupeMaterialSQL(materialAlias string) string {
-	return `(NOT EXISTS (SELECT 1 FROM discovery_candidates uc WHERE uc.material_id=` + materialAlias + `.id)
- OR EXISTS (SELECT 1 FROM discovery_candidates uc WHERE uc.material_id=` + materialAlias + `.id AND uc.processing_state='ready'))`
+	return material.ArticleReadySQL(materialAlias + ".id")
 }
 
 // A full sweep computes canonical candidates and current usable articles once.
@@ -23,7 +22,7 @@ func dedupeRecoveryCandidates(database *gorm.DB, runID uint) *gorm.DB {
 	return database.Raw(`WITH ready AS MATERIALIZED (
  SELECT material_id, MIN(id) AS candidate_id,
  MAX(CASE WHEN dedupe_state<>'ready' THEN 1 ELSE 0 END) AS pending
- FROM discovery_candidates WHERE processing_state='ready' GROUP BY material_id
+ FROM discovery_candidates WHERE material_id IS NOT NULL GROUP BY material_id
 ), current_articles AS MATERIALIZED (
  SELECT r.id AS representation_id, m.id AS material_id, r.version_id,
  COALESCE(ready.candidate_id,0) AS candidate_id, COALESCE(ready.pending,0) AS pending
@@ -31,7 +30,7 @@ func dedupeRecoveryCandidates(database *gorm.DB, runID uint) *gorm.DB {
  JOIN material_article_states s ON s.material_id=m.id
  LEFT JOIN ready ON ready.material_id=m.id
  WHERE r.kind='text' AND r.role='body' AND r.text<>''
- AND (ready.candidate_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.material_id=m.id))
+ AND EXISTS (SELECT 1 FROM material_versions v WHERE v.id=m.current_version_id AND v.material_id=m.id AND v.version=s.content_version)
 ), representatives AS MATERIALIZED (
  SELECT d.representation_id FROM article_dedupe_members d
  JOIN current_articles a ON a.representation_id=d.representation_id
@@ -57,7 +56,7 @@ func qualifiedDedupeRepresentatives(database *gorm.DB, runID uint) *gorm.DB {
 		Joins("JOIN material_article_states ps ON ps.material_id=pm.id").
 		Where("rd.run_id=? AND rd.applied AND (rd.representation_id=rd.representative_id) IS TRUE", runID).
 		Where("pr.kind='text' AND pr.role='body' AND pr.text<>''").
-		Where("CASE WHEN rd.candidate_id=COALESCE((SELECT MIN(pc.id) FROM discovery_candidates pc WHERE pc.material_id=pm.id AND pc.processing_state='ready'),0) THEN TRUE ELSE FALSE END").
+		Where("CASE WHEN rd.candidate_id=COALESCE((SELECT MIN(pc.id) FROM discovery_candidates pc WHERE pc.material_id=pm.id),0) THEN TRUE ELSE FALSE END").
 		Where(usableDedupeMaterialSQL("pm"))
 }
 
@@ -87,7 +86,7 @@ func suppressedDedupeAssessmentTargets(database *gorm.DB, runID uint, targets []
 
 // PendingAssessmentTargets avoids expanding the candidate details view, which
 // joins material a second time for the dedupe gate and can project article text.
-// The existing projection-level gate and current-version semantics are retained.
+// Current-version and dedupe gates remain; crawl retry times do not delay assessment.
 func PendingAssessmentTargets(ctx context.Context, database *gorm.DB, requireDedupeReady bool, dueAt *time.Time) ([]jobqueue.AssessmentTarget, error) {
 	database = database.WithContext(ctx)
 	query, err := pendingAssessmentTargetsQuery(database, requireDedupeReady, dueAt)
@@ -117,14 +116,12 @@ func pendingAssessmentTargetsQuery(database *gorm.DB, requireDedupeReady bool, d
 	query := database.Table("discovery_candidates").Select("discovery_candidates.material_id, s.content_version").
 		Joins("JOIN material m ON m.id=discovery_candidates.material_id").
 		Joins("JOIN material_article_states s ON s.material_id=discovery_candidates.material_id").
-		Where("discovery_candidates.processing_state='ready' AND s.assessment_state='pending'").
+		Where("s.assessment_state='pending'").Where(material.ArticleReadySQL("discovery_candidates.material_id")).
 		Where(DedupeRepresentativeClause("discovery_candidates."))
 	if requireDedupeReady {
 		query = query.Where("discovery_candidates.dedupe_state='ready'")
 	}
-	if dueAt != nil {
-		query = query.Where("discovery_candidates.next_processing_at IS NULL OR discovery_candidates.next_processing_at<=?", *dueAt)
-	}
+
 	if setting.Mode == "active" && setting.ActiveRunID != 0 {
 		// Material/version IDs are correlated, but PostgreSQL cannot collect
 		// cross-table statistics for their two equalities. Keep the version
@@ -134,7 +131,7 @@ func pendingAssessmentTargetsQuery(database *gorm.DB, requireDedupeReady bool, d
  AND d.material_id=discovery_candidates.material_id AND CASE WHEN d.version_id=m.current_version_id THEN TRUE ELSE FALSE END AND d.applied
  AND (d.representation_id=d.representative_id) IS TRUE)`, setting.ActiveRunID)
 	} else if setting.Mode == "exact" {
-		query = query.Where("discovery_candidates.id=(SELECT MIN(fc.id) FROM discovery_candidates fc WHERE fc.material_id=discovery_candidates.material_id AND fc.processing_state='ready')")
+		query = query.Where("discovery_candidates.id=(SELECT MIN(fc.id) FROM discovery_candidates fc WHERE fc.material_id=discovery_candidates.material_id)")
 	}
 	return query.Order("discovery_candidates.id"), nil
 }

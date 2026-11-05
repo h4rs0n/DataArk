@@ -1,12 +1,15 @@
 package auth
 
 import (
+	"DataArk/config"
+	"github.com/golang-jwt/jwt/v5"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestGenerateValidateAndRevokeToken(t *testing.T) {
+	setupTokenSecret(t)
 	oldExpiration := tokenExpiration
 	t.Cleanup(func() {
 		tokenExpiration = oldExpiration
@@ -45,6 +48,7 @@ func TestGenerateValidateAndRevokeToken(t *testing.T) {
 }
 
 func TestTokenErrorBranches(t *testing.T) {
+	setupTokenSecret(t)
 	if _, err := GenerateToken(nil); err == nil {
 		t.Fatal("GenerateToken(nil) should return error")
 	}
@@ -66,6 +70,7 @@ func TestTokenErrorBranches(t *testing.T) {
 }
 
 func TestExpiredTokenBranches(t *testing.T) {
+	setupTokenSecret(t)
 	oldExpiration := tokenExpiration
 	t.Cleanup(func() {
 		tokenExpiration = oldExpiration
@@ -105,6 +110,7 @@ func TestExtractTokenFromHeader(t *testing.T) {
 }
 
 func TestTokenDatabaseHelpers(t *testing.T) {
+	setupTokenSecret(t)
 	setupSQLiteDB(t)
 	oldExpiration := tokenExpiration
 	t.Cleanup(func() {
@@ -154,5 +160,54 @@ func TestTokenDatabaseHelpers(t *testing.T) {
 	}
 	if _, err := RefreshToken(longLived.Token); err == nil || !strings.Contains(err.Error(), "refresh not needed") {
 		t.Fatalf("RefreshToken long-lived err = %v", err)
+	}
+}
+
+func setupTokenSecret(t *testing.T) {
+	t.Helper()
+	old := config.JWTSecret
+	config.JWTSecret = strings.Repeat("fixture-auth-key-", 3)
+	t.Cleanup(func() { config.JWTSecret = old })
+}
+
+func TestTokenSecretIsIndependentAndRequired(t *testing.T) {
+	setupTokenSecret(t)
+	oldSearch := config.MEILIAPIKey
+	t.Cleanup(func() { config.MEILIAPIKey = oldSearch })
+	user := &User{ID: 42, Username: "independent"}
+	response, err := GenerateToken(user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.MEILIAPIKey = "rotated-search-credential"
+	if _, err := ValidateToken(response.Token); err != nil {
+		t.Fatalf("search rotation invalidated login: %v", err)
+	}
+	legacy, err := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{UserID: 42}).SignedString([]byte(config.MEILIAPIKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateToken(legacy); err == nil {
+		t.Fatal("accepted search-signed token")
+	}
+	otherAlgorithm, err := jwt.NewWithClaims(jwt.SigningMethodHS512, &Claims{UserID: 42}).SignedString([]byte(config.JWTSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateToken(otherAlgorithm); err == nil {
+		t.Fatal("accepted other signing algorithm")
+	}
+	config.JWTSecret = strings.Repeat("rotated-auth-key-", 3)
+	if _, err := ValidateToken(response.Token); err == nil {
+		t.Fatal("accepted token after JWT rotation")
+	}
+	for _, invalid := range []string{"", "short", strings.Repeat(" ", 32)} {
+		config.JWTSecret = invalid
+		if _, err := GenerateToken(user); err == nil {
+			t.Fatal("signed with invalid secret")
+		}
+		if _, err := ValidateToken(response.Token); err == nil {
+			t.Fatal("validated with invalid secret")
+		}
 	}
 }

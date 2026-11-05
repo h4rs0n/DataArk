@@ -2,6 +2,7 @@ package assessment
 
 import (
 	"DataArk/discovery"
+	"DataArk/material"
 	"context"
 	"errors"
 	"fmt"
@@ -44,7 +45,7 @@ func PrepareArticleAssessmentBackfill(ctx context.Context, assessor ArticleAsses
 
 	limit := normalizeArticleAssessmentBatchLimit(options.Limit)
 	query := discovery.Candidates(db.WithContext(ctx)).Model(&discovery.DiscoveryCandidate{}).
-		Where("processing_state = ? AND dedupe_state = ? AND content_version > 0", discovery.DiscoveryProcessingReady, discovery.DiscoveryDedupeReady).
+		Where(material.ArticleReadySQL("discovery_candidates.material_id")).Where("dedupe_state = ?", discovery.DiscoveryDedupeReady).
 		Where(`NOT EXISTS (
 SELECT 1 FROM discovery_article_assessments active
 WHERE active.id = discovery_candidates.current_assessment_id

@@ -3,6 +3,7 @@ package assessment
 import (
 	"DataArk/discovery"
 	"DataArk/jobqueue"
+	"DataArk/material"
 	"context"
 	"strconv"
 	"time"
@@ -18,6 +19,9 @@ type ArticleJobEnqueuer interface {
 func RecoverDueJobs(ctx context.Context, queue ArticleJobEnqueuer, now time.Time) error {
 	if db == nil || queue == nil {
 		return nil
+	}
+	if err := RecoverCrawlContaminatedAssessments(ctx); err != nil {
+		return err
 	}
 	targets, err := discovery.PendingAssessmentTargets(ctx, db, true, &now)
 	if err != nil {
@@ -38,6 +42,10 @@ func EnqueuePending(ctx context.Context, queue ArticleJobEnqueuer, candidateID u
 	// Discovery candidates do not own a material until extraction is accepted.
 	if candidate.MaterialID == 0 {
 		return nil
+	}
+	ready, err := material.ArticleReady(db.WithContext(ctx), candidate.MaterialID)
+	if err != nil || !ready {
+		return err
 	}
 	qualification, err := discovery.ArticleDedupeQualification(db.WithContext(ctx), candidate.MaterialID)
 	if err != nil {

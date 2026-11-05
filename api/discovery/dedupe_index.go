@@ -39,12 +39,12 @@ func dedupeArticles(database *gorm.DB) *gorm.DB {
 	return database.Table("material_representations r").
 		Select(`r.id AS representation_id, m.id AS material_id, r.version_id, v.version AS content_version,
   r.text, r.content_hash, COALESCE((SELECT MIN(c.id) FROM discovery_candidates c
-  WHERE c.material_id=m.id AND c.processing_state='ready'),0) AS candidate_id`).
+  WHERE c.material_id=m.id),0) AS candidate_id`).
 		Joins("JOIN material m ON m.current_version_id=r.version_id").
 		Joins("JOIN material_versions v ON v.id=r.version_id").
 		Joins("JOIN material_article_states s ON s.material_id=m.id").
 		Where("r.kind = ? AND r.role = ? AND r.text <> ''", "text", "body").
-		Where("NOT EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.material_id=m.id) OR EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.material_id=m.id AND c.processing_state='ready')")
+		Where(material.ArticleReadySQL("m.id"))
 }
 func loadDedupeArticle(database *gorm.DB, representationID uint) (dedupeArticle, error) {
 	var article dedupeArticle
@@ -87,7 +87,7 @@ func RegisterCandidateDedupe(ctx context.Context, candidateID uint) error {
 	if err := db.WithContext(ctx).First(&candidate, candidateID).Error; err != nil {
 		return err
 	}
-	if candidate.ProcessingState != DiscoveryProcessingReady {
+	if !candidate.HasArticleContent() {
 		return nil
 	}
 	var article dedupeArticle
@@ -180,14 +180,7 @@ func hasValidDedupeAssessment(database *gorm.DB, article dedupeArticle) (bool, e
 	return count > 0, err
 }
 func usableDedupeArticle(database *gorm.DB, article dedupeArticle) (bool, error) {
-	if article.CandidateID == 0 {
-		return true, nil
-	}
-	var candidate DiscoveryCandidate
-	if err := database.First(&candidate, article.CandidateID).Error; err != nil {
-		return false, err
-	}
-	return candidate.ProcessingState == DiscoveryProcessingReady, nil
+	return material.ArticleReady(database, article.MaterialID)
 }
 
 func selectDedupeRepresentative(database *gorm.DB, articles []dedupeArticle, current uint) (dedupeArticle, error) {
@@ -530,7 +523,7 @@ func FilterDedupeAssessmentCandidates(query *gorm.DB) (*gorm.DB, error) {
   WHERE d.run_id=? AND d.material_id=discovery_candidates.material_id AND (d.representation_id=d.representative_id) IS TRUE AND d.applied=?)`, setting.ActiveRunID, true)
 	} else if setting.Mode == "exact" {
 		// Rollback disables near-duplicate suppression without undoing strong identities.
-		query = query.Where("discovery_candidates.id=(SELECT MIN(c.id) FROM discovery_candidates c WHERE c.material_id=discovery_candidates.material_id AND c.processing_state='ready')")
+		query = query.Where("discovery_candidates.id=(SELECT MIN(c.id) FROM discovery_candidates c WHERE c.material_id=discovery_candidates.material_id)")
 	}
 	return query, nil
 }

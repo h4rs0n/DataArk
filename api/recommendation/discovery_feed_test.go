@@ -231,7 +231,7 @@ func TestDiscoveryFeedRefreshAllowsMaterialContentUpdate(t *testing.T) {
 	if len(first.Items) != 1 {
 		t.Fatalf("first feed items = %#v", first.Items)
 	}
-	if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{"content_version": candidate.ContentVersion + 1}).Error; err != nil {
+	if err := discovery.UpdateCandidates(db.Model(&candidate), map[string]interface{}{"content_version": candidate.ContentVersion + 1, "body_text": candidate.BodyText + " changed version"}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -361,5 +361,21 @@ func TestDiscoveryFeedRefreshFailsWithoutWritingBatch(t *testing.T) {
 	}
 	if current.Batch != nil || len(current.Items) != 0 {
 		t.Fatalf("failed refresh wrote a batch: %#v", current)
+	}
+}
+
+func TestRetainedArticleRemainsRecommendableDuringCrawlFailure(t *testing.T) {
+	setupSQLiteDB(t)
+	candidate := createDiscoveryFeedCandidates(t, 1)[0]
+	if err := db.Model(&DiscoveryCandidate{}).Where("id=?", candidate.ID).Updates(map[string]interface{}{"processing_state": "failed", "processing_error_type": "timeout", "next_processing_at": time.Now().Add(time.Hour)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := GetCandidateInventory(5001)
+	if err != nil || inventory.EligibleCandidates != 1 {
+		t.Fatalf("crawl failure changed inventory: %+v %v", inventory, err)
+	}
+	feed, err := RefreshDiscoveryFeed(context.Background(), 5001, 10)
+	if err != nil || len(feed.Items) != 1 || feed.Items[0].CandidateID != candidate.ID {
+		t.Fatalf("retained content disappeared: %+v %v", feed, err)
 	}
 }

@@ -224,7 +224,7 @@ func TestRecoverDueJobsSkipsBlacklistedFetchesButRecoversRetainedContent(t *test
 		t.Fatal(err)
 	}
 	blockedCandidate := DiscoveryCandidate{SourceID: blockedSource.ID, SourceName: blockedSource.Name, URL: "https://blocked.example/article", CrawlHost: "blocked.example", Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingFetchPending, EligibilityState: DiscoveryEligibilityUnknown, LastSeenAt: now}
-	readyCandidate := DiscoveryCandidate{SourceID: blockedSource.ID, SourceName: blockedSource.Name, URL: "https://blocked.example/ready", CrawlHost: "blocked.example", Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingReady, EligibilityState: DiscoveryEligibilityUnknown, DedupeState: DiscoveryDedupePending, ContentHash: "hash", LastSeenAt: now}
+	readyCandidate := DiscoveryCandidate{SourceID: blockedSource.ID, SourceName: blockedSource.Name, URL: "https://blocked.example/ready", CrawlHost: "blocked.example", Status: DiscoveryCandidateStatusNew, ProcessingState: DiscoveryProcessingReady, EligibilityState: DiscoveryEligibilityUnknown, DedupeState: DiscoveryDedupePending, ContentVersion: 1, BodyText: "Retained accepted article body for dedupe recovery.", ContentHash: "hash", LastSeenAt: now}
 	if err := db.Create(&blockedCandidate).Error; err != nil {
 		t.Fatal(err)
 	}

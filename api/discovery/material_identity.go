@@ -13,7 +13,7 @@ func bindCandidateMaterialIdentities(tx *gorm.DB, candidate DiscoveryCandidate) 
 		return 0, nil
 	}
 	values := []string{candidate.URL, candidate.NormalizedURL}
-	if candidate.FetchedAt != nil || candidate.ProcessingState == DiscoveryProcessingReady {
+	if candidate.FetchedAt != nil || candidate.HasArticleContent() {
 		values = append(values, candidate.FinalURL)
 		finalDomain, _ := domainKeyForURL(candidate.FinalURL)
 		canonicalDomain, _ := domainKeyForURL(candidate.CanonicalURL)
@@ -34,7 +34,7 @@ func bindCandidateMaterialIdentities(tx *gorm.DB, candidate DiscoveryCandidate) 
 			return 0, err
 		}
 	}
-	if len([]rune(strings.TrimSpace(candidate.BodyText))) >= 120 && candidate.ProcessingState == DiscoveryProcessingReady {
+	if len([]rune(strings.TrimSpace(candidate.BodyText))) >= 120 && candidate.HasArticleContent() {
 		var err error
 		id, err = material.BindIdentity(tx, id, "text:sha256-text-v1", material.TextHash(candidate.BodyText))
 		if err != nil {

@@ -61,7 +61,7 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 	}
 	// 抽取完成但去重未完成：只补去重并交接评估，避免重复抓取。
 	// 已 pending 的评估不在这里短路，否则正文更新无法再进入抽取。
-	if candidate.ProcessingState == DiscoveryProcessingReady && candidate.DedupeState == DiscoveryDedupePending && candidate.ContentHash != "" {
+	if candidate.HasArticleContent() && candidate.DedupeState == DiscoveryDedupePending && candidate.ContentHash != "" {
 		if active, err := DedupeActive(); err != nil {
 			return err
 		} else if active {
@@ -123,6 +123,14 @@ func ProcessCandidate(ctx context.Context, candidateID uint, expectedVersion str
 	if err := commitExtractedArticle(candidate.ID, expected, finalURL, response.FetchedAt, article, now); err != nil {
 		return err
 	}
+	// An unchanged body with completed dedupe needs no repeated invalidation.
+	var committed DiscoveryCandidate
+	if err := db.First(&committed, candidate.ID).Error; err != nil {
+		return err
+	}
+	if committed.ContentVersion == candidate.ContentVersion && committed.DedupeState == DiscoveryDedupeReady {
+		return nil
+	}
 	if active, err := DedupeActive(); err != nil {
 		return err
 	} else if active {
@@ -144,7 +152,7 @@ func enqueueCandidateForAssessment(ctx context.Context, candidateID uint) error 
 	if err := db.First(&candidate, candidateID).Error; err != nil {
 		return err
 	}
-	if candidate.ProcessingState != DiscoveryProcessingReady {
+	if !candidate.HasArticleContent() {
 		return nil
 	}
 	if candidate.RepresentativeID != nil && *candidate.RepresentativeID != candidate.ID {
@@ -196,13 +204,13 @@ func recordCandidateDomainBlock(candidate *DiscoveryCandidate, fetchErr error, n
 	if candidate.ProcessingState == DiscoveryProcessingReady || candidate.ExtractedAt != nil {
 		state = DiscoveryProcessingReady
 	}
-	if err := db.Model(&DiscoveryCandidate{}).Where("id = ?", candidate.ID).Updates(map[string]interface{}{
+	if err := updateCandidateCrawlResult(candidate, map[string]interface{}{
 		"processing_state":      gorm.Expr("CASE WHEN processing_state = ? OR extracted_at IS NOT NULL THEN ? ELSE ? END", DiscoveryProcessingReady, DiscoveryProcessingReady, state),
 		"processing_error_type": processingErrorDomainBlacklist,
 		"processing_error":      message,
 		"next_processing_at":    nil,
 		"updated_at":            now,
-	}).Error; err != nil {
+	}); err != nil {
 		return err
 	}
 	return fetchErr
@@ -221,14 +229,14 @@ func recordCandidateFetchFailure(candidate *DiscoveryCandidate, fetchErr error, 
 		maximumAttempts = 5
 	}
 	if int(candidate.ProcessingAttempts) >= maximumAttempts {
-		updates := candidateFailureUpdates(DiscoveryProcessingFailed, DiscoveryEligibilityReview, category, fetchErr.Error(), now)
+		updates := candidateFailureUpdates(DiscoveryProcessingFailed, category, fetchErr.Error(), now)
 		updates["next_processing_at"] = nil
-		return UpdateCandidate(db, candidate.ID, updates).Error
+		return updateCandidateCrawlResult(candidate, updates)
 	}
 	next := now.Add(candidateRetryDelay(candidate.ProcessingAttempts))
-	updates := candidateFailureUpdates(DiscoveryProcessingFetchPending, DiscoveryEligibilityUnknown, category, fetchErr.Error(), now)
+	updates := candidateFailureUpdates(DiscoveryProcessingFetchPending, category, fetchErr.Error(), now)
 	updates["next_processing_at"] = &next
-	if err := UpdateCandidate(db, candidate.ID, updates).Error; err != nil {
+	if err := updateCandidateCrawlResult(candidate, updates); err != nil {
 		return err
 	}
 	return fetchErr
@@ -253,23 +261,20 @@ func candidateRetryDelay(attempt uint) time.Duration {
 }
 
 func finishCandidateIneligible(candidate *DiscoveryCandidate, category string, summary string, now time.Time) error {
-	updates := candidateFailureUpdates(DiscoveryProcessingIneligible, DiscoveryEligibilityIneligible, category, summary, now)
+	updates := candidateFailureUpdates(DiscoveryProcessingIneligible, category, summary, now)
 	updates["next_processing_at"] = nil
-	updates["eligibility_reasons"] = category
-	return UpdateCandidate(db, candidate.ID, updates).Error
+	return updateCandidateCrawlResult(candidate, updates)
 }
 
 func finishCandidateReview(candidate *DiscoveryCandidate, category string, summary string, now time.Time) error {
-	updates := candidateFailureUpdates(DiscoveryProcessingReview, DiscoveryEligibilityReview, category, summary, now)
+	updates := candidateFailureUpdates(DiscoveryProcessingReview, category, summary, now)
 	updates["next_processing_at"] = nil
-	updates["eligibility_reasons"] = category
-	return UpdateCandidate(db, candidate.ID, updates).Error
+	return updateCandidateCrawlResult(candidate, updates)
 }
 
-func candidateFailureUpdates(processingState string, eligibilityState string, category string, summary string, now time.Time) map[string]interface{} {
+func candidateFailureUpdates(processingState string, category string, summary string, now time.Time) map[string]interface{} {
 	return map[string]interface{}{
 		"processing_state":      processingState,
-		"eligibility_state":     eligibilityState,
 		"processing_error_type": strings.TrimSpace(category),
 		"processing_error":      compactProcessingError(summary),
 		"updated_at":            now,
@@ -295,6 +300,17 @@ func commitExtractedArticle(candidateID uint, expectedVersion uint, finalURL str
 		var current DiscoveryCandidate
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, candidateID).Error; err != nil {
 			return err
+		}
+		// Different URL candidates can share one material. Serialize their version
+		// check with the material append, not just with this candidate row.
+		if current.MaterialID != 0 {
+			var core material.Material
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&core, current.MaterialID).Error; err != nil {
+				return err
+			}
+			if err := tx.First(&current, candidateID).Error; err != nil {
+				return err
+			}
 		}
 		if current.ContentVersion != expectedVersion {
 			return nil
@@ -322,14 +338,26 @@ func commitExtractedArticle(candidateID uint, expectedVersion uint, finalURL str
 			"content_version": contentVersion, "fetched_at": fetchedAt, "extracted_at": now,
 			"processing_state": DiscoveryProcessingReady, "processing_attempts": 0,
 			"processing_error": "", "processing_error_type": "", "next_processing_at": nil,
-			"eligibility_state": DiscoveryEligibilityUnknown, "eligibility_reasons": "dedupe_pending,assessment_pending",
-			"dedupe_state": DiscoveryDedupePending, "assessment_state": DiscoveryAssessmentPending,
 			"updated_at": now,
 		}
-		if summary := archive.BuildSummary(article.Description, 260); summary != "" {
+		if !bodyChanged {
+			// Keep assessed metadata and all downstream state for an unchanged body.
+			for _, key := range []string{"title", "body_text", "author", "language", "word_count", "content_hash", "content_version"} {
+				delete(updates, key)
+			}
+		}
+		if bodyChanged {
+			updates["eligibility_state"] = DiscoveryEligibilityUnknown
+			updates["eligibility_reasons"] = "dedupe_pending,assessment_pending"
+			updates["dedupe_state"] = DiscoveryDedupePending
+			updates["assessment_state"] = DiscoveryAssessmentPending
+			updates["current_assessment_id"] = nil
+			updates["assessment_error"] = ""
+		}
+		if summary := archive.BuildSummary(article.Description, 260); bodyChanged && summary != "" {
 			updates["summary"] = summary
 		}
-		if article.PublishedAt != nil {
+		if bodyChanged && article.PublishedAt != nil {
 			updates["published_at"] = article.PublishedAt
 			updates["published_confidence"] = "article_metadata"
 		}
@@ -338,6 +366,9 @@ func commitExtractedArticle(candidateID uint, expectedVersion uint, finalURL str
 		}
 		if err := UpdateCandidate(tx, current.ID, updates).Error; err != nil {
 			return err
+		}
+		if !bodyChanged {
+			return nil
 		}
 		var mapping material.CandidateVersion
 		if err := tx.First(&mapping, "candidate_id = ? AND content_version = ?", current.ID, contentVersion).Error; err != nil {
@@ -363,4 +394,19 @@ func resolveArticleCanonicalURL(finalURL string, canonicalURL string) string {
 		return normalized
 	}
 	return canonicalURL
+}
+
+// Only crawl columns may be passed here. Check the shared version while holding
+// the candidate lock so a late failure cannot overwrite a newer successful fetch.
+func updateCandidateCrawlResult(candidate *DiscoveryCandidate, values map[string]interface{}) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var current DiscoveryCandidate
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, candidate.ID).Error; err != nil {
+			return err
+		}
+		if current.ContentVersion != candidate.ContentVersion {
+			return nil
+		}
+		return tx.Model(&DiscoveryCandidate{}).Where("id=?", candidate.ID).Updates(values).Error
+	})
 }

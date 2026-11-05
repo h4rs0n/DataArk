@@ -82,6 +82,9 @@ func runnableBatches(ctx context.Context, run *BatchRun) *gorm.DB {
 }
 
 func StartBatchRun(ctx context.Context) error {
+	if err := BatchRuntimeReady(ctx); err != nil {
+		return err
+	}
 	if !config.BatchEnabled() {
 		return fmt.Errorf("Batch is not configured")
 	}
@@ -130,6 +133,9 @@ func StartBatchRun(ctx context.Context) error {
 // RecoverBatchJobs is also used on a timer so a failed scheduling operation
 // cannot strand durable runs. It never authorizes a new run.
 func RecoverBatchJobs(ctx context.Context) error {
+	if err := BatchRuntimeReady(ctx); err != nil {
+		return err
+	}
 	if db == nil || !db.Migrator().HasTable(&BatchRun{}) {
 		return nil
 	}
@@ -160,6 +166,9 @@ func RecoverBatchJobs(ctx context.Context) error {
 	return transfer.EnqueueBatchTick(ctx, time.Now())
 }
 func ProcessBatchTick(ctx context.Context) error {
+	if err := BatchRuntimeReady(ctx); err != nil {
+		return err
+	}
 	if db == nil {
 		return fmt.Errorf("assessment database unavailable")
 	}
@@ -385,16 +394,14 @@ func batchCandidate(tx *gorm.DB, item BatchItem) (discovery.DiscoveryCandidate, 
 	if err != nil || !allowed {
 		return discovery.DiscoveryCandidate{}, false, err
 	}
-	var candidate discovery.DiscoveryCandidate
-	query := discovery.Candidates(tx).Where("material_id=?", item.MaterialID)
-	result := query.Order("id").Limit(1).Find(&candidate)
-	if result.Error != nil {
-		return candidate, false, result.Error
+	candidate, ready, err := loadMaterialArticle(tx, item.MaterialID)
+	if err != nil || !ready {
+		return candidate, false, err
 	}
-	if result.RowsAffected == 0 {
+	if candidate.ContentVersion != item.ContentVersion {
 		return candidate, false, nil
 	}
-	if candidate.ProcessingState != discovery.DiscoveryProcessingReady || candidate.DedupeState != discovery.DiscoveryDedupeReady {
+	if candidate.DedupeState != discovery.DiscoveryDedupeReady {
 		return candidate, false, nil
 	}
 	return candidate, true, nil

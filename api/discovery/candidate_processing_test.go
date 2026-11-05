@@ -226,7 +226,7 @@ func TestProcessCandidateClassifiesNonArticlesAndShortBodies(t *testing.T) {
 		if err := db.First(&candidate, candidate.ID).Error; err != nil {
 			t.Fatal(err)
 		}
-		if candidate.ProcessingState != DiscoveryProcessingIneligible || candidate.EligibilityState != DiscoveryEligibilityIneligible || candidate.ProcessingErrorType != wantCategory {
+		if candidate.ProcessingState != DiscoveryProcessingIneligible || candidate.EligibilityState != DiscoveryEligibilityUnknown || candidate.ProcessingErrorType != wantCategory {
 			t.Fatalf("%s states = %q/%q category=%q", rawURL, candidate.ProcessingState, candidate.EligibilityState, candidate.ProcessingErrorType)
 		}
 	}
@@ -267,7 +267,7 @@ func TestProcessCandidateRetriesTransientFailuresAndStopsAtBound(t *testing.T) {
 	if err := db.First(&candidate, candidateID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if candidate.ProcessingState != DiscoveryProcessingFailed || candidate.EligibilityState != DiscoveryEligibilityReview || candidate.ProcessingAttempts != 2 || candidate.NextProcessingAt != nil {
+	if candidate.ProcessingState != DiscoveryProcessingFailed || candidate.EligibilityState != DiscoveryEligibilityUnknown || candidate.ProcessingAttempts != 2 || candidate.NextProcessingAt != nil {
 		t.Fatalf("final failure = %#v", candidate)
 	}
 

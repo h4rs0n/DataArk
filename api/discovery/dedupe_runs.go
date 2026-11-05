@@ -209,7 +209,7 @@ func GetDedupeReport(ctx context.Context, id, cursor uint, limit int) (DedupeRep
 		return result, err
 	}
 	members := func() *gorm.DB {
-		return database.Table("article_dedupe_members d").Joins("JOIN material m ON m.id=d.material_id AND m.current_version_id=d.version_id").Where("d.run_id=?", id).Where("NOT EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.material_id=m.id) OR EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.material_id=m.id AND c.processing_state='ready')")
+		return database.Table("article_dedupe_members d").Joins("JOIN material m ON m.id=d.material_id AND m.current_version_id=d.version_id").Where("d.run_id=?", id).Where(material.ArticleReadySQL("m.id"))
 	}
 	if err := members().Where("d.representation_id=d.representative_id").Count(&result.Representatives).Error; err != nil {
 		return result, err
@@ -378,7 +378,7 @@ func applyDedupeGroup(database *gorm.DB, runID, representativeID uint) error {
 
 	var members []dedupe.Member
 	if err := database.Where("run_id=? AND representative_id=?", runID, representativeID).
-		Where("NOT applied OR EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.material_id=article_dedupe_members.material_id AND c.processing_state='ready' AND c.dedupe_state<>'ready')").
+		Where("NOT applied OR EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.material_id=article_dedupe_members.material_id AND c.dedupe_state<>'ready')").
 		Order("representation_id").Find(&members).Error; err != nil {
 		return err
 	}
@@ -925,7 +925,7 @@ func dedupeRecoveryDriftCounts(ctx context.Context, runID uint) (int64, int64, e
 		Joins("JOIN material m ON m.id=c.material_id").
 		Joins("JOIN material_representations r ON r.version_id=m.current_version_id").
 		Joins("JOIN material_article_states s ON s.material_id=m.id").
-		Where("c.processing_state='ready' AND c.dedupe_state<>'ready'").
+		Where("c.dedupe_state<>'ready'").
 		Where("r.kind='text' AND r.role='body' AND r.text<>''").
 		Where(usableDedupeMaterialSQL("m")).Count(&pending).Error
 	return pending, inactive, err

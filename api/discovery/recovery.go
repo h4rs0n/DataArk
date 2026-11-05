@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"DataArk/material"
 	"context"
 	"errors"
 	"strconv"
@@ -84,11 +85,11 @@ next_due_at <= ? OR
 
 	var candidates []DiscoveryCandidate
 	processingStates := []string{"fetch_pending", "extract_pending", "dedupe_pending"}
-	if err := Candidates(db).Select(candidateRecoveryColumns).Where("(processing_state IN ? AND (next_processing_at IS NULL OR next_processing_at <= ?)) OR (processing_state = ? AND dedupe_state = ?)", processingStates, now, DiscoveryProcessingReady, DiscoveryDedupePending).Order("id").Find(&candidates).Error; err != nil {
+	if err := Candidates(db).Select(candidateRecoveryColumns).Where("(processing_state IN ? AND (next_processing_at IS NULL OR next_processing_at <= ?)) OR ("+material.ArticleReadySQL("discovery_candidates.material_id")+" AND dedupe_state = ?)", processingStates, now, DiscoveryDedupePending).Order("id").Find(&candidates).Error; err != nil {
 		recoveryErrors = append(recoveryErrors, err)
 	} else {
 		for _, candidate := range candidates {
-			if candidate.ProcessingState != DiscoveryProcessingReady && domainBlacklistMatchesURL(blacklist, candidate.URL) {
+			if candidate.ContentVersion == 0 && domainBlacklistMatchesURL(blacklist, candidate.URL) {
 				continue
 			}
 			if err := queue.EnqueueProcessCandidate(ctx, candidate.ID, strconv.FormatUint(uint64(candidate.ContentVersion), 10)); err != nil {

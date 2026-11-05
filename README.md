@@ -16,6 +16,8 @@ HTML下载: [SingleFile](https://github.com/gildas-lormeau/SingleFile)
 
 ## 安装/部署
 **使用Docker Compose（推荐）**
+
+先将 `docker/.env.example` 复制为 `docker/.env` 并填写配置。`JWT_SECRET` 留空时，每次启动自动生成一个密码学安全的随机密钥，同一进程内保持不变；重启后需重新登录。若需跨重启保持会话或运行多个实例，可使用 `openssl rand -hex 32` 单独生成并配置固定密钥（至少 32 字节），不与 `MEILI_MASTER_KEY` 共用。首次升级到独立 JWT 密钥后需重新登录。二进制也可直接读取 `JWT_SECRET`，显式 `-jwt-secret` 参数优先。非空但过短的密钥会拒绝启动。轮换搜索密钥不影响登录，轮换 JWT 密钥会使现有会话失效。
 ```
 cd docker
 sudo docker compose build

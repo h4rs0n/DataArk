@@ -11,6 +11,8 @@ import (
 )
 
 func TestMainRunsStartupSequence(t *testing.T) {
+	oldJWTSecret := config.JWTSecret
+	t.Cleanup(func() { config.JWTSecret = oldJWTSecret })
 	oldParseFlags := parseFlags
 	oldStartWeb := startWeb
 	oldConfigureLogging := configureLogging
@@ -41,6 +43,7 @@ func TestMainRunsStartupSequence(t *testing.T) {
 		config.LLMBASEURL = "http://llm.example"
 		config.LLMCHATMODEL = "fixture-chat"
 		config.ARTICLEASSESSMENTMODE = "active"
+		config.JWTSecret = ""
 	}
 	configureLogging = func(dir string, retentionDays int) (io.Closer, error) {
 		if dir != "/fixture/logs" || retentionDays != 9 {
@@ -53,6 +56,9 @@ func TestMainRunsStartupSequence(t *testing.T) {
 		}), nil
 	}
 	startWeb = func(debug bool) {
+		if err := config.ValidateAuth(); err != nil {
+			t.Fatalf("startup did not initialize the default JWT secret: %v", err)
+		}
 		if !debug {
 			t.Fatal("startWeb received debug=false, want true")
 		}
@@ -74,6 +80,8 @@ func TestMainRunsStartupSequence(t *testing.T) {
 }
 
 func TestRunStopsWhenLoggingInitializationFails(t *testing.T) {
+	oldJWTSecret := config.JWTSecret
+	t.Cleanup(func() { config.JWTSecret = oldJWTSecret })
 	oldParseFlags := parseFlags
 	oldStartWeb := startWeb
 	oldConfigureLogging := configureLogging
@@ -87,6 +95,7 @@ func TestRunStopsWhenLoggingInitializationFails(t *testing.T) {
 		config.LLMBASEURL = "http://llm.example"
 		config.LLMCHATMODEL = "fixture-chat"
 		config.ARTICLEASSESSMENTMODE = "active"
+		config.JWTSecret = strings.Repeat("test-secret-", 3)
 	}
 	configureLogging = func(string, int) (io.Closer, error) {
 		return nil, errors.New("permission denied")
@@ -98,6 +107,8 @@ func TestRunStopsWhenLoggingInitializationFails(t *testing.T) {
 }
 
 func TestRunStopsWhenLLMConfigurationIsMissing(t *testing.T) {
+	oldJWTSecret := config.JWTSecret
+	t.Cleanup(func() { config.JWTSecret = oldJWTSecret })
 	oldParseFlags := parseFlags
 	oldStartWeb := startWeb
 	oldConfigureLogging := configureLogging
@@ -163,4 +174,29 @@ type closerFunc func() error
 
 func (closer closerFunc) Close() error {
 	return closer()
+}
+
+func TestRunRejectsShortJWTSecret(t *testing.T) {
+	oldParse, oldStart, oldLogging := parseFlags, startWeb, configureLogging
+	oldSecret, oldBase, oldModel, oldMode := config.JWTSecret, config.LLMBASEURL, config.LLMCHATMODEL, config.ARTICLEASSESSMENTMODE
+	t.Cleanup(func() {
+		parseFlags, startWeb, configureLogging = oldParse, oldStart, oldLogging
+		config.JWTSecret, config.LLMBASEURL, config.LLMCHATMODEL, config.ARTICLEASSESSMENTMODE = oldSecret, oldBase, oldModel, oldMode
+	})
+	startWeb = func(bool) { t.Fatal("started HTTP without valid JWT secret") }
+	configureLogging = func(string, int) (io.Closer, error) {
+		t.Fatal("initialized logging before rejecting invalid authentication configuration")
+		return nil, nil
+	}
+	for _, secret := range []string{"short"} {
+		parseFlags = func() {
+			config.JWTSecret = secret
+			config.LLMBASEURL = "http://llm.invalid"
+			config.LLMCHATMODEL = "fixture"
+			config.ARTICLEASSESSMENTMODE = "active"
+		}
+		if err := run(); err == nil || !strings.Contains(err.Error(), "authentication configuration") {
+			t.Fatalf("invalid auth configuration accepted: %v", err)
+		}
+	}
 }

@@ -45,6 +45,9 @@ func pauseBatchCleanup(ctx context.Context, run *BatchRun, b *Batch, cause error
 // ResumeBatchCleanup schedules file deletion only. It never starts a new inference run
 // or changes the final status of a completed/returned run.
 func ResumeBatchCleanup(ctx context.Context) error {
+	if err := BatchRuntimeReady(ctx); err != nil {
+		return err
+	}
 	if db == nil {
 		return fmt.Errorf("assessment database unavailable")
 	}

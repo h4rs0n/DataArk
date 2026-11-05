@@ -12,9 +12,10 @@ import (
 
 type QueueSnapshot struct {
 	*jobqueue.CrawlQueueSnapshot
-	ExecutionMode string             `json:"executionMode"`
-	BatchRun      *BatchRun          `json:"batchRun,omitempty"`
-	BatchCleanup  *BatchCleanupPause `json:"batchCleanup,omitempty"`
+	BatchUnavailableReason string             `json:"batchUnavailableReason,omitempty"`
+	ExecutionMode          string             `json:"executionMode"`
+	BatchRun               *BatchRun          `json:"batchRun,omitempty"`
+	BatchCleanup           *BatchCleanupPause `json:"batchCleanup,omitempty"`
 }
 
 func BatchRunCounts(ctx context.Context, run *BatchRun) error {
@@ -55,6 +56,17 @@ func DecorateQueue(ctx context.Context, snapshot *jobqueue.CrawlQueueSnapshot) (
 		mode = "batch"
 	}
 	out := &QueueSnapshot{CrawlQueueSnapshot: snapshot, ExecutionMode: mode}
+	if err := BatchRuntimeReady(ctx); err != nil {
+		out.BatchUnavailableReason = err.Error()
+		if config.BatchEnabled() {
+			snapshot.State, snapshot.CanRun = "paused", false
+		}
+	}
+	defer func() {
+		if out.BatchUnavailableReason != "" && config.BatchEnabled() {
+			snapshot.State, snapshot.CanRun = "paused", false
+		}
+	}()
 	if db == nil || !db.Migrator().HasTable(&BatchRun{}) {
 		return out, nil
 	}

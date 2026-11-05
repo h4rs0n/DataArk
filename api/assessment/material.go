@@ -19,40 +19,18 @@ func AssessMaterial(ctx context.Context, id uint, expectedVersion string, assess
 	if err != nil {
 		return err
 	}
-	var state material.ArticleState
-	if err := db.First(&state, "material_id = ?", id).Error; err != nil {
+	candidate, ready, err := loadMaterialArticle(db.WithContext(ctx), id)
+	if err != nil || !ready {
 		return err
 	}
-	if expectedVersion != "" && strconv.FormatUint(uint64(state.ContentVersion), 10) != expectedVersion {
+	if expectedVersion != "" && strconv.FormatUint(uint64(candidate.ContentVersion), 10) != expectedVersion {
 		return nil
 	}
-	reserved, reserveErr := BatchActiveTarget(db.WithContext(ctx), id, strconv.FormatUint(uint64(state.ContentVersion), 10))
-	if reserveErr != nil {
-		return reserveErr
+	reserved, err := BatchActiveTarget(db.WithContext(ctx), id, strconv.FormatUint(uint64(candidate.ContentVersion), 10))
+	if err != nil || reserved {
+		return err
 	}
-	if reserved {
-		return nil
-	}
-	var candidate discovery.DiscoveryCandidate
-	result := discovery.Candidates(db).Where("material_id = ?", id).Order("CASE WHEN representative_id = id THEN 0 ELSE 1 END, id").Limit(1).Find(&candidate)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		var core material.Material
-		if err := db.First(&core, id).Error; err != nil {
-			return err
-		}
-		if core.CurrentVersionID == nil {
-			return nil
-		}
-		var body material.Representation
-		if err := db.Where("version_id = ? AND kind = ? AND role = ?", *core.CurrentVersionID, "text", "body").First(&body).Error; err != nil {
-			return err
-		}
-		candidate = discovery.DiscoveryCandidate{MaterialID: id, Title: core.Title, Summary: core.Summary, BodyText: body.Text, ContentVersion: state.ContentVersion,
-			CurrentAssessmentID: state.CurrentAssessmentID, ProcessingState: discovery.DiscoveryProcessingReady, DedupeState: discovery.DiscoveryDedupeReady}
-	}
+
 	return assessMaterialRecord(ctx, candidate, assessor)
 }
 
@@ -97,4 +75,38 @@ func updateAssessmentMaterial(candidate discovery.DiscoveryCandidate, values map
 	})
 	result.AddError(err)
 	return result
+}
+
+// loadMaterialArticle loads content from its current version. Discovery rows are
+// optional provenance; a failed fetch is never evidence against retained text.
+func loadMaterialArticle(database *gorm.DB, id uint) (discovery.DiscoveryCandidate, bool, error) {
+	var candidate discovery.DiscoveryCandidate
+	author := "json_extract(m.authors, '$[0]') AS author"
+	if database.Dialector.Name() == "postgres" {
+		author = "m.authors->>0 AS author"
+	}
+	// One snapshot pairs the body and state. Separate reads could pair the old
+	// body with a newer version number while another entrypoint commits a refresh.
+	result := database.Table("material m").Select("m.id AS material_id, m.title, m.summary, m.language, m.published_at, m.topics, m.entities, "+author+", s.content_version, s.current_assessment_id, s.assessment_state, s.assessment_error, s.eligibility_state, s.eligibility_reasons, r.text AS body_text, r.content_hash, r.word_count").
+		Joins("JOIN material_versions v ON v.id=m.current_version_id AND v.material_id=m.id").
+		Joins("JOIN material_article_states s ON s.material_id=m.id AND s.content_version=v.version").
+		Joins("JOIN material_representations r ON r.version_id=v.id AND r.kind='text' AND r.role='body'").
+		Where("m.id=? AND r.text<>''", id).Scan(&candidate)
+	if result.Error != nil || result.RowsAffected == 0 {
+		return candidate, false, result.Error
+	}
+	var provenance discovery.DiscoveryCandidate
+	result = discovery.Candidates(database).Select("id, url, normalized_url, final_url, canonical_url, representative_id, dedupe_state, published_confidence").Where("material_id=?", id).
+		Order("CASE WHEN dedupe_state='ready' THEN 0 ELSE 1 END, CASE WHEN representative_id=id THEN 0 ELSE 1 END, id").Limit(1).Find(&provenance)
+	if result.Error != nil {
+		return candidate, false, result.Error
+	}
+	candidate.ID, candidate.URL = provenance.ID, provenance.URL
+	candidate.NormalizedURL, candidate.FinalURL, candidate.CanonicalURL = provenance.NormalizedURL, provenance.FinalURL, provenance.CanonicalURL
+	candidate.RepresentativeID, candidate.PublishedConfidence = provenance.RepresentativeID, provenance.PublishedConfidence
+	candidate.DedupeState = provenance.DedupeState
+	if result.RowsAffected == 0 {
+		candidate.DedupeState = discovery.DiscoveryDedupeReady
+	}
+	return candidate, true, nil
 }

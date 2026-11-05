@@ -3,10 +3,12 @@ package flag
 import (
 	"DataArk/config"
 	stdflag "flag"
+	"os"
 	"strings"
 )
 
 func ParseFlag() {
+	jwtSecretFlag := stdflag.String("jwt-secret", os.Getenv("JWT_SECRET"), "Assign JWT signing secret (at least 32 bytes); empty generates a random key for this process")
 	debugFlag := stdflag.Bool("debug", false, "Enable debug mode")
 	LogDirFlag := stdflag.String("log-dir", "./logs", "Assign service log directory")
 	LogRetentionDaysFlag := stdflag.Int("log-retention-days", 7, "Assign service log retention in local calendar days")
@@ -81,6 +83,7 @@ func ParseFlag() {
 	config.LLMBATCHCONCURRENCY = *batchConcurrency
 	config.LLMBATCHPOLLINTERVAL = strings.TrimSpace(*batchPollInterval)
 	config.LLMBATCHREQUESTTIMEOUT = strings.TrimSpace(*batchRequestTimeout)
+	config.JWTSecret = *jwtSecretFlag
 	config.DEBUG = *debugFlag
 	config.LOGDIR = strings.TrimSpace(*LogDirFlag)
 	config.LOGRETENTIONDAYS = *LogRetentionDaysFlag

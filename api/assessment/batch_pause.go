@@ -42,6 +42,9 @@ func pauseBatchRun(ctx context.Context, run *BatchRun, b *Batch, phase string, c
 // ResumeBatchRun is only called by the owner's explicit queue/run request.
 // Recovery and deferred dedupe release use StartBatchRun, which cannot resume.
 func ResumeBatchRun(ctx context.Context) (bool, error) {
+	if err := BatchRuntimeReady(ctx); err != nil {
+		return false, err
+	}
 	cleanup, err := pausedBatchCleanup(ctx)
 	if err != nil {
 		return false, err

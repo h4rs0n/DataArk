@@ -3,6 +3,7 @@ package recommendation
 import (
 	"DataArk/config"
 	"DataArk/discovery"
+	"DataArk/material"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -280,7 +281,7 @@ WHERE prior_item.user_id = ?
   )
 )`, userID)
 	}
-	return query.Where("discovery_candidates.processing_state = ? AND discovery_candidates.eligibility_state = ?", discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible).
+	return query.Where(material.ArticleReadySQL("discovery_candidates.material_id")).Where("discovery_candidates.eligibility_state = ?", discovery.DiscoveryEligibilityEligible).
 		Where("discovery_candidates.dedupe_state = ?", discovery.DiscoveryDedupeReady).
 		Order("discovery_candidates.quality_score desc, discovery_candidates.last_seen_at desc, discovery_candidates.id asc")
 }
@@ -291,9 +292,9 @@ func populateGlobalSelectionExclusions(excluded map[string]int) error {
 		where string
 		args  []interface{}
 	}{
-		{"processing_not_ready", "processing_state <> ?", []interface{}{discovery.DiscoveryProcessingReady}},
-		{"article_ineligible", "processing_state = ? AND eligibility_state <> ?", []interface{}{discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible}},
-		{"duplicate_non_representative", "processing_state = ? AND eligibility_state = ? AND (dedupe_state <> ? OR (representative_id IS NOT NULL AND representative_id <> id))", []interface{}{discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady}},
+		{"processing_not_ready", "NOT " + material.ArticleReadySQL("discovery_candidates.material_id"), nil},
+		{"article_ineligible", material.ArticleReadySQL("discovery_candidates.material_id") + " AND eligibility_state <> ?", []interface{}{discovery.DiscoveryEligibilityEligible}},
+		{"duplicate_non_representative", material.ArticleReadySQL("discovery_candidates.material_id") + " AND eligibility_state = ? AND (dedupe_state <> ? OR (representative_id IS NOT NULL AND representative_id <> id))", []interface{}{discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady}},
 	}
 	for _, query := range queries {
 		var count int64

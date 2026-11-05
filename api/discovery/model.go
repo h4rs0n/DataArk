@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"DataArk/material"
 	"strings"
 	"time"
 
@@ -135,4 +136,9 @@ func SetDB(database *gorm.DB) *gorm.DB {
 	oldDB := db
 	db = database
 	return oldDB
+}
+
+// HasArticleContent describes retained content, independently of crawl progress.
+func (candidate DiscoveryCandidate) HasArticleContent() bool {
+	return material.ArticleBodyReady(candidate.MaterialID, candidate.ContentVersion, candidate.BodyText)
 }

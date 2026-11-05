@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"DataArk/material"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -45,7 +46,7 @@ func ResolveCandidateDuplicates(ctx context.Context, candidateID uint) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&target, candidateID).Error; err != nil {
 			return err
 		}
-		if target.ProcessingState != DiscoveryProcessingReady || strings.TrimSpace(target.ContentHash) == "" {
+		if !target.HasArticleContent() || strings.TrimSpace(target.ContentHash) == "" {
 			return nil
 		}
 		if _, err := bindCandidateMaterialIdentities(tx, target); err != nil {
@@ -158,7 +159,7 @@ func duplicateMatches(tx *gorm.DB, target DiscoveryCandidate) ([]candidateDuplic
 	maximumSimilarity := 0.0
 	var exactCandidates []DiscoveryCandidate
 	urlValues := candidateURLValues(target)
-	query := Candidates(tx).Where("id <> ? AND processing_state = ?", target.ID, DiscoveryProcessingReady).
+	query := Candidates(tx).Where("id <> ?", target.ID).Where(material.ArticleReadySQL("discovery_candidates.material_id")).
 		Where("content_hash = ? OR canonical_url IN ? OR final_url IN ? OR normalized_url IN ? OR url IN ?", target.ContentHash, urlValues, urlValues, urlValues, urlValues)
 	if err := query.Find(&exactCandidates).Error; err != nil {
 		return nil, strongest, maximumSimilarity, err
@@ -194,7 +195,7 @@ func duplicateMatches(tx *gorm.DB, target DiscoveryCandidate) ([]candidateDuplic
 	}
 	var nearCandidates []DiscoveryCandidate
 	if target.WordCount >= 20 {
-		if err := Candidates(tx).Where("id <> ? AND processing_state = ? AND language = ? AND word_count BETWEEN ? AND ?", target.ID, DiscoveryProcessingReady, target.Language, minimumWords, maximumWords).
+		if err := Candidates(tx).Where("id <> ? AND language = ? AND word_count BETWEEN ? AND ?", target.ID, target.Language, minimumWords, maximumWords).Where(material.ArticleReadySQL("discovery_candidates.material_id")).
 			Order("id").Limit(500).Find(&nearCandidates).Error; err != nil {
 			return nil, strongest, maximumSimilarity, err
 		}
@@ -289,7 +290,7 @@ func chooseDuplicateRepresentative(members []DiscoveryCandidate) (DiscoveryCandi
 
 func duplicateRepresentativeScore(candidate DiscoveryCandidate) int {
 	score := 0
-	if candidate.ProcessingState == DiscoveryProcessingReady {
+	if candidate.HasArticleContent() {
 		score += 1000
 	}
 	canonicalHost := articleHost(candidate.CanonicalURL)

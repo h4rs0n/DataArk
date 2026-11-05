@@ -8,6 +8,8 @@ import (
 )
 
 func TestParseFlagAppliesConfiguration(t *testing.T) {
+	oldSecret := config.JWTSecret
+	t.Cleanup(func() { config.JWTSecret = oldSecret })
 	oldArgs := os.Args
 	oldCommandLine := flag.CommandLine
 	oldLogDir := config.LOGDIR
@@ -126,5 +128,25 @@ func TestParseFlagAppliesConfiguration(t *testing.T) {
 	}
 	if config.ARTICLEASSESSMENTMODE != "active" || config.ARTICLEASSESSMENTCONCURRENCY != 3 {
 		t.Fatalf("unexpected assessment config: mode=%q concurrency=%d", config.ARTICLEASSESSMENTMODE, config.ARTICLEASSESSMENTCONCURRENCY)
+	}
+}
+
+func TestJWTSecretEnvironmentAndFlagPrecedence(t *testing.T) {
+	oldArgs, oldCommand, oldSecret := os.Args, flag.CommandLine, config.JWTSecret
+	t.Cleanup(func() { os.Args, flag.CommandLine, config.JWTSecret = oldArgs, oldCommand, oldSecret })
+	t.Setenv("JWT_SECRET", "environment-only-secret-of-32-bytes")
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"dataark"}, "environment-only-secret-of-32-bytes"},
+		{[]string{"dataark", "-jwt-secret", "explicit-independent-secret-of-32-bytes"}, "explicit-independent-secret-of-32-bytes"},
+	} {
+		flag.CommandLine = flag.NewFlagSet("jwt-test", flag.ContinueOnError)
+		os.Args = tc.args
+		ParseFlag()
+		if config.JWTSecret != tc.want {
+			t.Fatal("JWT secret precedence is incorrect")
+		}
 	}
 }

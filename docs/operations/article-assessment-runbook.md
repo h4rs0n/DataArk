@@ -70,3 +70,11 @@ POST /api/admin/discovery/article-assessments/rollback
 ```
 
 If model quality degrades, stop any active assessment run by stopping the API and restart with the queue paused. Preview and run bounded rollback batches while configuration still matches the model/policy being rolled back, then repair the model configuration. There is no queue-stop HTTP endpoint. Do not switch to observe mode or activate `deterministic_rules`. Preserve production assessment rows and logs for diagnosis.
+
+## 抓取与内容资格边界
+
+抓取进度、错误及重试时间属于发现候选；评估读取共享内容当前版本的已保存正文，不以抓取 `processing_state` 或 `next_processing_at` 决定可用性。已有正文的刷新即使遇到超时、404、robots 限制或抽取校验失败，也保留其版本、评估及去重结果。首次抓取失败只保留抓取诊断，不将尚未接受的正文设为内容不合格。
+
+相同正文哈希只更新抓取记录，保留已评估元数据和资格；真正的新正文版本才使当前评估指针失效并进入去重、评估流程。多个发现入口共享正文，一个入口失败不会使其他入口失去内容资格。
+
+Goose `000049` 将可证明的历史抓取污染记录登记到 `material_crawl_repairs`。评估恢复仅复用与当前正文版本、模型及策略匹配的历史结果，并重新检查去重资格和质量门槛；不会为修复调用模型。正文接受证据不足、模型不符、结果无效或登记后状态已变化的记录不强行恢复。低质量评估仍保持不合格。可查询 `repaired_at IS NULL` 查看尚未完成的修复证据；降级不恢复污染状态。

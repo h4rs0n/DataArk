@@ -15,6 +15,7 @@ services:
       database:
           condition: service_healthy
     command: [
+      "-jwt-secret", "${JWT_SECRET:-}",
       "-log-dir", "/logs",
       "-log-retention-days", "${LOG_RETENTION_DAYS:-7}",
       "-loc", "${ARCHIVE_LOCATION}",

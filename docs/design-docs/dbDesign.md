@@ -1,8 +1,8 @@
 # 数据库设计
 
-本文档描述仓库更新至 Goose `000046` 的 PostgreSQL schema。文中标注的运行库类型与数量是 2026-08-27 的历史快照，不能据此推断生产库已经升级；`000037`–`000046` 的结构以迁移为准；2026-10-20 的运行库审计见 investigation 对应记录，当时部署至 `000045`，不代表 `000046` 已部署。
+本文档描述仓库更新至 Goose `000049` 的 PostgreSQL schema。文中标注的运行库类型与数量是 2026-08-27 的历史快照，不能据此推断生产库已经升级；`000037`–`000046` 的结构以迁移为准；2026-10-20 的运行库审计见 investigation 对应记录，当时部署至 `000045`，不代表 `000046` 已部署。
 
-- 生产 schema **只**由 Goose 编号迁移定义：`api/migrations/000001`–`000044`。
+- 生产 schema **只**由 Goose 编号迁移定义：`api/migrations/000001`–`000049`。
 - 启动路径：`api/bootstrap.InitDB()` → `api/database.InitDB()` 连库 → `RunDatabaseMigrations()`（Goose `Up` + River migrator）。
 - GORM `AutoMigrate` **只给 SQLite 测试当方言替身**，不定义生产 schema。
 - 模型分散在 `api/material`、`api/auth`、`api/archive`、`api/discovery`、`api/assessment`、`api/recommendation`。没有 `api/common/`。
@@ -439,3 +439,9 @@ Meilisearch 是 material 的可重建检索投影，不是正文或归档文件�
 - 独立后台任务批量读取一致的数据库快照，等待 Meilisearch 异步写入成功，再按修订号确认。完整构建与增量写入共用 PostgreSQL session advisory lock；多个 API 实例不会并发交换或覆盖索引。
 
 运维与测试入口见 [文章搜索运维手册](../operations/search-runbook.md)。
+
+## 抓取污染修复证据（Goose 000049）
+
+`material_crawl_repairs` 保存历史抓取错误或相同正文重复抽取造成的共享状态污染证据：`material_id` 为主键并引用 `material(id)`（级联删除），`assessment_id` 为登记时的评估指针快照，`state_updated_at` 用于防止覆盖登记后的状态变化，`repaired_at` 标记证据已处理。评估 ID 是审计快照，不建立级联删除关系。
+
+迁移仅登记具有当前正文、对应版本评估和明确接受证据的记录，不在 SQL 内猜测运行时模型或质量门槛。应用恢复复用有效历史评估；不自动发起模型调用。Down 删除证据表，但不恢复已修正的资格状态。抓取状态仍保存在 `discovery_candidates`，共享内容可用性由当前版本、非空正文及一致的文章版本决定。

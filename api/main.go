@@ -32,6 +32,9 @@ func run() (runErr error) {
 	if err := config.ValidateRequiredLLM(); err != nil {
 		return fmt.Errorf("llm configuration: %w", err)
 	}
+	if err := config.InitializeAuth(); err != nil {
+		return fmt.Errorf("authentication configuration: %w", err)
+	}
 	logRuntime, err := configureLogging(config.LOGDIR, config.LOGRETENTIONDAYS)
 	if err != nil {
 		return fmt.Errorf("initialize logging: %w", err)

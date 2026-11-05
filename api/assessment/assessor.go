@@ -63,7 +63,7 @@ func AssessCandidate(ctx context.Context, candidateID uint, assessor ArticleAsse
 }
 
 func assessMaterialRecord(ctx context.Context, candidate discovery.DiscoveryCandidate, assessor ArticleAssessor) error {
-	if candidate.ProcessingState != discovery.DiscoveryProcessingReady || candidate.DedupeState != discovery.DiscoveryDedupeReady || candidate.ContentVersion == 0 {
+	if !candidate.HasArticleContent() || candidate.DedupeState != discovery.DiscoveryDedupeReady || candidate.ContentVersion == 0 {
 		return nil
 	}
 	qualification, err := discovery.ArticleDedupeQualification(db.WithContext(ctx), candidate.MaterialID)
@@ -214,6 +214,9 @@ func persistArticleAssessmentWithDB(database *gorm.DB, candidate discovery.Disco
 
 // activateArticleAssessment 把一行模型评估设为当前指针，并按质量门槛更新 eligibility。
 func activateArticleAssessment(candidate discovery.DiscoveryCandidate, row ArticleAssessment, result ArticleAssessmentResult, assessmentError string) error {
+	return updateAssessmentMaterial(candidate, assessmentActivationValues(row, result, assessmentError)).Error
+}
+func assessmentActivationValues(row ArticleAssessment, result ArticleAssessmentResult, assessmentError string) map[string]interface{} {
 	threshold := config.DISCOVERYARTICLEQUALITYTHRESHOLD
 	if threshold <= 0 || threshold > 1 {
 		threshold = articlevalue.QualityFloor
@@ -225,12 +228,12 @@ func activateArticleAssessment(candidate discovery.DiscoveryCandidate, row Artic
 		reason = "article_quality_below_threshold"
 	}
 	now := discovery.Timestamp()
-	return updateAssessmentMaterial(candidate, map[string]interface{}{
+	return map[string]interface{}{
 		"current_assessment_id": row.ID, "assessment_state": discovery.DiscoveryAssessmentReady,
 		"assessment_error": assessmentError, "quality_score": clampAssessment(result.Quality),
 		"depth_score": clampAssessment(result.Depth), "eligibility_state": eligibility,
 		"eligibility_reasons": reason, "updated_at": now,
-	}).Error
+	}
 }
 
 func markAssessmentReview(candidate discovery.DiscoveryCandidate, assessmentErr error) error {

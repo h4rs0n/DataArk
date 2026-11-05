@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"DataArk/material"
 	"errors"
 	"time"
 
@@ -97,9 +98,9 @@ func countSiteCandidates(siteID uint, stats *DiscoverySiteOperationalStats) erro
 		args   []interface{}
 	}{
 		{&stats.CandidateCount, "", nil},
-		{&stats.EligibleCandidateCount, "candidates.processing_state = ? AND candidates.eligibility_state = ? AND candidates.dedupe_state = ? AND " + DedupeRepresentativeClause("candidates."), []interface{}{DiscoveryProcessingReady, DiscoveryEligibilityEligible, DiscoveryDedupeReady}},
+		{&stats.EligibleCandidateCount, material.ArticleReadySQL("candidates.material_id") + " AND candidates.eligibility_state = ? AND candidates.dedupe_state = ? AND " + DedupeRepresentativeClause("candidates."), []interface{}{DiscoveryEligibilityEligible, DiscoveryDedupeReady}},
 		{&stats.DuplicateCandidateCount, "candidates.representative_id IS NOT NULL AND candidates.representative_id <> candidates.id", nil},
-		{&stats.ExtractedCandidateCount, "candidates.processing_state = ?", []interface{}{DiscoveryProcessingReady}},
+		{&stats.ExtractedCandidateCount, material.ArticleReadySQL("candidates.material_id"), nil},
 	}
 	for _, query := range queries {
 		var count int64

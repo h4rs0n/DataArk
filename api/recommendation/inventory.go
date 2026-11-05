@@ -4,6 +4,7 @@ import (
 	"DataArk/assessment"
 	"DataArk/config"
 	"DataArk/discovery"
+	"DataArk/material"
 	"time"
 )
 
@@ -44,8 +45,7 @@ func GetCandidateInventory(userID uint) (*CandidateInventory, error) {
 	if filterErr != nil {
 		return nil, filterErr
 	}
-	if err := query.Where("processing_state = ? AND eligibility_state = ? AND dedupe_state = ?",
-		discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady).Find(&candidates).Error; err != nil {
+	if err := query.Where(material.ArticleReadySQL("discovery_candidates.material_id")).Where("eligibility_state = ? AND dedupe_state = ?", discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady).Find(&candidates).Error; err != nil {
 		return nil, err
 	}
 	now := time.Now()

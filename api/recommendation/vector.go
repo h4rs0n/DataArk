@@ -50,8 +50,7 @@ func EmbedReadyDiscoveryCandidates(ctx context.Context, limit int, provider Embe
 	}
 	// 只给 v3 硬合格代表补向量，不再依赖已停用的 enrichment_status=ready。
 	var candidates []DiscoveryCandidate
-	if err := discovery.Candidates(db).Where("processing_state = ? AND eligibility_state = ? AND dedupe_state = ?",
-		discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady).
+	if err := discovery.Candidates(db).Where(material.ArticleReadySQL("discovery_candidates.material_id")).Where("eligibility_state = ? AND dedupe_state = ?", discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady).
 		Where(discovery.DedupeRepresentativeClause("discovery_candidates.")).
 		Where("embedding_model = '' OR embedding_model IS NULL").
 		Order("last_seen_at desc, id desc").
@@ -115,12 +114,12 @@ func loadPGVectorCandidateIDs(ctx context.Context, profile *UserRecommendationPr
 			JOIN material m ON m.id = c.material_id
 			JOIN material_representations r ON r.version_id = m.current_version_id AND r.kind = 'text' AND r.role = 'body'
 			JOIN LATERAL (SELECT embedding FROM material_embeddings WHERE representation_id = r.id ORDER BY updated_at DESC LIMIT 1) e ON TRUE
-			WHERE processing_state = ? AND eligibility_state = ? AND dedupe_state = ?
+			WHERE `+material.ArticleReadySQL("c.material_id")+` AND eligibility_state = ? AND dedupe_state = ?
 			  AND `+discovery.DedupeRepresentativeClause("c.")+`
 			  AND embedding IS NOT NULL
 			ORDER BY embedding <=> ?::vector
 			LIMIT ?`,
-			discovery.DiscoveryProcessingReady, discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady,
+			discovery.DiscoveryEligibilityEligible, discovery.DiscoveryDedupeReady,
 			vectorLiteral, limit).
 		Scan(&rows).Error; err != nil {
 		return nil, err

@@ -176,7 +176,7 @@ func TestRecommendationV3CooldownUpdateAndExplicitFeedbackRecurrence(t *testing.
 	}
 
 	clock.Advance(24 * time.Hour)
-	if err := discovery.UpdateCandidate(db, updatedCandidate.ID, map[string]interface{}{"content_version": 2}).Error; err != nil {
+	if err := discovery.UpdateCandidate(db, updatedCandidate.ID, map[string]interface{}{"content_version": uint(2), "body_text": updatedCandidate.BodyText + " changed version"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	second, err := GenerateDailyRecommendations(context.Background(), 403, "2026-01-02")

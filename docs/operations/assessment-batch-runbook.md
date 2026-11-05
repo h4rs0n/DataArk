@@ -4,7 +4,7 @@ Batch 只替换文章 LLM 评估的执行方式。推荐、重排、日报摘要
 
 ## 配置与启用
 
-在 `docker/.env` 中配置以下字段，再重建 API 容器。仓库中的 `.env.example` 提供同样的模板。二进制不会自行读取环境变量，Compose 将它们传入同名的小写连字符 CLI 参数，例如 `LLM_BATCH_PROVIDER` 对应 `-llm-batch-provider`。
+在 `docker/.env` 中配置以下字段，再重建 API 容器。仓库中的 `.env.example` 提供同样的模板。除认证专用 `JWT_SECRET` 外，二进制不会自行读取这些环境变量，Compose 将它们传入同名的小写连字符 CLI 参数，例如 `LLM_BATCH_PROVIDER` 对应 `-llm-batch-provider`。
 
 ```dotenv
 LLM_BATCH_PROVIDER=bailian
@@ -193,3 +193,11 @@ CGO_ENABLED=0 go build -o /tmp/assessment-batch-reimport ./cmd/assessment-batch-
 - 一致性核对：成功项评估指针缺失或版本不符 **0**，Batch 状态与调用结果不符 **0**，重复调用关联 **0**；文章项与调用记录的 token 总量均为 **10,028,186**。
 - 验证：后端 `go test ./...` 通过；真实独立 Postgres/River 集成测试覆盖恢复事务、等待任务可复用、正在执行的任务不能被覆盖、调用记录幂等性；新增解码测试覆盖原生数组、字符串段落、分号/换行列表、字符串编码数组、英文关键词内部空格、额外字段及无效/截断/缺失字段/超限输出。
 - 原始结果仅在内存读取，未导出到磁盘，也未记录密钥或正文。
+
+## Batch 故障隔离
+
+Batch 配置或未完成运行的恢复校验失败时，API 和共享任务队列仍启动，发现、推荐以及未被 Batch 占用的实时评估不因此停用。实时评估继续遵守手动启动规则；不会因为 Batch 故障自动切换执行方式或释放在途文章占用。
+
+所有 Batch tick（包括重启前已持久化的任务）、手动开始/继续和清理恢复入口均检查 Batch 可用性。不可用时保留运行、文件和文章占用，不发起供应商请求；队列快照的 `batchUnavailableReason` 返回具体原因，配置了 Batch 执行方式时 `canRun=false`。修复配置后重启服务，并按现有手动恢复流程继续。
+
+启动时先关闭 Batch 新工作准入；该步骤失败也只阻止 Batch，后续检查重试。成功后不会在周期恢复中重复关闭准入。已开始上传的批次仅在恢复校验通过后按原规则继续，未开始上传的工作仍需 owner 授权。每个模块独立恢复，日志包含 `job recovery module=... failed`；失败的启动恢复每分钟重试，其他模块工作不回滚。

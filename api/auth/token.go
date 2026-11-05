@@ -41,6 +41,10 @@ func GenerateToken(user *User) (*TokenResponse, error) {
 		return nil, errors.New("user cannot be nil")
 	}
 
+	if err := config.ValidateAuth(); err != nil {
+		return nil, err
+	}
+
 	// 设置过期时间
 	expirationTime := time.Now().Add(tokenExpiration)
 
@@ -79,10 +83,14 @@ func ValidateToken(tokenString string) (*Claims, error) {
 		return nil, errors.New("token is required")
 	}
 
+	if err := config.ValidateAuth(); err != nil {
+		return nil, err
+	}
+
 	// 解析Token
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		// 验证签名方法
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+		if token.Method != jwt.SigningMethodHS256 {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return jwtSecret(), nil
@@ -107,7 +115,7 @@ func ValidateToken(tokenString string) (*Claims, error) {
 }
 
 func jwtSecret() []byte {
-	return []byte(config.MEILIAPIKey)
+	return []byte(config.JWTSecret)
 }
 
 // RefreshToken 刷新Token

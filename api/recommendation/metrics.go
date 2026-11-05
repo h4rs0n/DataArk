@@ -131,7 +131,7 @@ func GetAdminProductMetrics(now time.Time) (*AdminProductMetrics, error) {
 	for _, candidate := range candidates {
 		candidateByID[candidate.ID] = candidate
 		metrics.Candidates.Total++
-		if candidate.ProcessingState == discovery.DiscoveryProcessingReady {
+		if candidate.HasArticleContent() {
 			metrics.Candidates.Ready++
 		}
 		if candidate.EligibilityState == discovery.DiscoveryEligibilityEligible {
